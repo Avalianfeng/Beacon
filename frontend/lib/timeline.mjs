@@ -4,6 +4,17 @@
 
 import { MACRO_STAGES, macroForNode } from "./progress.mjs";
 
+/** 写作分组名 → 中文（与 writer_section SectionGroup.name 对齐） */
+export const WRITER_SECTION_TITLES = {
+  abstract_problem: "摘要与问题重述",
+  assumptions_notation: "假设与符号说明",
+  model: "模型建立",
+  solution: "模型求解",
+  sensitivity: "敏感性分析",
+  conclusion: "结论",
+  references: "参考文献",
+};
+
 /** @type {Record<string, string>} */
 const NODE_TITLES = {
   analyst: "理解并拆解题目",
@@ -177,4 +188,64 @@ export function buildHumanTimeline(trace, opts = {}) {
 export function knownTimelineNodes() {
   const fromMacro = MACRO_STAGES.flatMap((s) => s.nodes);
   return { fromMacro, titled: Object.keys(NODE_TITLES) };
+}
+
+/**
+ * @param {string} section
+ * @returns {string}
+ */
+export function titleForWriterSection(section) {
+  const key = String(section || "");
+  return WRITER_SECTION_TITLES[key] || key || "论文章节";
+}
+
+/**
+ * Step3：从 progress snapshot 生成「正在等 AI / 当前节」提示。
+ * @param {object} input
+ * @param {object|null} [input.snapshot]
+ * @param {string} [input.nextNode]
+ * @param {boolean} [input.workerBusy]
+ * @param {boolean} [input.running]  UI 认为任务在跑（running/recovering）
+ */
+export function buildLiveWaitHint(input = {}) {
+  const snapshot = input.snapshot || null;
+  const nextNode = String(input.nextNode || snapshot?.next_node || "");
+  const section = String(snapshot?.writer_section_current || "");
+  const remaining = Number(snapshot?.writer_sections_remaining);
+  const workerBusy = Boolean(input.workerBusy);
+  const running = Boolean(input.running) || workerBusy;
+  const writing = nextNode === "writer_section" && Boolean(section);
+
+  if (!writing && !workerBusy) {
+    return {
+      active: false,
+      waiting_api: false,
+      node: nextNode || null,
+      section: null,
+      section_title: null,
+      remaining: Number.isFinite(remaining) ? remaining : null,
+      message: "",
+    };
+  }
+
+  const sectionTitle = section ? titleForWriterSection(section) : null;
+  const remText = Number.isFinite(remaining) ? `，本章后大约还剩 ${Math.max(0, remaining - 1)} 节` : "";
+  let message = "";
+  if (writing && running) {
+    message = `正在等待 AI 撰写「${sectionTitle}」${remText}。完整一节常需数分钟，请耐心等待。`;
+  } else if (writing) {
+    message = `下一节将写「${sectionTitle}」${remText}。`;
+  } else if (running) {
+    message = `后台任务进行中（${titleForNode(nextNode) || "当前步骤"}）。`;
+  }
+
+  return {
+    active: true,
+    waiting_api: Boolean(writing && running),
+    node: nextNode || null,
+    section: section || null,
+    section_title: sectionTitle,
+    remaining: Number.isFinite(remaining) ? remaining : null,
+    message,
+  };
 }

@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildHumanTimeline, formatDurationZh, titleForNode } from "./timeline.mjs";
+import {
+  buildHumanTimeline,
+  buildLiveWaitHint,
+  formatDurationZh,
+  titleForNode,
+  titleForWriterSection,
+} from "./timeline.mjs";
 
 test("buildHumanTimeline 把 trace 节点译成人话事件", () => {
   const timeline = buildHumanTimeline({
@@ -37,4 +43,33 @@ test("buildHumanTimeline 在无 trace 时返回空结构", () => {
   assert.deepEqual(timeline.events, []);
   assert.equal(timeline.stats.event_count, 0);
   assert.equal(timeline.latest_node, null);
+});
+
+test("buildLiveWaitHint 在写作中且运行时提示等待 AI", () => {
+  assert.equal(titleForWriterSection("assumptions_notation"), "假设与符号说明");
+  const live = buildLiveWaitHint({
+    snapshot: {
+      next_node: "writer_section",
+      writer_section_current: "assumptions_notation",
+      writer_sections_remaining: 5,
+    },
+    workerBusy: true,
+    running: true,
+  });
+  assert.equal(live.active, true);
+  assert.equal(live.waiting_api, true);
+  assert.equal(live.section, "assumptions_notation");
+  assert.match(live.message, /假设与符号说明/);
+  assert.match(live.message, /等待 AI/);
+});
+
+test("buildLiveWaitHint 空闲时不制造假忙碌", () => {
+  const live = buildLiveWaitHint({
+    snapshot: { next_node: "human_review", writer_sections_remaining: 0 },
+    workerBusy: false,
+    running: false,
+  });
+  assert.equal(live.active, false);
+  assert.equal(live.waiting_api, false);
+  assert.equal(live.message, "");
 });

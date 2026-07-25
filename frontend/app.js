@@ -146,6 +146,10 @@ function renderTraceTimelineHtml(payload) {
   const latest = timeline?.latest_title
     ? `<p class="hint">最近完成：${escapeHtml(timeline.latest_title)}</p>`
     : "";
+  const live = timeline?.live;
+  const liveBanner = live?.active && live.message
+    ? `<div class="timeline-live${live.waiting_api ? " waiting" : ""}">${escapeHtml(live.message)}</div>`
+    : "";
 
   const events = Array.isArray(timeline?.events) ? timeline.events : [];
   const list = events.length
@@ -168,6 +172,7 @@ function renderTraceTimelineHtml(payload) {
 
   return `
     <p>AI 调用 ${llmCalls} 次（失败 ${llmFailures}，超时 ${llmTimeouts}），已完成步骤 ${nodeCount} 个。</p>
+    ${liveBanner}
     ${latest}
     ${list}
     <details class="tech-details">
@@ -175,6 +180,21 @@ function renderTraceTimelineHtml(payload) {
       <pre class="log-preview">${techBody}</pre>
     </details>
   `;
+}
+
+/** 写作章节英文名 → 中文（与 timeline.mjs WRITER_SECTION_TITLES 保持一致） */
+const WRITER_SECTION_LABELS = {
+  abstract_problem: "摘要与问题重述",
+  assumptions_notation: "假设与符号说明",
+  model: "模型建立",
+  solution: "模型求解",
+  sensitivity: "敏感性分析",
+  conclusion: "结论",
+  references: "参考文献",
+};
+
+function writerSectionLabel(section) {
+  return WRITER_SECTION_LABELS[section] || section || "论文章节";
 }
 
 function setRunLogPreview(run) {
@@ -259,7 +279,21 @@ function applyProgress(progress) {
   }
   currentStage.textContent = progress.user_title || progress.macro_label || "尚未开始";
   nodeProgress.textContent = `${progress.macro_index || 0} / ${progress.macro_total || stages.length}`;
-  if (progressHint) progressHint.textContent = progress.user_detail || "";
+  if (progressHint) {
+    let detail = progress.user_detail || "";
+    const snap = progress.tech?.snapshot;
+    const writingNow = ["running", "recovering"].includes(progress.user_status)
+      && (progress.tech?.next_node === "writer_section" || snap?.next_node === "writer_section")
+      && snap?.writer_section_current;
+    if (writingNow) {
+      const label = writerSectionLabel(snap.writer_section_current);
+      const waitLine = `正在等待 AI 撰写「${label}」。`;
+      if (!detail.includes(waitLine) && !detail.includes(label)) {
+        detail = detail ? `${detail} ${waitLine}` : waitLine;
+      }
+    }
+    progressHint.textContent = detail;
+  }
   if (techDetailsBody && progress.tech) {
     techDetailsBody.textContent = JSON.stringify({
       next_node: progress.tech.next_node,
@@ -365,7 +399,12 @@ function scheduleProgressRefresh(delay = 4000) {
   window.clearTimeout(progressTimer);
   progressTimer = window.setTimeout(async () => {
     const p = await refreshProgress();
+    // Step3：任务进行中时顺带刷新产物/时间线（先 progress 以更新 snapshot）
     if (p && ["running", "recovering"].includes(p.user_status)) {
+      const tab = document.querySelector(".tabs .active")?.dataset?.tab || "paper";
+      if (tab === "trace" || tab === "paper" || tab === "figures") {
+        loadArtifacts(tab).catch(() => {});
+      }
       scheduleProgressRefresh(4000);
     }
   }, delay);

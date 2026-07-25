@@ -22,7 +22,7 @@ from math_agent.checkpointing import sqlite_saver
 from math_agent.state import HumanDecision, DataFileInfo
 from math_agent.errors import LLMError, LLMRateLimitError, LLMTransportError
 from math_agent.nodes.finalizer import load_verified_completion
-from math_agent.run_lock import RunLock, RunLockedError
+from math_agent.run_lock import RunLock, RunLockedError, is_locked
 from math_agent.supervisor import (
     SupervisorPolicy,
     clear_failure_report,
@@ -718,6 +718,8 @@ def _read_progress_snapshot_data(out: Path, thread: str = "default") -> dict | N
     der_queue = list(_get("modeler_derivation_queue") or [])
     der_done = list(_get("modeler_completed_derivations") or [])
     next_nodes = list(snap.next or [])
+    # 写作中：队首即当前/下一节（节点返回前 checkpoint 尚未弹出）
+    writer_current = str(writer_queue[0]) if writer_queue else ""
     return {
         "next_node": next_nodes[0] if next_nodes else "",
         "stage_target": _get("stage_target"),
@@ -729,6 +731,8 @@ def _read_progress_snapshot_data(out: Path, thread: str = "default") -> dict | N
         "coder_queue_done": len(coder_artifacts),
         "coder_queue_total": len(coder_queue) + len(coder_artifacts),
         "writer_sections_remaining": len(writer_queue),
+        "writer_section_current": writer_current,
+        "writer_section_queue": [str(x) for x in writer_queue],
         "figure_queue_len": len(figure_queue),
         "derivation_done": len(der_done),
         "derivation_pending": len(der_queue),
@@ -793,6 +797,7 @@ def status(
     if snapshot is not None:
         _dump_progress_snapshot(out, thread)
 
+    worker_busy = is_locked(out)
     if as_json:
         payload = {
             "checkpoint_exists": inspection.checkpoint_exists,
@@ -802,6 +807,7 @@ def status(
             "completion": completion,
             "failure": failure,
             "snapshot": snapshot,
+            "worker_busy": worker_busy,
         }
         typer.echo(json.dumps(payload, ensure_ascii=False, default=str))
         return
@@ -809,6 +815,7 @@ def status(
     typer.echo(f"checkpoint: {'yes' if inspection.checkpoint_exists else 'no'}")
     typer.echo(f"next_node: {inspection.next_node or '-'}")
     typer.echo(f"final_status: {inspection.final_status or '-'}")
+    typer.echo(f"worker_busy: {'yes' if worker_busy else 'no'}")
     if supervisor_state:
         typer.echo(f"supervisor_status: {supervisor_state.get('status', '-')}")
         typer.echo(f"heartbeat_at: {supervisor_state.get('heartbeat_at', '-')}")

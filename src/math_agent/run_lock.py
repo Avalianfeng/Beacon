@@ -11,6 +11,36 @@ class RunLockedError(RuntimeError):
     pass
 
 
+def is_locked(out: str | Path, *, filename: str = ".beacon-worker.lock") -> bool:
+    """探测输出目录是否已有持锁 worker（不改写锁内容）。"""
+    path = Path(out) / filename
+    if not path.exists():
+        return False
+    try:
+        handle = path.open("a+b")
+    except OSError:
+        return True
+    try:
+        if path.stat().st_size == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except (OSError, IOError):
+            return True
+        return False
+    finally:
+        handle.close()
+
+
 class RunLock:
     def __init__(self, out: str | Path, *, filename: str = ".beacon-worker.lock"):
         self.out = Path(out)

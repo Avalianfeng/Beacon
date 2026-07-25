@@ -17,7 +17,7 @@ import {
   handleRecover,
   handleRunsHistory,
 } from "./routes/progress.mjs";
-import { buildHumanTimeline } from "./lib/timeline.mjs";
+import { buildHumanTimeline, buildLiveWaitHint } from "./lib/timeline.mjs";
 
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const projectRoot = resolve(root, "..");
@@ -214,6 +214,45 @@ async function listDirectoryFiles(dirPath) {
   } catch {
     return [];
   }
+}
+
+async function readJsonFileSafe(filePath) {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Step3：trace 人话时间线 + 写作等待提示（读 progress_snapshot / 目录锁） */
+async function buildArtifactsTimeline(outDir, trace) {
+  const base = buildHumanTimeline(trace);
+  const snapshot = await readJsonFileSafe(resolve(outDir, "progress_snapshot.json"));
+  let workerBusy = false;
+  try {
+    const { is_locked } = await import("./lib/worker-lock.mjs");
+    workerBusy = await is_locked(outDir, { buildChildEnv });
+  } catch {
+    workerBusy = false;
+  }
+  const outResolved = resolve(outDir);
+  const memRunning = [...runs.values()].some((r) => {
+    if (!["running", "paused"].includes(r.status)) return false;
+    try {
+      return resolve(projectRoot, r.out || "") === outResolved;
+    } catch {
+      return false;
+    }
+  });
+  return {
+    ...base,
+    live: buildLiveWaitHint({
+      snapshot,
+      nextNode: snapshot?.next_node || "",
+      workerBusy,
+      running: workerBusy || memRunning,
+    }),
+  };
 }
 
 /** 递归收集 out 目录内图片与关键中间产物（限深，避免扫爆）。 */
@@ -511,8 +550,7 @@ async function handleApi(request, response, url) {
             perModel: trace.per_model || null,
           }
         : null,
-      // Step1：人话时间线 DTO；UI 仍可读旧 traceSummary，下一步再改「运行详情」渲染
-      timeline: buildHumanTimeline(trace),
+      timeline: await buildArtifactsTimeline(outDir, trace),
       stateSummary,
     });
     return;
