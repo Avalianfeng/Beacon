@@ -17,6 +17,7 @@ import {
   handleRecover,
   handleRunsHistory,
 } from "./routes/progress.mjs";
+import { buildHumanTimeline } from "./lib/timeline.mjs";
 
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const projectRoot = resolve(root, "..");
@@ -510,6 +511,8 @@ async function handleApi(request, response, url) {
             perModel: trace.per_model || null,
           }
         : null,
+      // Step1：人话时间线 DTO；UI 仍可读旧 traceSummary，下一步再改「运行详情」渲染
+      timeline: buildHumanTimeline(trace),
       stateSummary,
     });
     return;
