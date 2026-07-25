@@ -813,6 +813,64 @@ input[type="range"] {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
+.timeline-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 22rem;
+  overflow: auto;
+}
+
+.timeline-item {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  border-left: 3px solid var(--gold);
+}
+
+.timeline-item.status-timeout,
+.timeline-item.status-failed {
+  border-left-color: #c45c26;
+  background: rgba(196, 92, 38, 0.08);
+}
+
+.timeline-item-title {
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.timeline-item-detail {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.tech-details {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.tech-details summary {
+  cursor: pointer;
+  font-weight: 650;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.tech-details .log-preview {
+  margin-top: 8px;
+  max-height: 14rem;
+  overflow: auto;
+  font-size: 0.72rem;
+}
+
 .command-preview {
   display: grid;
   gap: 9px;

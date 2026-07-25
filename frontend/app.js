@@ -123,7 +123,58 @@ function escapeHtml(value) {
 }
 
 function setPreview(title, body, extra = "") {
-  artifactPreview.innerHTML = `<h3>${escapeHtml(title)}</h3><p>${escapeHtml(body)}</p>${extra}`;
+  const bodyHtml = body ? `<p>${escapeHtml(body)}</p>` : "";
+  artifactPreview.innerHTML = `<h3>${escapeHtml(title)}</h3>${bodyHtml}${extra}`;
+}
+
+/**
+ * Step2：运行详情默认人话时间线；原始 ms 账折叠在「技术明细」。
+ * @param {object} payload /api/artifacts 响应
+ */
+function renderTraceTimelineHtml(payload) {
+  const timeline = payload?.timeline;
+  const t = payload?.traceSummary;
+  if (!timeline?.events?.length && !t) {
+    return "<p>还没有运行记录。任务开始后，这里会按时间列出刚完成的步骤。</p>";
+  }
+
+  const stats = timeline?.stats || {};
+  const llmCalls = stats.llm_calls ?? t?.llmCalls ?? 0;
+  const llmFailures = stats.llm_failures ?? t?.llmFailures ?? 0;
+  const llmTimeouts = stats.llm_timeouts ?? t?.llmTimeouts ?? 0;
+  const nodeCount = stats.node_count ?? t?.nodes ?? 0;
+  const latest = timeline?.latest_title
+    ? `<p class="hint">最近完成：${escapeHtml(timeline.latest_title)}</p>`
+    : "";
+
+  const events = Array.isArray(timeline?.events) ? timeline.events : [];
+  const list = events.length
+    ? `<ol class="timeline-list">${events.map((ev) => {
+      const status = escapeHtml(ev.status || "ok");
+      return `<li class="timeline-item status-${status}">
+        <div class="timeline-item-title">${escapeHtml(ev.title || "步骤")}</div>
+        <div class="timeline-item-detail">${escapeHtml(ev.detail || "")}</div>
+      </li>`;
+    }).join("")}</ol>`
+    : "<p class=\"hint\">暂无人话事件（可能是旧任务）；可展开下方技术明细。</p>";
+
+  const attempts = (t?.attempts || []).slice(-20).map((a) =>
+    `${a.status} · ${a.model || "?"} · ${a.profile || ""} · ${a.latency_ms || 0}ms${a.error_kind ? ` · ${a.error_kind}` : ""}`,
+  ).join("\n");
+  const nodes = (t?.nodeDurations || []).slice(-20).map((n) =>
+    `${n.name}: ${n.duration_ms}ms`,
+  ).join("\n");
+  const techBody = escapeHtml([attempts || "(无调用明细)", nodes || ""].filter(Boolean).join("\n\n"));
+
+  return `
+    <p>AI 调用 ${llmCalls} 次（失败 ${llmFailures}，超时 ${llmTimeouts}），已完成步骤 ${nodeCount} 个。</p>
+    ${latest}
+    ${list}
+    <details class="tech-details">
+      <summary>技术明细（原始耗时）</summary>
+      <pre class="log-preview">${techBody}</pre>
+    </details>
+  `;
 }
 
 function setRunLogPreview(run) {
@@ -379,15 +430,16 @@ async function continueProjectRun() {
   if (!currentRunId) throw new Error("没有可继续的任务");
   updatePipeline("running");
   setPreview("正在继续任务", "从上次中断的地方继续生成，请稍候。");
-  const { run } = await api(`/api/runs/${encodeURIComponent(currentRunId)}/recover`, {
+  const data = await api(`/api/runs/${encodeURIComponent(currentRunId)}/recover`, {
     method: "POST",
     body: JSON.stringify({}),
   });
+  const { run } = data;
   currentRunId = run.id;
   startLogStream(currentRunId);
   pollTimer = window.setTimeout(pollCurrentRun, 2000);
   scheduleProgressRefresh(2000);
-  showToast("已继续任务");
+  showToast(data.alreadyRunning ? "后台已在继续，正在同步进度" : "已继续任务");
 }
 
 function activateNav(hash) {
@@ -580,22 +632,7 @@ async function loadArtifacts(tab = "paper") {
   } else if (tab === "blueprint") {
     renderBlueprint(payload.stateSummary);
   } else if (tab === "trace") {
-    const t = payload.traceSummary;
-    if (!t) {
-      setPreview("运行详情", "还没有运行记录。");
-      return;
-    }
-    const attempts = (t.attempts || []).slice(-15).map((a) =>
-      `${a.status} · ${a.model || "?"} · ${a.profile || ""} · ${a.latency_ms || 0}ms${a.error_kind ? ` · ${a.error_kind}` : ""}`,
-    ).join("\n");
-    const nodes = (t.nodeDurations || []).slice(-15).map((n) =>
-      `${n.name}: ${n.duration_ms}ms`,
-    ).join("\n");
-    setPreview(
-      "运行详情",
-      `AI 调用 ${t.llmCalls || 0} 次（失败 ${t.llmFailures || 0}，超时 ${t.llmTimeouts || 0}），阶段记录 ${t.nodes || 0} 条。`,
-      `<pre class="log-preview">${escapeHtml(attempts || "(无调用明细)")}\n\n${escapeHtml(nodes || "")}</pre>`,
-    );
+    setPreview("运行详情", "", renderTraceTimelineHtml(payload));
   } else {
     const figs = payload.figures || [];
     if (figs.length) {
@@ -1396,11 +1433,13 @@ function renderSettingsApi() {
   document.querySelector("#setTestBtn")?.addEventListener("click", async () => {
     const apiBase = document.querySelector("#setApiBase").value;
     const apiKey = document.querySelector("#setApiKey").value;
-    const model = settingsConfig.defaultModel || "test";
+    // 优先用内存中的常用模型；未保存时回退占位，后端还会再读 .env
+    const model = String(settingsConfig.defaultModel || "").replace(/^openai\//i, "") || "glm-4.7";
     const result = document.querySelector("#setTestResult");
     result.innerHTML = '<p class="field-hint">测试中...</p>';
     try {
-      const r = await testLlm(apiBase, apiKey.includes("***") ? "" : apiKey, model);
+      // 掩码密钥原样传给后端，由后端回退到 .env，避免「必填」误报
+      const r = await testLlm(apiBase, apiKey, model);
       result.innerHTML = r.success
         ? `<div class="test-result ok">✓ 连接成功 · ${r.latency_ms}ms</div>`
         : `<div class="test-result fail">✗ ${escapeHtml(r.error)}</div>`;
