@@ -1640,6 +1640,23 @@ input[type="range"] {
   }
 }
 
+.attention-inline {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(176, 92, 48, 0.28);
+  border-radius: 10px;
+  background: rgba(255, 244, 230, 0.9);
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.settings-slot-title {
+  margin: 16px 0 8px;
+  font-size: 0.95rem;
+  color: var(--blue);
+}
+
 .attention-card {
   display: flex;
   flex-wrap: wrap;

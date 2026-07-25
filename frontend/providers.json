@@ -5,9 +5,10 @@
     "apiBase": "https://api.deepseek.com/v1",
     "defaultModel": "openai/deepseek-chat",
     "strongModel": "openai/deepseek-reasoner",
-    "figureModel": "openai/deepseek-chat",
+    "figureModel": "",
+    "supportsVision": false,
     "website": "https://platform.deepseek.com",
-    "description": "性价比高，适合数学建模"
+    "description": "文本性价比高；图表步骤需另配有视觉能力的看图模型"
   },
   {
     "id": "openai",
@@ -16,8 +17,9 @@
     "defaultModel": "openai/gpt-4o-mini",
     "strongModel": "openai/gpt-4o",
     "figureModel": "openai/gpt-4o",
+    "supportsVision": true,
     "website": "https://platform.openai.com",
-    "description": "GPT 系列，能力全面"
+    "description": "GPT 系列，文本与看图均可"
   },
   {
     "id": "zhipu",
@@ -26,8 +28,9 @@
     "defaultModel": "openai/glm-4-flash",
     "strongModel": "openai/glm-4",
     "figureModel": "openai/glm-4v",
+    "supportsVision": true,
     "website": "https://open.bigmodel.cn",
-    "description": "GLM 系列，国产大模型"
+    "description": "GLM 系列；看图请用 glm-4v"
   },
   {
     "id": "moonshot",
@@ -36,6 +39,7 @@
     "defaultModel": "openai/moonshot-v1-8k",
     "strongModel": "openai/moonshot-v1-32k",
     "figureModel": "openai/moonshot-v1-32k",
+    "supportsVision": true,
     "website": "https://platform.moonshot.cn",
     "description": "Kimi，长上下文优势"
   },
@@ -45,18 +49,20 @@
     "apiBase": "http://localhost:11434/v1",
     "defaultModel": "ollama/llama3",
     "strongModel": "ollama/llama3",
-    "figureModel": "ollama/llama3",
+    "figureModel": "ollama/llava",
+    "supportsVision": true,
     "website": "https://ollama.com",
-    "description": "本地部署，离线可用"
+    "description": "本地部署；看图需拉取支持视觉的模型（如 llava）"
   },
   {
     "id": "custom",
-    "name": "自定义",
+    "name": "自定义 / 网关",
     "apiBase": "",
     "defaultModel": "",
     "strongModel": "",
     "figureModel": "",
+    "supportsVision": true,
     "website": "",
-    "description": "手动填写端点和模型"
+    "description": "手动填写端点；可用网关把文本与看图路由到不同上游"
   }
 ]

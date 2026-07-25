@@ -247,7 +247,12 @@ test("GET /api/providers 返回提供商列表", async () => {
   const data = await response.json();
   assert.ok(Array.isArray(data));
   assert.ok(data.length >= 5);
-  assert.ok(data.some((p) => p.id === "deepseek"));
+  const deepseek = data.find((p) => p.id === "deepseek");
+  assert.ok(deepseek);
+  assert.equal(deepseek.supportsVision, false);
+  assert.equal(deepseek.figureModel, "");
+  const zhipu = data.find((p) => p.id === "zhipu");
+  assert.ok(zhipu?.supportsVision);
 });
 
 test("mapFailureMessage 将模型名错误映射为设置建议", () => {

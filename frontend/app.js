@@ -1118,7 +1118,10 @@ async function renderProviderStep() {
         onboardingData.apiBase = provider.apiBase;
         onboardingData.defaultModel = provider.defaultModel;
         onboardingData.strongModel = provider.strongModel;
-        onboardingData.figureModel = provider.figureModel || provider.strongModel || "";
+        onboardingData.figureModel = provider.supportsVision === false
+          ? ""
+          : (provider.figureModel || provider.strongModel || "");
+        onboardingData.supportsVision = provider.supportsVision !== false;
         onboardingNext.disabled = false;
       });
     });
@@ -1162,23 +1165,27 @@ function renderApiKeyStep() {
 }
 
 function renderModelTestStep() {
+  const visionNote = onboardingData.supportsVision === false
+    ? `<div class="attention-inline">当前文本厂商多半<strong>不能看图</strong>。请单独填写看图模型（如 glm-4v / gpt-4o），或稍后在设置里通过网关配置；留空则图表步骤可能中断。</div>`
+    : `<p class="hint">看图槽位必须使用支持图像的模型，与文本槽位可以不同。</p>`;
   onboardingBody.innerHTML = `
-    <h3>模型选择 & 连接测试</h3>
-    <p>选择主力模型和强力模型，然后测试连接。</p>
+    <h3>文本与看图模型</h3>
+    <p>文本槽位负责解题与写作；看图槽位负责图表评审。</p>
+    ${visionNote}
     <div class="field">
-      <span>主力模型（编码、灵敏度分析）</span>
+      <span>文本 · 常用模型</span>
       <input id="obDefaultModel" value="${escapeHtml(onboardingData.defaultModel)}" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:var(--white);outline:0;" />
     </div>
     <div class="field">
-      <span>强力模型（分析、建模、写作、评审）</span>
+      <span>文本 · 强模型</span>
       <input id="obStrongModel" value="${escapeHtml(onboardingData.strongModel)}" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:var(--white);outline:0;" />
     </div>
     <div class="field">
-      <span>图像模型（图表评审与图说生成）</span>
-      <input id="obFigureModel" value="${escapeHtml(onboardingData.figureModel)}" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:var(--white);outline:0;" />
-      <span class="field-hint">需支持视觉输入；留空则回退到强力模型</span>
+      <span>看图模型</span>
+      <input id="obFigureModel" value="${escapeHtml(onboardingData.figureModel)}" placeholder="glm-4v / gpt-4o（勿填纯文本 DeepSeek）" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:var(--white);outline:0;" />
+      <span class="field-hint">必须能接收图片；DeepSeek 场景请另配视觉模型或网关</span>
     </div>
-    <button class="primary-button" type="button" id="obTestBtn">🔍 测试连接</button>
+    <button class="primary-button" type="button" id="obTestBtn">测试文本连接</button>
     <div id="obTestResult"></div>
   `;
   const dmInput = document.querySelector("#obDefaultModel");
@@ -1192,17 +1199,21 @@ function renderModelTestStep() {
     const result = document.querySelector("#obTestResult");
     result.innerHTML = '<p style="color:var(--muted);">测试中...</p>';
     try {
-      const fm = onboardingData.figureModel || onboardingData.strongModel;
-      const [r1, r2, r3] = await Promise.all([
+      const fm = onboardingData.figureModel;
+      const tests = [
         testLlm(onboardingData.apiBase, onboardingData.apiKey, onboardingData.defaultModel),
         testLlm(onboardingData.apiBase, onboardingData.apiKey, onboardingData.strongModel),
-        fm ? testLlm(onboardingData.apiBase, onboardingData.apiKey, fm) : Promise.resolve(null),
-      ]);
-      let html = renderTestResult("主力模型", r1) + renderTestResult("强力模型", r2);
-      if (r3) html += renderTestResult("图像模型", r3);
+      ];
+      if (fm) tests.push(testLlm(onboardingData.apiBase, onboardingData.apiKey, fm));
+      const results = await Promise.all(tests);
+      const r1 = results[0];
+      const r2 = results[1];
+      const r3 = results[2];
+      let html = renderTestResult("常用模型", r1) + renderTestResult("强模型", r2);
+      if (r3) html += renderTestResult("看图模型", r3);
+      else html += `<div class="test-result fail">尚未填写看图模型：图表步骤可能失败（可先继续，稍后在设置中补全）</div>`;
       result.innerHTML = html;
-      const allOk = r1.success && r2.success && (!r3 || r3.success);
-      onboardingNext.disabled = !allOk;
+      onboardingNext.disabled = !(r1.success && r2.success);
     } catch (error) {
       result.innerHTML = `<div class="test-result fail">测试失败: ${escapeHtml(error.message)}</div>`;
     }
@@ -1336,26 +1347,43 @@ function renderSettingsApi() {
   });
 }
 
+function looksLikeTextOnlyModel(name) {
+  const n = String(name || "").toLowerCase();
+  return /deepseek/.test(n) && !/vl|vision|gpt-4o|glm-4v|llava|gemini/.test(n);
+}
+
 function renderSettingsModels() {
   const stripPrefix = (value) => String(value || "").replace(/^openai\//, "");
+  const figureVal = stripPrefix(settingsConfig.figureModel);
+  const visionWarn = looksLikeTextOnlyModel(figureVal) || !figureVal
+    ? `<div class="attention-inline" id="visionModelWarn">看图槽位需要支持图像的模型（如 glm-4v、gpt-4o）。DeepSeek 等纯文本模型会导致「图表」步骤中断。若服务地址只指向 DeepSeek，请改用支持多模型的网关，或把整套服务换成带视觉的厂商。</div>`
+    : "";
   settingsContent.innerHTML = `
-    <p class="hint">第二步：填写服务商支持的模型正式名称（例如 deepseek-v4-flash）。保存时会自动补全兼容前缀。</p>
+    <p class="hint">模型分两个槽位：<strong>文本</strong>（解题/代码/写作）与 <strong>看图</strong>（图表评审）。保存时会自动补全兼容前缀。</p>
+    <h3 class="settings-slot-title">文本槽位</h3>
     <div class="field">
       <span>常用模型</span>
       <input id="setDefaultModel" value="${escapeHtml(stripPrefix(settingsConfig.defaultModel))}" placeholder="deepseek-v4-flash" />
-      <span class="field-hint">用于代码等常规步骤</span>
+      <span class="field-hint">代码等常规步骤；可用 DeepSeek</span>
     </div>
     <div class="field">
       <span>强模型</span>
       <input id="setStrongModel" value="${escapeHtml(stripPrefix(settingsConfig.strongModel))}" placeholder="deepseek-v4-pro" />
-      <span class="field-hint">用于分析、建模与写作</span>
+      <span class="field-hint">分析、建模与写作；可用 DeepSeek</span>
     </div>
+    <h3 class="settings-slot-title">看图槽位</h3>
+    ${visionWarn}
     <div class="field">
-      <span>看图模型（可选）</span>
-      <input id="setFigureModel" value="${escapeHtml(stripPrefix(settingsConfig.figureModel))}" placeholder="deepseek-v4-flash" />
-      <span class="field-hint">需要能看图的模型；可与常用模型相同</span>
+      <span>看图模型</span>
+      <input id="setFigureModel" value="${escapeHtml(figureVal)}" placeholder="glm-4v 或 gpt-4o" />
+      <span class="field-hint">必须能接收图片；不要填 deepseek-v4-flash 等纯文本模型</span>
     </div>
   `;
+  document.querySelector("#setFigureModel")?.addEventListener("input", (e) => {
+    const warn = document.querySelector("#visionModelWarn");
+    if (!warn) return;
+    warn.hidden = !(looksLikeTextOnlyModel(e.target.value) || !e.target.value.trim());
+  });
 }
 
 function renderSettingsRag() {
