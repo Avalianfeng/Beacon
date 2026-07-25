@@ -48,16 +48,14 @@ Beacon is an **end-to-end math modeling automation system** built for students c
 git clone https://github.com/123-qw-as/Beacon.git
 cd Beacon
 
-# Configure
-cp .env.example .env
-# Edit .env → set your LLM API base + model names
-
 # Install & launch
 npm install
 npm start
 ```
 
-Open **http://localhost:5173** in your browser — the Web UI will guide you through importing a problem, configuring the pipeline, and monitoring the run in real time.
+Open **http://localhost:5173** in your browser. 首次访问会自动检查 Python、Node.js 与 uv，并引导你
+选择模型服务、填写密钥、验证模型连接；配置确认后写入项目内的 `.env`。如果只使用 CLI，也可以
+手动复制 `.env.example` 为 `.env` 后填写配置。
 
 ---
 
@@ -117,11 +115,14 @@ Beacon ships with a complete browser-based workspace:
 </p>
 
 **Features:**
+- **首次配置引导** — 自动检查环境，按“选择服务 → 填写密钥 → 验证模型”完成配置
+- **三步快速开始** — 依次完成“导入题目 → 确认题目 → 启动生成”，主按钮会提示下一步
 - **题目配置** — 可粘贴题面，或上传 JSON、Markdown、TXT、PDF、Word 题面及 Excel/CSV/PDF/Word/TXT 数据附件
 - **Template switching** — Default (standard paper) or GMCM (国赛 gmcmthesis)
 - **实时进度** — 展示 14 个阶段，并从后端节点日志同步状态
 - **Run control** — start, monitor logs, stop, and view artifacts
 - **检查点恢复** — 失败任务存在 checkpoint 时可从任务卡片恢复，不必从头运行
+- **渐进式设置** — 首次运行保留安全默认值，模板、RAG、HITL 与运行参数收纳在高级选项中
 - **RAG toggle** — enable/disable retrieval augmentation per run
 - **HITL toggle** — run fully automatic or pause for human approval
 
@@ -326,6 +327,7 @@ npm run dev
 
 # Tests
 uv run --extra dev pytest -q
+npm test
 ```
 
 ---

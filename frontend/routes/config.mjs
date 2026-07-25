@@ -56,6 +56,25 @@ function normalizeModelForLitellm(model) {
 }
 
 /**
+ * 连接测试直接请求用户填写的 OpenAI 兼容端点，不经过 LiteLLM。
+ * 因此需要移除 LiteLLM 的传输前缀，例如：
+ * - openai/deepseek-chat -> deepseek-chat
+ * - ollama/llama3 -> llama3
+ *
+ * 未知前缀可能是路由器原生模型名的一部分（如 ocg/model），必须保留。
+ */
+function modelForDirectEndpoint(model) {
+  if (!model || typeof model !== "string") return model;
+  const trimmed = model.trim();
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex === -1) return trimmed;
+  const prefix = trimmed.slice(0, slashIndex).toLowerCase();
+  return LITELLM_NATIVE_PREFIXES.has(prefix)
+    ? trimmed.slice(slashIndex + 1)
+    : trimmed;
+}
+
+/**
  * 解析 .env 文件为 key-value 对象。
  */
 function parseEnvFile(filePath) {
@@ -204,7 +223,7 @@ export async function handleConfigRoutes(request, response, url) {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model,
+          model: modelForDirectEndpoint(model),
           messages: [{ role: "user", content: "hi" }],
           max_tokens: 1,
         }),

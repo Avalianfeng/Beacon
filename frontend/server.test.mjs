@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -66,7 +67,11 @@ test("健康接口与静态首页可访问", async () => {
   assert.equal((await health.json()).ok, true);
   const index = await fetch(`${base}/`);
   assert.equal(index.status, 200);
-  assert.match(await index.text(), /Beacon/);
+  const html = await index.text();
+  assert.match(html, /Beacon/);
+  assert.match(html, /三步开始你的数学建模任务/);
+  assert.match(html, /id="runPipeline" disabled/);
+  assert.match(html, /<details class="advanced-disclosure">/);
 });
 
 test("API 拒绝非法 JSON、超大请求和非法模板", async () => {
@@ -326,6 +331,35 @@ test("POST /api/config/test-llm 拒绝缺少参数的请求", async () => {
     body: JSON.stringify({ apiBase: "https://example.com/v1" }),
   });
   assert.equal(response.status, 400);
+});
+
+test("POST /api/config/test-llm 向直连端点发送原生模型名", async (context) => {
+  const receivedModels = [];
+  const upstream = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    receivedModels.push(JSON.parse(body).model);
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "ok" } }],
+    }));
+  });
+  await new Promise((resolveListen) => upstream.listen(0, "127.0.0.1", resolveListen));
+  context.after(() => new Promise((resolveClose) => upstream.close(resolveClose)));
+
+  const upstreamPort = upstream.address().port;
+  const apiBase = `http://127.0.0.1:${upstreamPort}/v1`;
+  for (const model of ["openai/deepseek-chat", "ollama/llama3", "ocg/custom-model"]) {
+    const response = await fetch(`${base}/api/config/test-llm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiBase, apiKey: "test-key", model }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).success, true);
+  }
+
+  assert.deepEqual(receivedModels, ["deepseek-chat", "llama3", "ocg/custom-model"]);
 });
 
 test("GET /api/providers 返回提供商列表", async () => {

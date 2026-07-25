@@ -1,5 +1,6 @@
 const runButton = document.querySelector("#runPipeline");
 const importDemoButton = document.querySelector("#importDemo");
+const chooseProblemButton = document.querySelector("#chooseProblem");
 const resetPipelineButton = document.querySelector("#resetPipeline");
 const openOutputsButton = document.querySelector("#openOutputs");
 const currentStage = document.querySelector("#currentStage");
@@ -40,13 +41,19 @@ const onboardingSubtitle = document.querySelector("#onboardingSubtitle");
 const onboardingPrev = document.querySelector("#onboardingPrev");
 const onboardingNext = document.querySelector("#onboardingNext");
 const stepDots = document.querySelectorAll(".step-dot");
+const readinessBadge = document.querySelector("#readinessBadge");
+const importStep = document.querySelector("#importStep");
+const reviewStep = document.querySelector("#reviewStep");
+const runStep = document.querySelector("#runStep");
+const reviewStepHint = document.querySelector("#reviewStepHint");
+const runStepHint = document.querySelector("#runStepHint");
 const settingsPanel = document.querySelector("#settings");
 const settingsContent = document.querySelector("#settingsContent");
 const settingsSave = document.querySelector("#settingsSave");
 const settingsReset = document.querySelector("#settingsReset");
 const settingsNavButtons = document.querySelectorAll("[data-settings-tab]");
 const dashboardSections = document.querySelectorAll(
-  "#workspace > .topbar, #workspace > .status-strip, #workspace > .layout-grid",
+  "#workspace > .topbar, #workspace > .start-guide, #workspace > .status-strip, #workspace > .layout-grid",
 );
 
 const stages = ["Analyst", "Blueprint Critic", "Modeler", "Model Critic", "Coder", "Code Consistency", "Sensitivity", "Figure Pipeline", "Writer", "Paper Critic", "Table Assembler", "Evaluation", "Human Review", "LaTeX"];
@@ -61,6 +68,7 @@ let stageIndex = -1;
 let activeTemplate = "default";
 let toastTimer;
 let currentRunId = null;
+let currentRunStatus = null;
 let pollTimer = null;
 let logStream = null;
 let lastArtifacts = null;
@@ -120,9 +128,9 @@ function updatePipeline(mode = "local") {
   qualityScore.textContent = isComplete && Number.isFinite(Number(actualScore))
     ? Number(actualScore).toFixed(2)
     : "--";
-  runButton.textContent = mode === "running" ? "运行中" : isComplete ? "重新运行" : "启动流水线";
-  runButton.disabled = mode === "running";
+  runButton.textContent = mode === "running" ? "正在生成…" : isComplete ? "重新生成" : "开始生成论文";
   runState.textContent = mode === "running" ? "Running" : mode === "paused" ? "Paused" : isComplete ? "Done" : "Ready";
+  updateStartGuide();
 }
 
 function updateCommand() {
@@ -141,6 +149,61 @@ function updateCommand() {
   knowledgeBadge.textContent = ragToggle.checked ? "RAG On" : "RAG Off";
 }
 
+function updateStartGuide() {
+  const hasTitle = problemTitle.value.trim().length > 0;
+  const hasBrief = problemBrief.value.trim().length > 0;
+  const ready = hasTitle && hasBrief;
+  const isActive = ["running", "paused"].includes(currentRunStatus);
+  const isFinished = Boolean(currentRunStatus) && !isActive;
+  const isSuccessful = ["completed", "degraded"].includes(currentRunStatus);
+  const needsRetry = isFinished && !isSuccessful;
+
+  importStep?.classList.toggle("done", ready);
+  importStep?.classList.toggle("active", !ready);
+  reviewStep?.classList.toggle("done", ready);
+  reviewStep?.classList.toggle("active", ready && !currentRunStatus);
+  runStep?.classList.toggle("active", ready && (!currentRunStatus || needsRetry));
+  runStep?.classList.toggle("done", isSuccessful);
+  runButton.disabled = !ready || isActive;
+
+  if (!hasTitle && !hasBrief) {
+    readinessBadge.textContent = "等待导入赛题";
+    readinessBadge.dataset.state = "waiting";
+    reviewStepHint.textContent = "导入后检查标题、任务目标和数据附件。";
+    runStepHint.textContent = "准备好后，一键启动完整建模流水线。";
+  } else if (!ready) {
+    readinessBadge.textContent = "还需补全题目信息";
+    readinessBadge.dataset.state = "attention";
+    reviewStepHint.textContent = hasTitle ? "请补充背景、问题与输出要求。" : "请补充一个清晰的赛题标题。";
+    runStepHint.textContent = "补全标题和目标后即可启动。";
+  } else {
+    reviewStepHint.textContent = uploadedAttachments.length
+      ? `题目已就绪，并附有 ${uploadedAttachments.length} 个数据文件。`
+      : "题目已就绪；如有数据文件，可在下方继续添加。";
+    if (currentRunStatus === "running") {
+      readinessBadge.textContent = "任务生成中";
+      readinessBadge.dataset.state = "running";
+      runStepHint.textContent = "任务正在处理，进度会持续更新。";
+    } else if (currentRunStatus === "paused") {
+      readinessBadge.textContent = "等待人工确认";
+      readinessBadge.dataset.state = "attention";
+      runStepHint.textContent = "请在产物区域审核当前结果后继续。";
+    } else if (["completed", "degraded"].includes(currentRunStatus)) {
+      readinessBadge.textContent = "生成已完成";
+      readinessBadge.dataset.state = "ready";
+      runStepHint.textContent = "论文产物已经生成，可查看或重新运行。";
+    } else if (isFinished) {
+      readinessBadge.textContent = "任务已结束";
+      readinessBadge.dataset.state = "attention";
+      runStepHint.textContent = "请检查运行日志，处理问题后可以重新生成。";
+    } else {
+      readinessBadge.textContent = "可以开始生成";
+      readinessBadge.dataset.state = "ready";
+      runStepHint.textContent = "默认设置已配置好，点击即可启动。";
+    }
+  }
+}
+
 function activateNav(hash) {
   navLinks.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === hash));
   setSettingsView(hash === "#settings");
@@ -155,8 +218,9 @@ async function loadFixturesIntoProblem() {
   problemBrief.value = [fixture.background, ...fixture.questions].filter(Boolean).join("\n");
   problemBadge.textContent = fixture.name.split(".").pop().toUpperCase();
   currentFixturePath = fixture.path;
-  stageIndex = 0;
+  stageIndex = -1;
   updatePipeline();
+  updateStartGuide();
   showToast(`已导入 ${fixture.name}`);
 }
 
@@ -288,9 +352,15 @@ async function loadArtifacts(tab = "paper") {
 }
 
 async function startProjectRun() {
+  if (!problemTitle.value.trim() || !problemBrief.value.trim()) {
+    document.querySelector("#task-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    updateStartGuide();
+    throw new Error("请先填写赛题标题和背景目标，再开始生成。");
+  }
   lastArtifacts = null;
   updateCommand();
   stageIndex = 0;
+  currentRunStatus = "running";
   updatePipeline("running");
   setPreview("正在启动 math-agent", "本地服务正在写入 problem.json 并调用项目 CLI，日志会自动刷新。", "<div class=\"paper-lines\"><span></span><span></span><span></span></div>");
   const { run } = await api("/api/run", {
@@ -310,6 +380,8 @@ async function startProjectRun() {
     }),
   });
   currentRunId = run.id;
+  currentRunStatus = run.status || "running";
+  updateStartGuide();
   showToast("已启动项目流水线");
   startLogStream(currentRunId);
   // 慢速状态轮询：SSE 活跃时仅检测 paused/终态（不写日志），SSE 断开时作为日志 fallback
@@ -321,6 +393,7 @@ async function pollCurrentRun() {
   window.clearTimeout(pollTimer);
   try {
     const run = await api(`/api/runs/${encodeURIComponent(currentRunId)}`);
+    currentRunStatus = run.status;
     if (run.status === "running") {
       if (!logStream) {
         // SSE 未连接 -> 用 API 轮询作为日志 fallback
@@ -338,8 +411,11 @@ async function pollCurrentRun() {
     }
     handleRunEnd(run);
   } catch (error) {
-    updatePipeline();
-    showToast(error.message);
+    updatePipeline("running");
+    showToast(`状态刷新失败，将自动重试：${error.message}`);
+    if (currentRunId) {
+      pollTimer = window.setTimeout(pollCurrentRun, 3000);
+    }
   }
 }
 
@@ -405,6 +481,7 @@ function handlePaused(run) {
   // Evaluation 完成后暂停在 Human Review。
   stageIndex = stages.indexOf("Human Review");
   if (stageIndex < 0) stageIndex = stages.length - 3;
+  currentRunStatus = "paused";
   updatePipeline("paused");
   setRunLogPreview(run);
   showToast("流水线暂停，等待人工审核");
@@ -414,6 +491,7 @@ function handlePaused(run) {
 function handleRunEnd(run) {
   if (logStream) { try { logStream.close(); } catch {} logStream = null; }
   stageIndex = run.status === "completed" ? stages.length : stageIndex;
+  currentRunStatus = run.status;
   updatePipeline();
   setRunLogPreview(run);
   if (["completed", "failed", "rejected", "stopped"].includes(run.status)) {
@@ -488,6 +566,7 @@ async function resumeRun(approve) {
 
 function restartRunMonitoring(run) {
   currentRunId = run.id;
+  currentRunStatus = "running";
   if (logStream) { try { logStream.close(); } catch {} logStream = null; }
   updatePipeline("running");
   startLogStream(currentRunId);
@@ -520,6 +599,7 @@ async function recoverFailedRun() {
 
 runButton?.addEventListener("click", () => {
   startProjectRun().catch((error) => {
+    currentRunStatus = null;
     updatePipeline();
     setPreview("启动失败", error.message);
     showToast(error.message);
@@ -528,6 +608,7 @@ runButton?.addEventListener("click", () => {
 
 resetPipelineButton?.addEventListener("click", () => {
   currentRunId = null;
+  currentRunStatus = null;
   window.clearTimeout(pollTimer);
   if (logStream) { try { logStream.close(); } catch {} logStream = null; }
   stageIndex = -1;
@@ -538,6 +619,10 @@ resetPipelineButton?.addEventListener("click", () => {
 
 importDemoButton?.addEventListener("click", () => {
   loadFixturesIntoProblem().catch((error) => showToast(error.message));
+});
+
+chooseProblemButton?.addEventListener("click", () => {
+  problemFile?.click();
 });
 
 openOutputsButton?.addEventListener("click", () => {
@@ -571,7 +656,11 @@ tabButtons.forEach((button) => {
 });
 
 [problemTitle, problemBrief].forEach((control) => {
-  control?.addEventListener("input", () => { currentFixturePath = null; });
+  control?.addEventListener("input", () => {
+    currentFixturePath = null;
+    problemBadge.textContent = problemTitle.value.trim() || problemBrief.value.trim() ? "手动填写" : "未导入";
+    updateStartGuide();
+  });
 });
 [outputDir, threadId, iterationDepth, ragToggle, hitlToggle, forceToggle].forEach((control) => {
   control?.addEventListener("input", updateCommand);
@@ -610,6 +699,7 @@ function renderAttachmentList() {
       renderAttachmentList();
     });
   });
+  updateStartGuide();
 }
 
 async function loadAttachmentFile(file) {
@@ -627,10 +717,14 @@ async function loadAttachmentFile(file) {
 
 function loadProblemFile(file) {
   if (!file) return;
+  if (!problemTitle.value.trim()) {
+    problemTitle.value = file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "未命名赛题";
+  }
   uploadTitle.textContent = file.name;
   uploadMeta.textContent = `${Math.ceil(file.size / 1024)} KB · ${file.type || "本地文件"}`;
   problemBadge.textContent = file.name.split(".").pop()?.toUpperCase() || "FILE";
   currentFixturePath = null;
+  updateStartGuide();
   const ext = file.name.split(".").pop()?.toLowerCase();
   if (ext === "json" || ext === "md" || ext === "txt") {
     const reader = new FileReader();
@@ -647,6 +741,7 @@ function loadProblemFile(file) {
       } catch {
         problemBrief.value = text.slice(0, MAX_PROBLEM_TEXT_CHARS) || problemBrief.value;
       }
+      updateStartGuide();
       showToast("题目文件已读取");
     });
     reader.readAsText(file, "utf-8");
@@ -655,6 +750,7 @@ function loadProblemFile(file) {
     uploadFile(file, "problem").then((result) => {
       if (result.text) {
         problemBrief.value = result.text.slice(0, MAX_PROBLEM_TEXT_CHARS);
+        updateStartGuide();
         showToast(`${file.name} 文本已提取`);
       } else {
         showToast("未能从文件中提取文本");
@@ -718,6 +814,7 @@ window.addEventListener("hashchange", () => {
 });
 updatePipeline();
 updateCommand();
+updateStartGuide();
 api("/api/health")
   .then((health) => {
     if (health.onboarding && health.onboarding.needed) {
@@ -741,12 +838,11 @@ let onboardingData = {
 };
 
 const onboardingSteps = [
-  { title: "欢迎使用 Beacon", subtitle: "让我们花几分钟完成初始配置" },
-  { title: "环境检测", subtitle: "检查运行所需依赖是否已安装" },
-  { title: "选择 API 提供商", subtitle: "选择你的 LLM 服务提供商" },
-  { title: "API 密钥 & 端点配置", subtitle: "填写 API 密钥和访问端点" },
-  { title: "模型选择 & 连接测试", subtitle: "选择模型并验证连接" },
-  { title: "配置完成", subtitle: "一切就绪，可以开始使用了" },
+  { title: "检查运行环境", subtitle: "确认 Beacon 所需工具已经就绪" },
+  { title: "选择模型服务", subtitle: "选择你正在使用的 LLM 提供商" },
+  { title: "连接模型服务", subtitle: "填写访问端点与 API 密钥" },
+  { title: "验证模型连接", subtitle: "确认所选模型可以正常响应" },
+  { title: "可以开始了", subtitle: "配置已保存，接下来只需导入赛题" },
 ];
 
 function showOnboarding() {
@@ -757,6 +853,7 @@ function showOnboarding() {
 
 function hideOnboarding() {
   onboardingOverlay.hidden = true;
+  document.querySelector("#start-guide-title")?.focus();
 }
 
 function updateStepDots() {
@@ -769,7 +866,7 @@ function updateStepDots() {
 function renderOnboardingStep() {
   const step = onboardingSteps[onboardingStep - 1];
   onboardingTitle.textContent = step.title;
-  onboardingSubtitle.textContent = step.subtitle;
+  onboardingSubtitle.textContent = `第 ${onboardingStep} / ${onboardingSteps.length} 步 · ${step.subtitle}`;
   updateStepDots();
   onboardingPrev.disabled = onboardingStep === 1;
   onboardingNext.textContent = onboardingStep === 5 ? "进入工作台" : "下一步";
@@ -856,31 +953,38 @@ async function installTool(tool, btn) {
 }
 
 async function renderProviderStep() {
-  onboardingNext.disabled = true;
+  onboardingNext.disabled = !onboardingData.provider;
   onboardingBody.innerHTML = `
-    <h3>选择 API 提供商</h3>
-    <p>选择你的 LLM 服务提供商，选择后会自动填入端点和推荐模型。</p>
+    <p>选择后会自动填入访问端点和推荐模型；你仍可在下一步修改。</p>
     <div class="provider-grid" id="providerGrid"></div>
   `;
   try {
     const providers = await api("/api/providers");
     const grid = document.querySelector("#providerGrid");
     grid.innerHTML = providers.map((p) => `
-      <div class="provider-card" data-provider="${escapeHtml(p.id)}">
+      <button class="provider-card ${onboardingData.provider === p.id ? "selected" : ""}" type="button" data-provider="${escapeHtml(p.id)}" aria-pressed="${onboardingData.provider === p.id}">
         <strong>${escapeHtml(p.name)}</strong>
         <span>${escapeHtml(p.description)}</span>
-      </div>
+      </button>
     `).join("");
     grid.querySelectorAll(".provider-card").forEach((card) => {
       card.addEventListener("click", () => {
         grid.querySelectorAll(".provider-card").forEach((c) => c.classList.remove("selected"));
+        grid.querySelectorAll(".provider-card").forEach((c) => c.setAttribute("aria-pressed", "false"));
         card.classList.add("selected");
+        card.setAttribute("aria-pressed", "true");
         const provider = providers.find((p) => p.id === card.dataset.provider);
+        const previousProvider = onboardingData.provider;
         onboardingData.provider = provider.id;
         onboardingData.apiBase = provider.apiBase;
         onboardingData.defaultModel = provider.defaultModel;
         onboardingData.strongModel = provider.strongModel;
         onboardingData.figureModel = provider.figureModel || provider.strongModel || "";
+        if (provider.id === "ollama" && !onboardingData.apiKey) {
+          onboardingData.apiKey = "ollama";
+        } else if (previousProvider === "ollama" && onboardingData.apiKey === "ollama") {
+          onboardingData.apiKey = "";
+        }
         onboardingNext.disabled = false;
       });
     });
@@ -891,56 +995,62 @@ async function renderProviderStep() {
 
 function renderApiKeyStep() {
   onboardingBody.innerHTML = `
-    <h3>API 密钥 & 端点配置</h3>
-    <p>填写你的 API 密钥。端点已根据所选提供商自动填入，可修改。</p>
-    <div class="field">
+    <p>端点已根据提供商自动填入。密钥只会保存在当前项目的 <code>.env</code> 文件中。</p>
+    <label class="field" for="obApiBase">
       <span>API 端点（Base URL）</span>
-      <input id="obApiBase" value="${escapeHtml(onboardingData.apiBase)}" placeholder="https://api.deepseek.com/v1" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:var(--white);outline:0;" />
-    </div>
+      <input id="obApiBase" value="${escapeHtml(onboardingData.apiBase)}" placeholder="https://api.deepseek.com/v1" />
+    </label>
     <div class="field">
-      <span>API 密钥</span>
-      <div style="display:flex;gap:8px;">
-        <input id="obApiKey" type="password" value="${escapeHtml(onboardingData.apiKey)}" placeholder="sk-..." style="flex:1;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:var(--white);outline:0;" />
-        <button class="ghost-button" type="button" id="obToggleKey">👁 显示</button>
+      <label for="obApiKey">API 密钥${onboardingData.provider === "ollama" ? "（本地 Ollama 可填写 ollama）" : ""}</label>
+      <div class="secret-field">
+        <input id="obApiKey" type="password" value="${escapeHtml(onboardingData.apiKey)}" placeholder="sk-..." autocomplete="off" />
+        <button class="ghost-button" type="button" id="obToggleKey" aria-label="显示 API 密钥">显示</button>
       </div>
+      <span class="field-hint">${onboardingData.provider === "ollama" ? "兼容令牌已自动填写，无需修改。" : "填写完整后即可继续。"}</span>
     </div>
   `;
   const apiBaseInput = document.querySelector("#obApiBase");
   const apiKeyInput = document.querySelector("#obApiKey");
   const toggleBtn = document.querySelector("#obToggleKey");
 
-  apiBaseInput.addEventListener("input", () => { onboardingData.apiBase = apiBaseInput.value; });
-  apiKeyInput.addEventListener("input", () => { onboardingData.apiKey = apiKeyInput.value; });
+  const updateApiStep = () => {
+    onboardingData.apiBase = apiBaseInput.value.trim();
+    onboardingData.apiKey = apiKeyInput.value.trim();
+    onboardingNext.disabled = !onboardingData.apiBase || !onboardingData.apiKey;
+  };
+  apiBaseInput.addEventListener("input", updateApiStep);
+  apiKeyInput.addEventListener("input", updateApiStep);
   toggleBtn.addEventListener("click", () => {
     if (apiKeyInput.type === "password") {
       apiKeyInput.type = "text";
-      toggleBtn.textContent = "👁 隐藏";
+      toggleBtn.textContent = "隐藏";
+      toggleBtn.setAttribute("aria-label", "隐藏 API 密钥");
     } else {
       apiKeyInput.type = "password";
-      toggleBtn.textContent = "👁 显示";
+      toggleBtn.textContent = "显示";
+      toggleBtn.setAttribute("aria-label", "显示 API 密钥");
     }
   });
-  onboardingNext.disabled = false;
+  updateApiStep();
 }
 
 function renderModelTestStep() {
   onboardingBody.innerHTML = `
-    <h3>模型选择 & 连接测试</h3>
-    <p>选择主力模型和强力模型，然后测试连接。</p>
-    <div class="field">
-      <span>主力模型（编码、灵敏度分析）</span>
-      <input id="obDefaultModel" value="${escapeHtml(onboardingData.defaultModel)}" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:var(--white);outline:0;" />
-    </div>
-    <div class="field">
-      <span>强力模型（分析、建模、写作、评审）</span>
-      <input id="obStrongModel" value="${escapeHtml(onboardingData.strongModel)}" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:var(--white);outline:0;" />
-    </div>
-    <div class="field">
-      <span>图像模型（图表评审与图说生成）</span>
-      <input id="obFigureModel" value="${escapeHtml(onboardingData.figureModel)}" style="width:100%;height:42px;padding:0 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;color:var(--ink);background:var(--white);outline:0;" />
+    <p>推荐模型已自动填写。点击测试，确认写作与实验所需模型都能正常响应。</p>
+    <label class="field" for="obDefaultModel">
+      <span>主力模型 <small>用于编码、灵敏度分析</small></span>
+      <input id="obDefaultModel" value="${escapeHtml(onboardingData.defaultModel)}" />
+    </label>
+    <label class="field" for="obStrongModel">
+      <span>强力模型 <small>用于分析、建模、写作与评审</small></span>
+      <input id="obStrongModel" value="${escapeHtml(onboardingData.strongModel)}" />
+    </label>
+    <label class="field" for="obFigureModel">
+      <span>图像模型 <small>用于图表评审与图说生成</small></span>
+      <input id="obFigureModel" value="${escapeHtml(onboardingData.figureModel)}" />
       <span class="field-hint">需支持视觉输入；留空则回退到强力模型</span>
-    </div>
-    <button class="primary-button" type="button" id="obTestBtn">🔍 测试连接</button>
+    </label>
+    <button class="primary-button" type="button" id="obTestBtn">测试模型连接</button>
     <div id="obTestResult"></div>
   `;
   const dmInput = document.querySelector("#obDefaultModel");
@@ -954,16 +1064,16 @@ function renderModelTestStep() {
     const result = document.querySelector("#obTestResult");
     result.innerHTML = '<p style="color:var(--muted);">测试中...</p>';
     try {
-      const fm = onboardingData.figureModel || onboardingData.strongModel;
-      const [r1, r2, r3] = await Promise.all([
+      const figureModel = onboardingData.figureModel || onboardingData.strongModel;
+      const [defaultModelResult, strongModelResult, figureModelResult] = await Promise.all([
         testLlm(onboardingData.apiBase, onboardingData.apiKey, onboardingData.defaultModel),
         testLlm(onboardingData.apiBase, onboardingData.apiKey, onboardingData.strongModel),
-        fm ? testLlm(onboardingData.apiBase, onboardingData.apiKey, fm) : Promise.resolve(null),
+        figureModel ? testLlm(onboardingData.apiBase, onboardingData.apiKey, figureModel) : Promise.resolve(null),
       ]);
-      let html = renderTestResult("主力模型", r1) + renderTestResult("强力模型", r2);
-      if (r3) html += renderTestResult("图像模型", r3);
+      let html = renderTestResult("主力模型", defaultModelResult) + renderTestResult("强力模型", strongModelResult);
+      if (figureModelResult) html += renderTestResult("图像模型", figureModelResult);
       result.innerHTML = html;
-      const allOk = r1.success && r2.success && (!r3 || r3.success);
+      const allOk = defaultModelResult.success && strongModelResult.success && (!figureModelResult || figureModelResult.success);
       onboardingNext.disabled = !allOk;
     } catch (error) {
       result.innerHTML = `<div class="test-result fail">测试失败: ${escapeHtml(error.message)}</div>`;
@@ -988,7 +1098,7 @@ function renderTestResult(label, result) {
 }
 
 async function renderCompleteStep() {
-  // 保存配置
+  onboardingNext.disabled = true;
   try {
     await api("/api/config", {
       method: "POST",
@@ -1002,14 +1112,23 @@ async function renderCompleteStep() {
     });
   } catch (error) {
     showToast(`保存配置失败: ${error.message}`);
+    onboardingBody.innerHTML = `
+      <div class="save-error">
+        <strong>配置暂未保存</strong>
+        <p>${escapeHtml(error.message)}</p>
+        <button class="primary-button" type="button" id="obRetrySave">重试保存</button>
+      </div>
+    `;
+    document.querySelector("#obRetrySave").addEventListener("click", renderCompleteStep);
+    return;
   }
 
   onboardingBody.innerHTML = `
-    <div style="text-align:center;padding:20px 0;">
-      <div style="font-size:48px;margin-bottom:12px;">🎉</div>
-      <h3 style="color:var(--green);">配置完成！</h3>
-      <p>配置已自动保存到 .env 文件</p>
-      <div style="margin:16px auto;padding:14px;border:1px solid var(--line);border-radius:8px;background:#fbfcfe;text-align:left;font-size:0.86rem;max-width:400px;">
+    <div class="onboarding-complete">
+      <div class="complete-mark" aria-hidden="true">✓</div>
+      <h3>配置完成</h3>
+      <p>配置已保存。进入工作台后，先上传赛题或使用示例体验。</p>
+      <div class="config-summary">
         <p><strong>端点:</strong> ${escapeHtml(onboardingData.apiBase)}</p>
         <p><strong>主力模型:</strong> ${escapeHtml(onboardingData.defaultModel)}</p>
         <p><strong>强力模型:</strong> ${escapeHtml(onboardingData.strongModel)}</p>
@@ -1017,6 +1136,7 @@ async function renderCompleteStep() {
       </div>
     </div>
   `;
+  onboardingNext.disabled = false;
 }
 
 onboardingPrev?.addEventListener("click", () => {
@@ -1032,7 +1152,7 @@ onboardingNext?.addEventListener("click", () => {
     renderOnboardingStep();
   } else {
     hideOnboarding();
-    showToast("配置完成，欢迎使用 Beacon！");
+    showToast("配置完成，请先导入赛题");
   }
 });
 

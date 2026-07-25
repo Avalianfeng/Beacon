@@ -32,7 +32,7 @@
   CLI 闭环。它通过正式主方案数值、四附件数据血缘、三类基线、深度实验和篇幅门禁；PDF 共
   31 页，正文 25 页、25057 个非空白字符，附录从第 30 个物理页开始。全部 31 页已渲染检查，
   无乱码、裁切、重叠或严重横向溢出。
-- 当前 Python 回归为 591 passed / 4 skipped；Web UI 回归为 15/15。Windows 环境已验证
+- 当前 Python 回归为 591 passed / 4 skipped；Web UI 回归为 16/16。Windows 环境已验证
   `uv sync` 可直接安装 LiteLLM 1.91.0，且 `math-agent supervise --help` 可正常启动。
 
 系统并不承诺外部上游永远不出现 502、429、断连或超时；“已解决”的含义是这些故障现在受
@@ -50,6 +50,11 @@ checkpoint 续跑。`human_review` 的批准或拒绝仍使用 `resume`/`supervi
 Visual Studio C++ linker。OpenAI 兼容路由的模型名必须使用 `openai/<model>` 格式；仅配置
 `OPENAI_API_BASE` 不能让 LiteLLM 从裸模型名推断 provider。示例配置、README 与 Web 保存逻辑
 必须保持这一约束一致。
+
+Web UI 首次访问按环境检查、服务商选择、密钥填写、模型验证和配置保存完成初始化；进入工作台后，
+主流程收敛为“导入题目 → 确认题目 → 启动生成”。模型连接测试直连用户填写的 OpenAI 兼容端点，
+因此会先移除 `openai/`、`ollama/` 等 LiteLLM 传输前缀，再发送厂商原生模型名；保存到 `.env`
+时仍使用 `provider/model`，测试协议与正式运行协议不能混为一谈。
 
 ## 为什么旧 PDF 只有 8--10 页，当前如何保证 20 页正文
 
@@ -94,7 +99,7 @@ finalizer 又只检查编译、评分和证据质量，没有检查附录前的�
 
 ```powershell
 uv run --extra dev pytest -q
-npm.cmd test -- --run
+npm.cmd test
 uv run math-agent status --out runs/green-logistics-rootfix-v4-20260717 --thread green-logistics-rootfix-v4
 uv run python scripts/render_content_optimized_reference.py `
   --source-state runs/verified-run/final_state.json `
