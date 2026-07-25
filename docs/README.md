@@ -61,6 +61,7 @@ finalizer 又只检查编译、评分和证据质量，没有检查附录前的�
 
 ## 现行文档
 
+- [`../frontend/README.md`](../frontend/README.md)：Web 工作台（非技术用户向）用法，以及进度/继续/停止与 CLI 的对应关系。
 - [`paper-content-quality.md`](paper-content-quality.md)：20 页正文门禁、深度实验契约、动态事件口径与参考重建。
 - [`beacon-resilient-execution.md`](beacon-resilient-execution.md)：后台监督、恢复、硬期限和最终收口。
 - [`beacon-full-pipeline-root-cause-20260717.md`](beacon-full-pipeline-root-cause-20260717.md)：完整调用链、
