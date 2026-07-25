@@ -171,6 +171,29 @@ def test_status_reads_persisted_supervisor_and_completion(tmp_path):
     assert "completed" in result.output
 
 
+def test_status_json_includes_failure(tmp_path):
+    (tmp_path / "supervisor.json").write_text(
+        json.dumps({"status": "blocked", "last_node": "coder_generate"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "failure.json").write_text(
+        json.dumps({"node": "coder_generate", "kind": "LLMInvalidRequestError", "message": "bad model"}),
+        encoding="utf-8",
+    )
+    with patch("math_agent.cli.inspect_checkpoint") as inspect, patch(
+        "math_agent.cli._read_progress_snapshot_data", return_value={"coder_queue_len": 2},
+    ):
+        inspect.return_value = MagicMock(
+            checkpoint_exists=True, next_node="coder_generate", final_status="",
+        )
+        result = runner.invoke(app, ["status", "--out", str(tmp_path), "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["next_node"] == "coder_generate"
+    assert payload["failure"]["node"] == "coder_generate"
+    assert payload["snapshot"]["coder_queue_len"] == 2
+
+
 def test_status_marks_running_supervisor_with_dead_pid_as_stale(tmp_path):
     (tmp_path / "supervisor.json").write_text(
         json.dumps({

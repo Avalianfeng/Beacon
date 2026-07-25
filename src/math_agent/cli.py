@@ -167,6 +167,7 @@ def _dump_state_summary(out: Path, thread: str = "default") -> None:
         json.dumps(summary, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
+    _dump_progress_snapshot(out, thread)
 
 
 def _saver_cm(out: Path):
@@ -692,17 +693,78 @@ def start(
     typer.echo(f"日志：{out / 'supervisor.log'}")
 
 
+def _read_progress_snapshot_data(out: Path, thread: str = "default") -> dict | None:
+    """从 checkpoint 提取队列/阶段轻量快照，供 Web 进度条使用。"""
+    chk = out / "checkpoints.sqlite"
+    if not chk.exists():
+        return None
+    try:
+        with _saver_cm(out) as saver:
+            g = build_graph(checkpointer=saver)
+            snap = g.get_state(_config(thread))
+    except Exception:
+        return None
+    if snap is None or snap.values is None:
+        return None
+    state = snap.values
+
+    def _get(key, default=None):
+        return _field(state, key, default)
+
+    coder_queue = list(_get("coder_work_queue") or [])
+    coder_artifacts = list(_get("coder_work_artifacts") or [])
+    writer_queue = list(_get("writer_section_queue") or [])
+    figure_queue = list(_get("figure_work_queue") or [])
+    der_queue = list(_get("modeler_derivation_queue") or [])
+    der_done = list(_get("modeler_completed_derivations") or [])
+    next_nodes = list(snap.next or [])
+    return {
+        "next_node": next_nodes[0] if next_nodes else "",
+        "stage_target": _get("stage_target"),
+        "iteration": _get("iteration"),
+        "blueprint_iteration": _get("blueprint_iteration"),
+        "modeler_phase": _get("modeler_phase"),
+        "coder_phase": _get("coder_phase"),
+        "coder_queue_len": len(coder_queue),
+        "coder_queue_done": len(coder_artifacts),
+        "coder_queue_total": len(coder_queue) + len(coder_artifacts),
+        "writer_sections_remaining": len(writer_queue),
+        "figure_queue_len": len(figure_queue),
+        "derivation_done": len(der_done),
+        "derivation_pending": len(der_queue),
+    }
+
+
+def _dump_progress_snapshot(out: Path, thread: str = "default") -> None:
+    """写入 progress_snapshot.json（失败时静默）。"""
+    data = _read_progress_snapshot_data(out, thread)
+    if data is None:
+        return
+    try:
+        (out / "progress_snapshot.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
 @app.command()
 def status(
     out: Path = typer.Option(Path("runs/latest")),
     thread: str = typer.Option("default"),
+    as_json: bool = typer.Option(False, "--json", help="以 JSON 输出，供 Web/脚本消费"),
 ):
     """读取 checkpoint、supervisor 和最终提交标记，不修改运行状态。"""
     inspection = inspect_checkpoint(out, thread)
     supervisor_state = None
     completion = None
-    for path, target in ((out / "supervisor.json", "supervisor"),
-                         (out / "completion.json", "completion")):
+    failure = None
+    for path, target in (
+        (out / "supervisor.json", "supervisor"),
+        (out / "completion.json", "completion"),
+        (out / "failure.json", "failure"),
+    ):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
@@ -711,8 +773,10 @@ def status(
             supervisor_state = (
                 reconcile_supervisor_state(payload) if isinstance(payload, dict) else payload
             )
-        else:
+        elif target == "completion":
             completion = payload
+        else:
+            failure = payload
     verified_completion = load_verified_completion(out)
     if (
         supervisor_state
@@ -725,6 +789,23 @@ def status(
             f"superseded_by_verified_completion:{verified_completion.status}"
         )
         supervisor_state["effective_status"] = verified_completion.status
+    snapshot = _read_progress_snapshot_data(out, thread)
+    if snapshot is not None:
+        _dump_progress_snapshot(out, thread)
+
+    if as_json:
+        payload = {
+            "checkpoint_exists": inspection.checkpoint_exists,
+            "next_node": inspection.next_node or "",
+            "final_status": inspection.final_status or "",
+            "supervisor": supervisor_state,
+            "completion": completion,
+            "failure": failure,
+            "snapshot": snapshot,
+        }
+        typer.echo(json.dumps(payload, ensure_ascii=False, default=str))
+        return
+
     typer.echo(f"checkpoint: {'yes' if inspection.checkpoint_exists else 'no'}")
     typer.echo(f"next_node: {inspection.next_node or '-'}")
     typer.echo(f"final_status: {inspection.final_status or '-'}")
@@ -736,6 +817,9 @@ def status(
             typer.echo(f"stale_reason: {supervisor_state['stale_reason']}")
         if supervisor_state.get("effective_status"):
             typer.echo(f"effective_status: {supervisor_state['effective_status']}")
+    if failure:
+        typer.echo(f"failure_node: {failure.get('node', '-')}")
+        typer.echo(f"failure_kind: {failure.get('kind', '-')}")
     if completion:
         typer.echo(f"completion: {completion.get('status', '-')}")
 
