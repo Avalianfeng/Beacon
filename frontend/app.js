@@ -128,14 +128,20 @@ function setPreview(title, body, extra = "") {
 }
 
 /**
- * Step2：运行详情默认人话时间线；原始 ms 账折叠在「技术明细」。
+ * Step2/4：运行详情人话时间线；空态与旧 run 降级（view 来自 API timeline.view）。
  * @param {object} payload /api/artifacts 响应
  */
 function renderTraceTimelineHtml(payload) {
   const timeline = payload?.timeline;
   const t = payload?.traceSummary;
-  if (!timeline?.events?.length && !t) {
-    return "<p>还没有运行记录。任务开始后，这里会按时间列出刚完成的步骤。</p>";
+  const events = Array.isArray(timeline?.events) ? timeline.events : [];
+  const view = timeline?.view || { mode: "empty", body: "还没有运行记录。", openTech: false };
+
+  if (view.mode === "empty" || view.mode === "degraded_no_trace") {
+    return `
+      <p>${escapeHtml(view.body || "")}</p>
+      <p class="hint">提示：较新任务会显示「撰写论文章节」等人话步骤；旧目录可能只有技术明细或仅有产物。</p>
+    `;
   }
 
   const stats = timeline?.stats || {};
@@ -151,7 +157,6 @@ function renderTraceTimelineHtml(payload) {
     ? `<div class="timeline-live${live.waiting_api ? " waiting" : ""}">${escapeHtml(live.message)}</div>`
     : "";
 
-  const events = Array.isArray(timeline?.events) ? timeline.events : [];
   const list = events.length
     ? `<ol class="timeline-list">${events.map((ev) => {
       const status = escapeHtml(ev.status || "ok");
@@ -160,7 +165,7 @@ function renderTraceTimelineHtml(payload) {
         <div class="timeline-item-detail">${escapeHtml(ev.detail || "")}</div>
       </li>`;
     }).join("")}</ol>`
-    : "<p class=\"hint\">暂无人话事件（可能是旧任务）；可展开下方技术明细。</p>";
+    : "";
 
   const attempts = (t?.attempts || []).slice(-20).map((a) =>
     `${a.status} · ${a.model || "?"} · ${a.profile || ""} · ${a.latency_ms || 0}ms${a.error_kind ? ` · ${a.error_kind}` : ""}`,
@@ -169,13 +174,18 @@ function renderTraceTimelineHtml(payload) {
     `${n.name}: ${n.duration_ms}ms`,
   ).join("\n");
   const techBody = escapeHtml([attempts || "(无调用明细)", nodes || ""].filter(Boolean).join("\n\n"));
+  const openAttr = view.openTech ? " open" : "";
+  const degradedNote = view.mode === "degraded_tech_only"
+    ? `<p class="hint">${escapeHtml(view.body || "")}</p>`
+    : "";
 
   return `
     <p>AI 调用 ${llmCalls} 次（失败 ${llmFailures}，超时 ${llmTimeouts}），已完成步骤 ${nodeCount} 个。</p>
+    ${degradedNote}
     ${liveBanner}
     ${latest}
     ${list}
-    <details class="tech-details">
+    <details class="tech-details"${openAttr}>
       <summary>技术明细（原始耗时）</summary>
       <pre class="log-preview">${techBody}</pre>
     </details>
@@ -671,7 +681,8 @@ async function loadArtifacts(tab = "paper") {
   } else if (tab === "blueprint") {
     renderBlueprint(payload.stateSummary);
   } else if (tab === "trace") {
-    setPreview("运行详情", "", renderTraceTimelineHtml(payload));
+    const view = payload.timeline?.view;
+    setPreview(view?.title || "运行详情", "", renderTraceTimelineHtml(payload));
   } else {
     const figs = payload.figures || [];
     if (figs.length) {

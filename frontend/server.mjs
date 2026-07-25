@@ -17,7 +17,7 @@ import {
   handleRecover,
   handleRunsHistory,
 } from "./routes/progress.mjs";
-import { buildHumanTimeline, buildLiveWaitHint } from "./lib/timeline.mjs";
+import { buildHumanTimeline, buildLiveWaitHint, describeTimelineView } from "./lib/timeline.mjs";
 
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const projectRoot = resolve(root, "..");
@@ -514,7 +514,33 @@ async function handleApi(request, response, url) {
     const modelCount = Array.isArray(stateSummary?.model_versions)
       ? stateSummary.model_versions.length
       : (stateSummary?.stage_target ? 1 : 0);
-    sendJson(response, 200, {
+    const intermediateDto = {
+      hasBlueprint,
+      hasPaper: Boolean(paper),
+      hasPdf,
+      figureCount: figureFiles.length,
+      scriptCount: intermediate.scripts.length,
+      stageTarget: stateSummary?.stage_target || null,
+      modelHint: modelCount,
+      extras: intermediate.extras,
+    };
+    const traceSummary = trace
+      ? {
+          threadId: trace.thread_id,
+          llmCalls: trace.llm_calls,
+          llmFailures: trace.llm_failures,
+          llmTimeouts: trace.llm_timeouts,
+          tokens: trace.tokens,
+          nodes: Array.isArray(trace.nodes) ? trace.nodes.length : 0,
+          nodeDurations: Array.isArray(trace.nodes) ? trace.nodes.slice(-40) : [],
+          attempts: Array.isArray(trace.llm_attempt_records)
+            ? trace.llm_attempt_records.slice(-40)
+            : [],
+          perModel: trace.per_model || null,
+        }
+      : null;
+    const timeline = await buildArtifactsTimeline(outDir, trace);
+    const payload = {
       out,
       exists: files.length > 0,
       files,
@@ -524,35 +550,17 @@ async function handleApi(request, response, url) {
         : null,
       figures: figureFiles,
       scripts: intermediate.scripts,
-      intermediate: {
-        hasBlueprint,
-        hasPaper: Boolean(paper),
-        hasPdf,
-        figureCount: figureFiles.length,
-        scriptCount: intermediate.scripts.length,
-        stageTarget: stateSummary?.stage_target || null,
-        modelHint: modelCount,
-        extras: intermediate.extras,
-      },
+      intermediate: intermediateDto,
       completion,
-      traceSummary: trace
-        ? {
-            threadId: trace.thread_id,
-            llmCalls: trace.llm_calls,
-            llmFailures: trace.llm_failures,
-            llmTimeouts: trace.llm_timeouts,
-            tokens: trace.tokens,
-            nodes: Array.isArray(trace.nodes) ? trace.nodes.length : 0,
-            nodeDurations: Array.isArray(trace.nodes) ? trace.nodes.slice(-40) : [],
-            attempts: Array.isArray(trace.llm_attempt_records)
-              ? trace.llm_attempt_records.slice(-40)
-              : [],
-            perModel: trace.per_model || null,
-          }
-        : null,
-      timeline: await buildArtifactsTimeline(outDir, trace),
+      traceSummary,
+      timeline,
       stateSummary,
-    });
+    };
+    payload.timeline = {
+      ...timeline,
+      view: describeTimelineView(payload),
+    };
+    sendJson(response, 200, payload);
     return;
   }
 

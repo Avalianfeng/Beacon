@@ -200,6 +200,66 @@ export function titleForWriterSection(section) {
 }
 
 /**
+ * Step4：无 trace / 旧 run / 仅有产物时的空态与降级说明。
+ * @param {object} payload /api/artifacts 响应（或同形对象）
+ * @returns {{
+ *   mode: "ready"|"empty"|"degraded_no_trace"|"degraded_tech_only",
+ *   title: string,
+ *   body: string,
+ *   openTech: boolean,
+ * }}
+ */
+export function describeTimelineView(payload = {}) {
+  const timeline = payload.timeline || null;
+  const t = payload.traceSummary || null;
+  const events = Array.isArray(timeline?.events) ? timeline.events : [];
+  const techNodes = Array.isArray(t?.nodeDurations) ? t.nodeDurations.length : Number(t?.nodes) || 0;
+  const techAttempts = Array.isArray(t?.attempts) ? t.attempts.length : 0;
+  const hasHuman = events.length > 0;
+  const hasTech = Boolean(t) && (techNodes > 0 || techAttempts > 0 || Number(t?.llmCalls) > 0);
+  const mid = payload.intermediate || {};
+  const hasArtifacts = Boolean(
+    mid.hasPaper || mid.hasPdf || mid.hasBlueprint
+    || (mid.figureCount || 0) > 0
+    || (mid.scriptCount || 0) > 0,
+  );
+
+  if (hasHuman) {
+    return {
+      mode: "ready",
+      title: "运行详情",
+      body: "",
+      openTech: false,
+    };
+  }
+
+  if (hasTech) {
+    return {
+      mode: "degraded_tech_only",
+      title: "运行详情（兼容旧记录）",
+      body: "这份任务还没有可翻译的人话时间线，已为你展开下方技术明细。较新的运行会直接显示「刚完成了什么」。",
+      openTech: true,
+    };
+  }
+
+  if (hasArtifacts || (payload.exists && Array.isArray(payload.files) && payload.files.length > 0)) {
+    return {
+      mode: "degraded_no_trace",
+      title: "没有可展示的运行轨迹",
+      body: "目录里已有部分产物，但缺少或无法解析运行记录（trace）。可先查看「论文 / 图表」页；若任务未结束，点继续后会逐步补全这里的时间线。",
+      openTech: false,
+    };
+  }
+
+  return {
+    mode: "empty",
+    title: "还没有运行记录",
+    body: "任务开始后，这里会按时间列出刚完成的步骤。完整流程可能需要数十分钟，请耐心等待。",
+    openTech: false,
+  };
+}
+
+/**
  * Step3：从 progress snapshot 生成「正在等 AI / 当前节」提示。
  * @param {object} input
  * @param {object|null} [input.snapshot]

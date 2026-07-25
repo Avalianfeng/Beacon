@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildHumanTimeline,
   buildLiveWaitHint,
+  describeTimelineView,
   formatDurationZh,
   titleForNode,
   titleForWriterSection,
@@ -72,4 +73,36 @@ test("buildLiveWaitHint 空闲时不制造假忙碌", () => {
   assert.equal(live.active, false);
   assert.equal(live.waiting_api, false);
   assert.equal(live.message, "");
+});
+
+test("describeTimelineView 区分空态 / 无 trace 产物 / 仅技术明细", () => {
+  const empty = describeTimelineView({});
+  assert.equal(empty.mode, "empty");
+
+  const noTrace = describeTimelineView({
+    exists: true,
+    files: [{ name: "fig.png" }],
+    intermediate: { figureCount: 2 },
+    timeline: { events: [] },
+    traceSummary: null,
+  });
+  assert.equal(noTrace.mode, "degraded_no_trace");
+
+  const techOnly = describeTimelineView({
+    timeline: { events: [] },
+    traceSummary: {
+      llmCalls: 3,
+      nodes: 2,
+      nodeDurations: [{ name: "writer_section", duration_ms: 1000 }],
+      attempts: [],
+    },
+  });
+  assert.equal(techOnly.mode, "degraded_tech_only");
+  assert.equal(techOnly.openTech, true);
+
+  const ready = describeTimelineView({
+    timeline: { events: [{ id: "n0", title: "撰写论文章节", status: "ok" }] },
+    traceSummary: { llmCalls: 1, nodes: 1, nodeDurations: [], attempts: [] },
+  });
+  assert.equal(ready.mode, "ready");
 });
