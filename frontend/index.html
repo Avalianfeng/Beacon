@@ -38,32 +38,46 @@
       <main class="workspace" id="workspace">
         <header class="topbar">
           <div>
-            <p class="eyebrow">Competition Paper Automation</p>
-            <h1>为数学建模队伍点亮从题目到论文的路径</h1>
+            <p class="eyebrow">从题目到论文</p>
+            <h1>上传赛题，一键生成建模论文</h1>
           </div>
           <div class="topbar-actions">
             <button class="ghost-button" type="button" id="importDemo">导入示例题</button>
-            <button class="primary-button" type="button" id="runPipeline">启动流水线</button>
+            <button class="ghost-button" type="button" id="stopRun" hidden>停止</button>
+            <button class="ghost-button" type="button" id="continueRun" hidden>继续任务</button>
+            <button class="primary-button" type="button" id="runPipeline">开始生成论文</button>
           </div>
         </header>
 
         <section class="status-strip" aria-label="运行概览">
           <article>
-            <span>当前阶段</span>
-            <strong id="currentStage">Ready</strong>
+            <span>当前状态</span>
+            <strong id="currentStage">尚未开始</strong>
           </article>
           <article>
-            <span>节点进度</span>
-            <strong id="nodeProgress">0 / 14</strong>
+            <span>进度</span>
+            <strong id="nodeProgress">0 / 6</strong>
           </article>
           <article>
             <span>质量评分</span>
             <strong id="qualityScore">--</strong>
           </article>
           <article>
-            <span>输出目录</span>
+            <span>任务目录</span>
             <strong id="outputSummary">runs/ui-latest</strong>
           </article>
+        </section>
+
+        <section class="attention-card" id="attentionCard" hidden aria-live="polite">
+          <div>
+            <p class="eyebrow" id="attentionEyebrow">需要你处理</p>
+            <h2 id="attentionTitle">任务暂时中断</h2>
+            <p id="attentionDetail"></p>
+          </div>
+          <div class="attention-actions">
+            <button class="primary-button" type="button" id="attentionPrimary"></button>
+            <button class="ghost-button" type="button" id="attentionSecondary" hidden></button>
+          </div>
         </section>
 
         <div class="layout-grid">
@@ -107,74 +121,79 @@
 
             <div class="control-row">
               <label class="toggle">
-                <input id="ragToggle" type="checkbox" checked />
-                <span>启用 RAG 模型库</span>
-              </label>
-              <label class="toggle">
                 <input id="hitlToggle" type="checkbox" checked />
-                <span>Human-in-the-loop</span>
+                <span>生成后先让我审核再出最终稿</span>
               </label>
               <label class="toggle">
-                <input id="forceToggle" type="checkbox" />
-                <span>覆盖已有输出</span>
+                <input id="ragToggle" type="checkbox" />
+                <span>参考知识库（可选）</span>
               </label>
             </div>
+            <details class="more-options">
+              <summary>更多选项</summary>
+              <div class="control-row">
+                <label class="toggle">
+                  <input id="forceToggle" type="checkbox" />
+                  <span>覆盖已有进度（会丢掉当前断点）</span>
+                </label>
+              </div>
+              <p class="hint">完整流程常需数十分钟到数小时。中途关掉页面也可以稍后「继续任务」。</p>
+            </details>
           </section>
 
           <section class="panel pipeline-panel" id="pipeline" aria-labelledby="pipeline-title">
             <div class="panel-heading">
               <div>
-                <p class="eyebrow">LangGraph Pipeline</p>
-                <h2 id="pipeline-title">建模流水线</h2>
+                <p class="eyebrow">进度</p>
+                <h2 id="pipeline-title">生成进度</h2>
               </div>
-              <button class="icon-button" type="button" id="resetPipeline" aria-label="刷新流水线" title="刷新流水线">↻</button>
+              <button class="icon-button" type="button" id="resetPipeline" aria-label="刷新进度" title="刷新进度">↻</button>
             </div>
 
             <ol class="pipeline-list" id="pipelineList">
-              <li><span>Analyst</span><small>题意拆解与 Problem Blueprint</small></li>
-              <li><span>Blueprint Critic</span><small>审查题目理解完整性</small></li>
-              <li><span>Modeler</span><small>建立基础与改进模型</small></li>
-              <li><span>Model Critic</span><small>检查假设与推导漏洞</small></li>
-              <li><span>Coder</span><small>生成可运行实验代码</small></li>
-              <li><span>Code Consistency</span><small>模型-代码一致性审查</small></li>
-              <li><span>Sensitivity</span><small>参数扫描与鲁棒性分析</small></li>
-              <li><span>Figure Pipeline</span><small>图表渲染与质量评审</small></li>
-              <li><span>Writer</span><small>分章节生成论文草稿</small></li>
-              <li><span>Paper Critic</span><small>论文质量与格式评审</small></li>
-              <li><span>Table Assembler</span><small>注入表格并清洗正文</small></li>
-              <li><span>Evaluation</span><small>综合评分与改进建议</small></li>
-              <li><span>Human Review</span><small>等待人工批准或拒绝</small></li>
-              <li><span>LaTeX</span><small>编译 PDF 并回退 Markdown</small></li>
+              <li data-macro="understand"><span>理解题目</span><small>读懂题意与要求</small></li>
+              <li data-macro="model"><span>建立模型</span><small>假设、公式与模型评审</small></li>
+              <li data-macro="compute"><span>计算验证</span><small>写代码、跑实验与敏感性</small></li>
+              <li data-macro="figures"><span>图表</span><small>生成并检查插图</small></li>
+              <li data-macro="write"><span>写论文</span><small>章节撰写、评分与审核</small></li>
+              <li data-macro="finish"><span>收尾</span><small>排版编译与最终检查</small></li>
             </ol>
+            <p class="hint" id="progressHint">准备好题目后点击「开始生成论文」。</p>
+            <details class="tech-details" id="techDetails">
+              <summary>高级详情（技术信息）</summary>
+              <pre class="log-preview" id="techDetailsBody">暂无</pre>
+            </details>
           </section>
 
           <section class="panel run-panel" aria-labelledby="run-title">
             <div class="panel-heading">
               <div>
-                <p class="eyebrow">Run Control</p>
-                <h2 id="run-title">执行参数</h2>
+                <p class="eyebrow">任务</p>
+                <h2 id="run-title">我的任务</h2>
               </div>
-              <span class="live-dot" id="runState">Live</span>
+              <span class="live-dot" id="runState">就绪</span>
             </div>
 
             <div class="metric-stack">
               <label class="field compact">
-                <span>输出目录</span>
+                <span>保存位置</span>
                 <input id="outputDir" value="runs/ui-latest" />
               </label>
-              <label class="field compact">
+              <label class="field compact visually-hidden">
                 <span>线程 ID</span>
                 <input id="threadId" value="default" />
               </label>
               <label class="field compact">
-                <span>迭代深度 <b id="iterationValue">3</b></span>
+                <span>仔细程度 <b id="iterationValue">3</b></span>
                 <input id="iterationDepth" type="range" min="1" max="5" value="3" />
               </label>
             </div>
 
+            <div class="history-list" id="runsHistory" aria-label="历史任务"></div>
+
             <div class="command-preview" aria-label="命令预览">
-              <span>CLI</span>
-              <code id="commandPreview">math-agent run --problem problem.json --out runs/ui-latest --thread default</code>
+              <span>命令</span>
+              <code id="commandPreview">math-agent supervise --problem problem.json --out runs/ui-latest --thread default</code>
             </div>
           </section>
 
@@ -189,9 +208,9 @@
 
             <div class="tabs" role="tablist" aria-label="产物类型">
               <button class="active" type="button" data-tab="paper">论文</button>
-              <button type="button" data-tab="blueprint">Blueprint</button>
+              <button type="button" data-tab="blueprint">题目理解</button>
               <button type="button" data-tab="figures">图表</button>
-              <button type="button" data-tab="trace">Trace</button>
+              <button type="button" data-tab="trace">运行详情</button>
             </div>
 
             <div class="artifact-preview" id="artifactPreview">
@@ -238,10 +257,10 @@
           </div>
           <div class="settings-layout">
             <nav class="settings-nav" aria-label="设置分类">
-              <button class="active" type="button" data-settings-tab="api">API 配置</button>
-              <button type="button" data-settings-tab="models">模型选择</button>
-              <button type="button" data-settings-tab="rag">RAG 知识库</button>
-              <button type="button" data-settings-tab="advanced">高级设置</button>
+              <button class="active" type="button" data-settings-tab="api">1. 连接 AI</button>
+              <button type="button" data-settings-tab="models">2. 选择模型</button>
+              <button type="button" data-settings-tab="rag">知识库（可选）</button>
+              <button type="button" data-settings-tab="advanced">高级</button>
             </nav>
             <div class="settings-content" id="settingsContent"></div>
           </div>

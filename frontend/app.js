@@ -49,8 +49,22 @@ const dashboardSections = document.querySelectorAll(
   "#workspace > .topbar, #workspace > .status-strip, #workspace > .layout-grid",
 );
 
-const stages = ["Analyst", "Blueprint Critic", "Modeler", "Model Critic", "Coder", "Code Consistency", "Sensitivity", "Figure Pipeline", "Writer", "Paper Critic", "Table Assembler", "Evaluation", "Human Review", "LaTeX"];
-const stageLogNames = ["analyst", "blueprint_critic", "modeler", "model_critic", "coder", "model_code_consistency", "sensitivity", "figure_pipeline", "writer", "paper_critic", "table_assembler", "evaluation", "human_review", "latex"];
+const stages = ["理解题目", "建立模型", "计算验证", "图表", "写论文", "收尾"];
+const stageIds = ["understand", "model", "compute", "figures", "write", "finish"];
+const stageLogNames = [
+  "analyst", "blueprint_critic", "modeler", "model_critic", "coder",
+  "model_code_consistency", "sensitivity", "figure_pipeline", "writer",
+  "paper_critic", "table_assembler", "evaluation", "human_review", "latex", "finalizer",
+];
+const logNameToMacro = {
+  analyst: 0, blueprint_critic: 0,
+  modeler: 1, modeler_derivation: 1, modeler_consistency: 1, model_critic: 1, advance_stage: 1,
+  coder: 2, coder_generate: 2, coder_execute: 2, model_code_consistency: 2,
+  sensitivity: 2, sensitivity_code_generate: 2, sensitivity_code_execute: 2, sensitivity_interpret: 2,
+  figure_pipeline: 3, figure_critic: 3, figure_analysis: 3,
+  writer: 4, writer_section: 4, paper_critic: 4, table_assembler: 4, evaluation: 4, human_review: 4,
+  latex: 5, finalizer: 5,
+};
 const MAX_PROBLEM_TEXT_CHARS = 400_000;
 const templateHints = {
   default: "适配建模论文、代码、敏感性分析与 LaTeX 编译流程。",
@@ -62,10 +76,24 @@ let activeTemplate = "default";
 let toastTimer;
 let currentRunId = null;
 let pollTimer = null;
+let progressTimer = null;
 let logStream = null;
 let lastArtifacts = null;
+let lastProgress = null;
 let currentFixturePath = null;
 let uploadedAttachments = [];
+let showTechLogs = false;
+
+const stopRunButton = document.querySelector("#stopRun");
+const continueRunButton = document.querySelector("#continueRun");
+const attentionCard = document.querySelector("#attentionCard");
+const attentionTitle = document.querySelector("#attentionTitle");
+const attentionDetail = document.querySelector("#attentionDetail");
+const attentionPrimary = document.querySelector("#attentionPrimary");
+const attentionSecondary = document.querySelector("#attentionSecondary");
+const progressHint = document.querySelector("#progressHint");
+const techDetailsBody = document.querySelector("#techDetailsBody");
+const runsHistory = document.querySelector("#runsHistory");
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -106,28 +134,41 @@ function setRunLogPreview(run) {
 function updatePipeline(mode = "local") {
   pipelineItems.forEach((item, index) => {
     item.classList.toggle("done", index < stageIndex);
-    item.classList.toggle("active", index === stageIndex && stageIndex < stages.length);
+    item.classList.toggle("active", index === stageIndex && stageIndex < stages.length && mode !== "paused");
     item.classList.toggle("paused", mode === "paused" && index === stageIndex);
   });
   const isComplete = stageIndex >= stages.length;
-  currentStage.textContent = stageIndex < 0
-    ? "Ready"
-    : isComplete
-      ? "Completed"
-      : (mode === "paused" ? "Paused" : stages[Math.min(stageIndex, stages.length - 1)]);
-  nodeProgress.textContent = `${Math.max(0, Math.min(stageIndex + 1, stages.length))} / ${stages.length}`;
+  if (!lastProgress) {
+    currentStage.textContent = stageIndex < 0
+      ? "尚未开始"
+      : isComplete
+        ? "已完成"
+        : (mode === "paused" ? "请你确认" : stages[Math.min(stageIndex, stages.length - 1)]);
+    nodeProgress.textContent = `${Math.max(0, Math.min(stageIndex + 1, stages.length))} / ${stages.length}`;
+  }
   const actualScore = lastArtifacts?.stateSummary?.evaluation_overall;
-  qualityScore.textContent = isComplete && Number.isFinite(Number(actualScore))
+  qualityScore.textContent = Number.isFinite(Number(actualScore))
     ? Number(actualScore).toFixed(2)
     : "--";
-  runButton.textContent = mode === "running" ? "运行中" : isComplete ? "重新运行" : "启动流水线";
-  runButton.disabled = mode === "running";
-  runState.textContent = mode === "running" ? "Running" : mode === "paused" ? "Paused" : isComplete ? "Done" : "Ready";
+  const running = mode === "running";
+  runButton.textContent = running ? "生成中…" : isComplete ? "重新开始" : "开始生成论文";
+  runButton.disabled = running;
+  if (stopRunButton) stopRunButton.hidden = !running;
+  if (continueRunButton) {
+    continueRunButton.hidden = running || mode === "paused" || !lastProgress?.can_continue;
+  }
+  runState.textContent = running
+    ? "进行中"
+    : mode === "paused"
+      ? "待审核"
+      : isComplete
+        ? "完成"
+        : "就绪";
 }
 
 function updateCommand() {
   const parts = [
-    "math-agent run",
+    "math-agent supervise",
     "--problem problem.json",
     `--out ${outputDir.value || "runs/ui-latest"}`,
     `--thread ${threadId.value || "default"}`,
@@ -138,7 +179,202 @@ function updateCommand() {
   commandPreview.textContent = parts.join(" ");
   outputSummary.textContent = outputDir.value || "runs/ui-latest";
   iterationValue.textContent = iterationDepth.value;
-  knowledgeBadge.textContent = ragToggle.checked ? "RAG On" : "RAG Off";
+  knowledgeBadge.textContent = ragToggle.checked ? "知识库开" : "知识库关";
+}
+
+function applyProgress(progress) {
+  if (!progress) return;
+  lastProgress = progress;
+  if (progress.macro_index > 0) stageIndex = Math.min(progress.macro_index - 1, stages.length - 1);
+  if (progress.user_status === "completed") stageIndex = stages.length;
+  const mode = ["running", "recovering"].includes(progress.user_status)
+    ? "running"
+    : progress.user_status === "needs_review"
+      ? "paused"
+      : "local";
+  if (Array.isArray(progress.stages)) {
+    pipelineItems.forEach((item, index) => {
+      const state = progress.stages[index]?.state;
+      item.classList.toggle("done", state === "done");
+      item.classList.toggle("active", state === "active");
+      item.classList.toggle("paused", state === "paused");
+    });
+  } else {
+    updatePipeline(mode);
+  }
+  currentStage.textContent = progress.user_title || progress.macro_label || "尚未开始";
+  nodeProgress.textContent = `${progress.macro_index || 0} / ${progress.macro_total || stages.length}`;
+  if (progressHint) progressHint.textContent = progress.user_detail || "";
+  if (techDetailsBody && progress.tech) {
+    techDetailsBody.textContent = JSON.stringify({
+      next_node: progress.tech.next_node,
+      final_status: progress.tech.final_status,
+      supervisor: progress.tech.supervisor && {
+        status: progress.tech.supervisor.status,
+        mode: progress.tech.supervisor.mode,
+        last_node: progress.tech.supervisor.last_node,
+        recoveries: progress.tech.supervisor.recoveries,
+        message: progress.tech.supervisor.message,
+      },
+      failure: progress.tech.failure,
+      snapshot: progress.tech.snapshot,
+    }, null, 2);
+  }
+  runButton.disabled = mode === "running";
+  runButton.textContent = mode === "running" ? "生成中…" : "开始生成论文";
+  if (stopRunButton) stopRunButton.hidden = !progress.can_stop;
+  if (continueRunButton) continueRunButton.hidden = !progress.can_continue || mode === "running";
+  runState.textContent = mode === "running" ? "进行中" : mode === "paused" ? "待审核" : "就绪";
+  renderAttention(progress);
+}
+
+function renderAttention(progress) {
+  if (!attentionCard) return;
+  const show = [
+    "needs_attention", "needs_settings", "needs_review", "degraded", "rejected", "stopped",
+  ].includes(progress.user_status);
+  attentionCard.hidden = !show;
+  if (!show) return;
+  attentionTitle.textContent = progress.user_title || "";
+  attentionDetail.textContent = progress.user_detail || "";
+  attentionPrimary.textContent = progress.suggested_label || "继续";
+  attentionPrimary.onclick = () => handleSuggestedAction(progress);
+  if (progress.user_status === "needs_review") {
+    attentionSecondary.hidden = false;
+    attentionSecondary.textContent = "驳回";
+    attentionSecondary.onclick = () => resumeRun(false);
+  } else if (progress.user_status === "degraded") {
+    attentionSecondary.hidden = false;
+    attentionSecondary.textContent = "查看问题说明";
+    attentionSecondary.onclick = () => {
+      loadArtifacts("paper").catch(() => {});
+      document.querySelector("#outputs")?.scrollIntoView({ behavior: "smooth" });
+    };
+  } else {
+    attentionSecondary.hidden = true;
+  }
+}
+
+function handleSuggestedAction(progress) {
+  const action = progress.suggested_action;
+  if (action === "open_settings") {
+    activateNav("#settings");
+    location.hash = "#settings";
+    return;
+  }
+  if (action === "continue") {
+    continueProjectRun().catch((e) => showToast(e.message));
+    return;
+  }
+  if (action === "approve") {
+    resumeRun(true);
+    return;
+  }
+  if (action === "view_paper") {
+    loadArtifacts("paper").catch(() => {});
+    document.querySelector("#outputs")?.scrollIntoView({ behavior: "smooth" });
+    return;
+  }
+  if (action === "stop") {
+    stopProjectRun().catch((e) => showToast(e.message));
+    return;
+  }
+  startProjectRun().catch((e) => showToast(e.message));
+}
+
+async function refreshProgress() {
+  const out = outputDir.value || "runs/ui-latest";
+  const thread = threadId.value || "default";
+  try {
+    const progress = await api(
+      `/api/progress?out=${encodeURIComponent(out)}&thread=${encodeURIComponent(thread)}`,
+    );
+    applyProgress(progress);
+    return progress;
+  } catch (error) {
+    console.warn("progress refresh failed", error);
+    return null;
+  }
+}
+
+function scheduleProgressRefresh(delay = 4000) {
+  window.clearTimeout(progressTimer);
+  progressTimer = window.setTimeout(async () => {
+    const p = await refreshProgress();
+    if (p && ["running", "recovering"].includes(p.user_status)) {
+      scheduleProgressRefresh(4000);
+    }
+  }, delay);
+}
+
+async function loadRunsHistory() {
+  if (!runsHistory) return;
+  try {
+    const { runs } = await api("/api/runs-history");
+    if (!runs?.length) {
+      runsHistory.innerHTML = "<p class=\"hint\">还没有历史任务。</p>";
+      return;
+    }
+    runsHistory.innerHTML = runs.slice(0, 8).map((item) => `
+      <button type="button" class="history-item" data-out="${escapeHtml(item.out)}">
+        <strong>${escapeHtml(item.name)}</strong>
+        <span>${escapeHtml(item.status || "-")}${item.last_node ? ` · ${escapeHtml(item.last_node)}` : ""}</span>
+      </button>
+    `).join("");
+    runsHistory.querySelectorAll(".history-item").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        outputDir.value = btn.dataset.out;
+        updateCommand();
+        attachExistingRun().catch((e) => showToast(e.message));
+      });
+    });
+  } catch {
+    runsHistory.innerHTML = "";
+  }
+}
+
+async function attachExistingRun() {
+  const { run } = await api("/api/attach", {
+    method: "POST",
+    body: JSON.stringify({
+      out: outputDir.value || "runs/ui-latest",
+      thread: threadId.value || "default",
+    }),
+  });
+  currentRunId = run.id;
+  await refreshProgress();
+  await loadArtifacts("paper").catch(() => {});
+  showToast("已加载上次任务");
+  if (run.status === "running" || run.status === "paused") {
+    startLogStream(currentRunId);
+    pollTimer = window.setTimeout(pollCurrentRun, 2000);
+    scheduleProgressRefresh(3000);
+  }
+}
+
+async function stopProjectRun() {
+  if (!currentRunId) return;
+  await api(`/api/runs/${encodeURIComponent(currentRunId)}/stop`, { method: "POST" });
+  showToast("已请求停止");
+  await refreshProgress();
+}
+
+async function continueProjectRun() {
+  if (!currentRunId) {
+    await attachExistingRun();
+  }
+  if (!currentRunId) throw new Error("没有可继续的任务");
+  updatePipeline("running");
+  setPreview("正在继续任务", "从上次中断的地方继续生成，请稍候。");
+  const { run } = await api(`/api/runs/${encodeURIComponent(currentRunId)}/recover`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  currentRunId = run.id;
+  startLogStream(currentRunId);
+  pollTimer = window.setTimeout(pollCurrentRun, 2000);
+  scheduleProgressRefresh(2000);
+  showToast("已继续任务");
 }
 
 function activateNav(hash) {
@@ -265,34 +501,66 @@ async function loadArtifacts(tab = "paper") {
     ? Number(actualScore).toFixed(2)
     : "--";
   if (tab === "paper") {
+    const issues = payload.completion?.issues || [];
+    const degradedNote = payload.completion?.status === "degraded"
+      ? `<p class="hint">已出稿，但未完全达到质量门禁。${issues.length ? `问题：${escapeHtml(issues.slice(0, 5).join("；"))}` : ""}</p>`
+      : "";
+    const pdfLink = payload.paperPdfUrl
+      ? `<p><a class="primary-button" href="${escapeHtml(payload.paperPdfUrl)}" target="_blank" rel="noopener">打开 PDF</a></p>`
+      : "";
     setPreview(
-      payload.paperExcerpt ? "论文预览" : "还没有论文产物",
-      payload.paperExcerpt ? payload.paperExcerpt.slice(0, 700) : `未在 ${payload.out} 找到 paper.md。先启动流水线，或检查输出目录。`,
+      payload.paperExcerpt ? "论文预览" : "还没有论文",
+      payload.paperExcerpt
+        ? payload.paperExcerpt.slice(0, 1200)
+        : "还没有生成论文。先点「开始生成论文」，或加载上次任务。",
+      `${degradedNote}${pdfLink}`,
     );
   } else if (tab === "blueprint") {
     renderBlueprint(payload.stateSummary);
   } else if (tab === "trace") {
+    const t = payload.traceSummary;
+    if (!t) {
+      setPreview("运行详情", "还没有运行记录。");
+      return;
+    }
+    const attempts = (t.attempts || []).slice(-15).map((a) =>
+      `${a.status} · ${a.model || "?"} · ${a.profile || ""} · ${a.latency_ms || 0}ms${a.error_kind ? ` · ${a.error_kind}` : ""}`,
+    ).join("\n");
+    const nodes = (t.nodeDurations || []).slice(-15).map((n) =>
+      `${n.name}: ${n.duration_ms}ms`,
+    ).join("\n");
     setPreview(
-      payload.traceSummary ? "Trace 摘要" : "还没有 Trace",
-      payload.traceSummary
-        ? `thread=${payload.traceSummary.threadId || "-"}，LLM 调用 ${payload.traceSummary.llmCalls || 0} 次，节点 ${payload.traceSummary.nodes || 0} 个。`
-        : `未在 ${payload.out} 找到 trace.json。`,
-      payload.traceSummary ? `<pre class="log-preview">${escapeHtml(JSON.stringify(payload.traceSummary, null, 2))}</pre>` : "",
+      "运行详情",
+      `AI 调用 ${t.llmCalls || 0} 次（失败 ${t.llmFailures || 0}，超时 ${t.llmTimeouts || 0}），阶段记录 ${t.nodes || 0} 条。`,
+      `<pre class="log-preview">${escapeHtml(attempts || "(无调用明细)")}\n\n${escapeHtml(nodes || "")}</pre>`,
     );
   } else {
+    const figs = payload.figures || [];
+    if (figs.length) {
+      const gallery = figs.map((f) =>
+        `<a class="figure-thumb" href="${escapeHtml(f.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(f.url)}" alt="${escapeHtml(f.name)}" /><span>${escapeHtml(f.name)}</span></a>`,
+      ).join("");
+      setPreview("图表", `共 ${figs.length} 张图`, `<div class="figure-gallery">${gallery}</div>`);
+      return;
+    }
     const fileTags = payload.files.length
-      ? `<div class="artifact-list">${payload.files.map((file) => `<span>${file.type === "dir" ? "dir" : "file"} · ${escapeHtml(file.name)}</span>`).join("")}</div>`
+      ? `<div class="artifact-list">${payload.files.map((file) => `<span>${file.type === "dir" ? "文件夹" : "文件"} · ${escapeHtml(file.name)}</span>`).join("")}</div>`
       : `<div class="artifact-list"><span>暂无文件</span></div>`;
     setPreview("输出目录", `当前目录：${payload.out}`, fileTags);
   }
 }
 
 async function startProjectRun() {
+  if (forceToggle.checked) {
+    const ok = window.confirm("确定要覆盖已有进度吗？当前断点将被清空，需要从头开始。");
+    if (!ok) return;
+  }
   lastArtifacts = null;
+  lastProgress = null;
   updateCommand();
   stageIndex = 0;
   updatePipeline("running");
-  setPreview("正在启动 math-agent", "本地服务正在写入 problem.json 并调用项目 CLI，日志会自动刷新。", "<div class=\"paper-lines\"><span></span><span></span><span></span></div>");
+  setPreview("正在开始", "正在准备题目并启动生成，完整流程可能需要较长时间。", "<div class=\"paper-lines\"><span></span><span></span><span></span></div>");
   const { run } = await api("/api/run", {
     method: "POST",
     body: JSON.stringify({
@@ -310,10 +578,10 @@ async function startProjectRun() {
     }),
   });
   currentRunId = run.id;
-  showToast("已启动项目流水线");
+  showToast("已开始生成论文");
   startLogStream(currentRunId);
-  // 慢速状态轮询：SSE 活跃时仅检测 paused/终态（不写日志），SSE 断开时作为日志 fallback
   pollTimer = window.setTimeout(pollCurrentRun, 2000);
+  scheduleProgressRefresh(2500);
 }
 
 async function pollCurrentRun() {
@@ -392,82 +660,97 @@ function updateLogPreview(logText) {
 
 function advanceStageFromLog(logChunk) {
   const lower = logChunk.toLowerCase();
-  for (let i = stageIndex; i < stages.length; i++) {
-    if (lower.includes(`node: ${stageLogNames[i]}`)) {
-      stageIndex = i;
-      updatePipeline("running");
-      break;
-    }
+  let best = stageIndex;
+  for (const name of stageLogNames) {
+    if (!lower.includes(`node: ${name}`)) continue;
+    const macro = logNameToMacro[name];
+    if (typeof macro === "number" && macro >= best) best = macro;
+  }
+  if (best !== stageIndex && best >= 0) {
+    stageIndex = best;
+    updatePipeline("running");
   }
 }
 
 function handlePaused(run) {
-  // Evaluation 完成后暂停在 Human Review。
-  stageIndex = stages.indexOf("Human Review");
-  if (stageIndex < 0) stageIndex = stages.length - 3;
+  stageIndex = stageIds.indexOf("write");
+  if (stageIndex < 0) stageIndex = stages.length - 2;
   updatePipeline("paused");
-  setRunLogPreview(run);
-  showToast("流水线暂停，等待人工审核");
+  showToast("请确认论文草稿后再继续");
   showResumeBar(run);
+  refreshProgress();
 }
 
 function handleRunEnd(run) {
   if (logStream) { try { logStream.close(); } catch {} logStream = null; }
   stageIndex = run.status === "completed" ? stages.length : stageIndex;
   updatePipeline();
-  setRunLogPreview(run);
-  if (["completed", "failed", "rejected", "stopped"].includes(run.status)) {
-    // 终态后再次点击运行即是明确重跑；勾选状态可见，用户仍可手动取消。
-    forceToggle.checked = true;
-    updateCommand();
-  }
+  refreshProgress().then(() => {
+    if (showTechLogs) setRunLogPreview(run);
+  });
   if (run.status === "completed") {
-    showToast("流水线完成");
+    showToast("论文已生成完成");
+    loadArtifacts("paper").catch(() => {});
+  } else if (run.status === "degraded") {
+    showToast("已出稿，但未完全达到质量门禁");
     loadArtifacts("paper").catch(() => {});
   } else if (run.status === "paused") {
     handlePaused(run);
   } else if (run.status === "rejected") {
-    showToast("人工审核已拒绝，未生成最终稿");
+    showToast("已驳回，未生成最终稿");
   } else if (run.status === "stopped") {
-    showToast("流水线已停止");
+    showToast("已停止，进度已保留");
   } else {
-    showToast("流水线失败，已显示日志");
+    showToast("任务中断，请查看上方提示");
   }
+  loadRunsHistory();
 }
 
 function showResumeBar(run) {
   const esc = escapeHtml;
   artifactPreview.innerHTML = `
-    <h3>等待人工审核</h3>
-    <p>流水线已暂停在 human_review 节点。请审核当前结果后选择继续或拒绝。</p>
+    <h3>请你确认草稿</h3>
+    <p>系统已写好论文草稿。确认没问题后点「通过并继续」生成最终稿；也可以驳回。</p>
+    <label class="field">
+      <span>备注（可选）</span>
+      <textarea id="resumeNotes" rows="2" placeholder="想让系统注意的地方"></textarea>
+    </label>
     <div class="resume-bar">
-      <button class="primary-button" type="button" id="resumeApprove">批准并继续</button>
-      <button class="ghost-button" type="button" id="resumeReject">拒绝</button>
+      <button class="primary-button" type="button" id="resumeApprove">通过并继续</button>
+      <button class="ghost-button" type="button" id="resumeReject">驳回</button>
+      <button class="ghost-button" type="button" id="toggleTechLog">显示运行详情</button>
     </div>
-    <pre class="log-preview">${esc(run.log || "")}</pre>
+    <pre class="log-preview" id="resumeLog" hidden>${esc(run.log || "")}</pre>
   `;
   document.querySelector("#resumeApprove")?.addEventListener("click", () => resumeRun(true));
   document.querySelector("#resumeReject")?.addEventListener("click", () => resumeRun(false));
+  document.querySelector("#toggleTechLog")?.addEventListener("click", () => {
+    const log = document.querySelector("#resumeLog");
+    if (!log) return;
+    log.hidden = !log.hidden;
+    showTechLogs = !log.hidden;
+  });
 }
 
 async function resumeRun(approve) {
   if (!currentRunId) return;
   try {
+    const notes = document.querySelector("#resumeNotes")?.value || "";
     const { run } = await api(`/api/runs/${encodeURIComponent(currentRunId)}/resume`, {
       method: "POST",
-      body: JSON.stringify({ approve }),
+      body: JSON.stringify({ approve, notes }),
     });
     currentRunId = run.id;
-    showToast(approve ? "已批准，继续运行" : "已拒绝，正在安全结束");
-    // 关闭旧 SSE，重新开始
+    showToast(approve ? "已通过，继续生成最终稿" : "已驳回");
     if (logStream) { try { logStream.close(); } catch {} logStream = null; }
-    stageIndex = stages.indexOf("Human Review");
+    stageIndex = stageIds.indexOf("write");
     updatePipeline("running");
-    setPreview("正在恢复运行", "正在执行 resume 命令，日志会自动刷新。");
+    setPreview("正在继续", "正在根据你的决定继续后续步骤。");
     startLogStream(currentRunId);
     pollTimer = window.setTimeout(pollCurrentRun, 2000);
+    scheduleProgressRefresh(2000);
   } catch (error) {
-    showToast(`恢复失败: ${error.message}`);
+    showToast(`继续失败: ${error.message}`);
   }
 }
 
@@ -479,14 +762,16 @@ runButton?.addEventListener("click", () => {
   });
 });
 
+stopRunButton?.addEventListener("click", () => {
+  stopProjectRun().catch((error) => showToast(error.message));
+});
+
+continueRunButton?.addEventListener("click", () => {
+  continueProjectRun().catch((error) => showToast(error.message));
+});
+
 resetPipelineButton?.addEventListener("click", () => {
-  currentRunId = null;
-  window.clearTimeout(pollTimer);
-  if (logStream) { try { logStream.close(); } catch {} logStream = null; }
-  stageIndex = -1;
-  updatePipeline();
-  setPreview("流水线状态已刷新", "已回到 Analyst 起点。再次点击启动会调用项目 CLI。");
-  showToast("流水线状态已刷新");
+  refreshProgress().then(() => showToast("进度已刷新"));
 });
 
 importDemoButton?.addEventListener("click", () => {
@@ -1013,17 +1298,18 @@ function renderSettings() {
 
 function renderSettingsApi() {
   settingsContent.innerHTML = `
+    <p class="hint">第一步：填写 AI 服务地址和密钥，点「测一下」确认能连上。</p>
     <div class="field">
-      <span>API 端点</span>
-      <input id="setApiBase" value="${escapeHtml(settingsConfig.apiBase)}" />
-      <span class="field-hint">OpenAI 兼容端点地址</span>
+      <span>服务地址</span>
+      <input id="setApiBase" value="${escapeHtml(settingsConfig.apiBase)}" placeholder="https://api.deepseek.com/v1" />
+      <span class="field-hint">一般由你的 AI 服务商提供；若使用本地转发，填写本机地址</span>
     </div>
     <div class="field">
-      <span>API 密钥</span>
+      <span>密钥</span>
       <div style="display:flex;gap:8px;">
         <input id="setApiKey" type="password" value="${escapeHtml(settingsConfig.apiKey)}" style="flex:1;" />
-        <button class="ghost-button" type="button" id="setToggleKey">👁 显示</button>
-        <button class="primary-button" type="button" id="setTestBtn">🔍 测试</button>
+        <button class="ghost-button" type="button" id="setToggleKey">显示</button>
+        <button class="primary-button" type="button" id="setTestBtn">测一下</button>
       </div>
       <div id="setTestResult"></div>
     </div>
@@ -1051,21 +1337,23 @@ function renderSettingsApi() {
 }
 
 function renderSettingsModels() {
+  const stripPrefix = (value) => String(value || "").replace(/^openai\//, "");
   settingsContent.innerHTML = `
+    <p class="hint">第二步：填写服务商支持的模型正式名称（例如 deepseek-v4-flash）。保存时会自动补全兼容前缀。</p>
     <div class="field">
-      <span>主力模型（编码、灵敏度分析）</span>
-      <input id="setDefaultModel" value="${escapeHtml(settingsConfig.defaultModel)}" />
-      <span class="field-hint">用于 routine 节点，格式：provider/model</span>
+      <span>常用模型</span>
+      <input id="setDefaultModel" value="${escapeHtml(stripPrefix(settingsConfig.defaultModel))}" placeholder="deepseek-v4-flash" />
+      <span class="field-hint">用于代码等常规步骤</span>
     </div>
     <div class="field">
-      <span>强力模型（分析、建模、写作、评审）</span>
-      <input id="setStrongModel" value="${escapeHtml(settingsConfig.strongModel)}" />
-      <span class="field-hint">用于核心节点</span>
+      <span>强模型</span>
+      <input id="setStrongModel" value="${escapeHtml(stripPrefix(settingsConfig.strongModel))}" placeholder="deepseek-v4-pro" />
+      <span class="field-hint">用于分析、建模与写作</span>
     </div>
     <div class="field">
-      <span>图像模型（图表评审与图说生成）</span>
-      <input id="setFigureModel" value="${escapeHtml(settingsConfig.figureModel)}" />
-      <span class="field-hint">需支持视觉输入；留空则回退到强力模型</span>
+      <span>看图模型（可选）</span>
+      <input id="setFigureModel" value="${escapeHtml(stripPrefix(settingsConfig.figureModel))}" placeholder="deepseek-v4-flash" />
+      <span class="field-hint">需要能看图的模型；可与常用模型相同</span>
     </div>
   `;
 }
@@ -1206,4 +1494,10 @@ function setSettingsView(isSettingsView) {
 }
 
 activateNav(window.location.hash || "#workspace");
+updateCommand();
+updatePipeline();
+loadRunsHistory();
+attachExistingRun().catch(() => {
+  refreshProgress().catch(() => {});
+});
 
