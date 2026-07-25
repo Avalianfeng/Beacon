@@ -30,6 +30,7 @@ corpus/papers/
 *.swo
 
 # Tooling / temp files
+.thinking-advisor/
 .superpowers/
 .zcode/
 tmp/
