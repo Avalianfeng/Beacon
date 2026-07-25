@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-≥3.11-blue" alt="Python 3.11+" />
+  <img src="https://img.shields.io/badge/python-3.11–3.13-blue" alt="Python 版本 3.11–3.13" />
   <img src="https://img.shields.io/badge/node-≥18-green" alt="Node 18+" />
   <img src="https://img.shields.io/badge/framework-LangGraph-orange" alt="LangGraph" />
   <img src="https://img.shields.io/badge/llm-LiteLLM-purple" alt="LiteLLM" />
@@ -36,7 +36,7 @@ Beacon is an **end-to-end math modeling automation system** built for students c
 
 ### Prerequisites
 
-- **Python ≥ 3.11** — for the backend agent pipeline
+- **Python 3.11–3.13** — 用于后端智能体流水线
 - **Node.js ≥ 18** — for the Web UI server
 - **uv** — Python package manager ([install](https://docs.astral.sh/uv/getting-started/installation/))
 - An **LLM API endpoint** (OpenAI-compatible) — your router, proxy, or cloud provider
@@ -121,6 +121,7 @@ Beacon ships with a complete browser-based workspace:
 - **Template switching** — Default (standard paper) or GMCM (国赛 gmcmthesis)
 - **实时进度** — 展示 14 个阶段，并从后端节点日志同步状态
 - **Run control** — start, monitor logs, stop, and view artifacts
+- **检查点恢复** — 失败任务存在 checkpoint 时可从任务卡片恢复，不必从头运行
 - **RAG toggle** — enable/disable retrieval augmentation per run
 - **HITL toggle** — run fully automatic or pause for human approval
 
@@ -263,7 +264,9 @@ OPENAI_API_KEY=your-key-here
 
 # --- Model Selection ---
 MATH_AGENT_DEFAULT_MODEL=openai/gpt-4o-mini  # For routine nodes (coder)
+MATH_AGENT_CODER_MODEL=openai/gpt-4o-mini    # coder 专用模型；缺省继承默认模型
 MATH_AGENT_STRONG_MODEL=openai/gpt-4o        # For core nodes (analyst, modeler, writer)
+MATH_AGENT_FIGURE_MODEL=openai/gpt-4o        # 需要支持视觉输入
 MATH_AGENT_MAX_MODEL_ITERATIONS=3            # 每个建模阶段的最大评审轮次（Web UI 可调 1-5）
 
 # --- LLM hard deadlines ---
@@ -322,7 +325,7 @@ uv run math-agent run --problem tests/fixtures/sample_problem.json --out runs/de
 npm run dev
 
 # Tests
-uv run pytest -q
+uv run --extra dev pytest -q
 ```
 
 ---

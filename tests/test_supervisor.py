@@ -1,12 +1,16 @@
-from math_agent.errors import LLMValidationError
+import json
 import sys
 import time
 
+import pytest
+
+from math_agent.errors import LLMValidationError
 from math_agent.supervisor import (
     FailureRecord,
     RunInspection,
     SupervisorPolicy,
     WorkerResult,
+    run_process_supervisor,
     supervise_loop,
     start_detached_supervisor,
     _process_worker,
@@ -188,6 +192,94 @@ def test_process_worker_marks_child_as_supervised(tmp_path):
 
     assert result.returncode == 0
 
+
+def test_process_worker_can_preserve_manual_recover_failure_counter(tmp_path, monkeypatch):
+    monkeypatch.setenv("MATH_AGENT_SUPERVISED", "1")
+    result = _process_worker(
+        mode="recover",
+        command=[
+            sys.executable,
+            "-c",
+            "import os; raise SystemExit(9 if os.getenv('MATH_AGENT_SUPERVISED') else 0)",
+        ],
+        out=tmp_path,
+        state={"attempt": 1},
+        heartbeat_seconds=0.1,
+        supervised=False,
+    )
+
+    assert result.returncode == 0
+
+
+def test_process_worker_persists_recovery_budget_in_heartbeat_state(tmp_path):
+    result = _process_worker(
+        mode="recover",
+        command=[sys.executable, "-c", "raise SystemExit(0)"],
+        out=tmp_path,
+        state={"attempt": 4, "recoveries": 3},
+        heartbeat_seconds=0.1,
+        supervised=False,
+    )
+
+    persisted = json.loads((tmp_path / "supervisor.json").read_text(encoding="utf-8"))
+    assert result.returncode == 0
+    assert persisted["recoveries"] == 3
+
+
+def test_persistent_recovery_budget_blocks_before_starting_another_worker(mocker, tmp_path):
+    (tmp_path / "supervisor.json").write_text(
+        '{"attempt": 21, "recoveries": 20}',
+        encoding="utf-8",
+    )
+    process_worker = mocker.patch("math_agent.supervisor._process_worker")
+    mocker.patch(
+        "math_agent.supervisor.inspect_checkpoint",
+        return_value=RunInspection(checkpoint_exists=True, next_node="writer_section"),
+    )
+
+    result = run_process_supervisor(
+        out=tmp_path,
+        thread="default",
+        initial_mode="recover",
+        policy=SupervisorPolicy(max_recoveries=20, base_delay=0),
+        persistent_recovery_budget=True,
+    )
+
+    assert result.status == "blocked"
+    assert result.attempts == 21
+    assert result.recoveries == 20
+    assert result.message == "recovery budget exhausted (20)"
+    process_worker.assert_not_called()
+
+
+def test_persistent_recovery_budget_is_reserved_before_manual_worker_starts(
+    mocker, tmp_path,
+):
+    (tmp_path / "supervisor.json").write_text(
+        '{"attempt": 3, "recoveries": 2}',
+        encoding="utf-8",
+    )
+    mocker.patch(
+        "math_agent.supervisor.inspect_checkpoint",
+        return_value=RunInspection(checkpoint_exists=True, next_node="writer_section"),
+    )
+    process_worker = mocker.patch(
+        "math_agent.supervisor._process_worker",
+        side_effect=KeyboardInterrupt(),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        run_process_supervisor(
+            out=tmp_path,
+            thread="default",
+            initial_mode="recover",
+            policy=SupervisorPolicy(max_recoveries=20, base_delay=0),
+            persistent_recovery_budget=True,
+        )
+
+    state = process_worker.call_args.kwargs["state"]
+    assert state["attempt"] == 4
+    assert state["recoveries"] == 3
 
 
 def test_failure_record_marks_validation_error_retriable():

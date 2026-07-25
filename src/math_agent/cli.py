@@ -781,6 +781,37 @@ def supervise_resume(
     _supervisor_exit(result, out, thread)
 
 
+@app.command("supervise-recover")
+def supervise_recover(
+    out: Path = typer.Option(Path("runs/latest")),
+    thread: str = typer.Option("default"),
+    same_node_limit: int = typer.Option(3, min=1),
+    max_recoveries: int = typer.Option(20, min=1),
+    retry_delay: float = typer.Option(2.0, min=0.0),
+):
+    """从最近 checkpoint 恢复，并监管任务直到形成明确终态。"""
+    _require_checkpoint(out)
+    _require_trace_thread(out, thread)
+    out = out.resolve()
+    try:
+        result = run_process_supervisor(
+            out=out,
+            thread=thread,
+            initial_mode="recover",
+            persistent_recover_failures=True,
+            persistent_recovery_budget=True,
+            policy=SupervisorPolicy(
+                same_node_limit=same_node_limit,
+                max_recoveries=max_recoveries,
+                base_delay=retry_delay,
+            ),
+        )
+    except RunLockedError as e:
+        typer.echo(f"[BUSY] {e}", err=True)
+        raise typer.Exit(75)
+    _supervisor_exit(result, out, thread)
+
+
 @app.command()
 def report(
     out: Path = typer.Option(Path("runs/latest")),

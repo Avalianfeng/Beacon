@@ -319,23 +319,30 @@ def _process_worker(
     out: Path,
     state: dict,
     heartbeat_seconds: float = 5.0,
+    supervised: bool = True,
 ) -> WorkerResult:
     clear_failure_report(out)
     state.update({"status": "running", "mode": mode, "command": command, "heartbeat_at": _now()})
     _atomic_json(out / "supervisor.json", state)
     print(f"[supervisor] starting worker: {mode} (attempt {state.get('attempt', 1)})", flush=True)
-    proc = subprocess.Popen(command, env={
+    worker_env = {
         **os.environ,
-        # 外层 supervisor 已统一管理同节点失败预算；避免 recover 子命令的本地
-        # .recover_failed_node 计数器提前截断不同的 supervisor policy。
-        "MATH_AGENT_SUPERVISED": "1",
         "PYTHONPATH": os.pathsep.join(filter(None, [
             str(Path(__file__).resolve().parents[1]),
             os.environ.get("PYTHONPATH", ""),
         ])),
         "PYTHONIOENCODING": "utf-8",
         "PYTHONUTF8": "1",
-    })
+    }
+    if supervised:
+        # 外层 supervisor 统一管理同节点失败预算时，避免 recover 子命令的本地
+        # .recover_failed_node 计数器提前截断同一次监督循环。
+        worker_env["MATH_AGENT_SUPERVISED"] = "1"
+    else:
+        # 人工发起的新一轮恢复必须沿用跨进程失败计数，不能通过重启 supervisor
+        # 重置同节点硬上限。
+        worker_env.pop("MATH_AGENT_SUPERVISED", None)
+    proc = subprocess.Popen(command, env=worker_env)
     try:
         while proc.poll() is None:
             state["worker_pid"] = proc.pid
@@ -366,6 +373,8 @@ def run_process_supervisor(
     resume_args: list[str] | None = None,
     initial_mode: WorkerMode | None = None,
     policy: SupervisorPolicy | None = None,
+    persistent_recover_failures: bool = False,
+    persistent_recovery_budget: bool = False,
 ) -> SupervisorResult:
     """doc"""
     out = Path(out).resolve()
@@ -388,10 +397,16 @@ def run_process_supervisor(
         "supervisor_pid": os.getpid(),
         "started_at": _now(),
         "attempt": 0,
+        "recoveries": 0,
         "status": "starting",
     }
+    workers_started = 0
 
     def worker(mode: WorkerMode) -> WorkerResult:
+        nonlocal workers_started
+        if workers_started > 0 and mode == "recover":
+            state["recoveries"] = int(state.get("recoveries", 0)) + 1
+        workers_started += 1
         state["attempt"] = int(state.get("attempt", 0)) + 1
         if mode == "run":
             if run_args is None:
@@ -407,16 +422,60 @@ def run_process_supervisor(
             command = [*base, "recover", "--out", str(out), "--thread", thread]
             if auto_approve:
                 command.append("--no-interrupt")
-        return _process_worker(mode=mode, command=command, out=out, state=state)
+        return _process_worker(
+            mode=mode,
+            command=command,
+            out=out,
+            state=state,
+            supervised=not (persistent_recover_failures and mode == "recover"),
+        )
 
     with RunLock(out, filename=".beacon-supervisor.lock"):
-        result = supervise_loop(
-            worker=worker,
-            inspect=lambda: inspect_checkpoint(out, thread),
-            policy=policy,
-            sleep=time.sleep,
-            initial_mode=initial_mode,
-        )
+        previous_attempts = 0
+        previous_recoveries = 0
+        active_policy = policy
+        if persistent_recovery_budget:
+            try:
+                previous_state = json.loads(
+                    (out / "supervisor.json").read_text(encoding="utf-8")
+                )
+                previous_attempts = max(0, int(previous_state.get("attempt", 0)))
+                previous_recoveries = max(0, int(previous_state.get("recoveries", 0)))
+            except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+                pass
+            state["attempt"] = previous_attempts
+            budget_exhausted = previous_recoveries >= policy.max_recoveries
+            reserved_initial_recovery = (
+                1 if initial_mode == "recover" and not budget_exhausted else 0
+            )
+            state["recoveries"] = previous_recoveries + reserved_initial_recovery
+            remaining_recoveries = max(
+                0, policy.max_recoveries - int(state["recoveries"])
+            )
+            active_policy = replace(policy, max_recoveries=remaining_recoveries)
+        else:
+            budget_exhausted = False
+
+        if persistent_recovery_budget and budget_exhausted:
+            result = SupervisorResult(
+                status="blocked",
+                attempts=previous_attempts,
+                recoveries=previous_recoveries,
+                message=f"recovery budget exhausted ({policy.max_recoveries})",
+            )
+        else:
+            current_result = supervise_loop(
+                worker=worker,
+                inspect=lambda: inspect_checkpoint(out, thread),
+                policy=active_policy,
+                sleep=time.sleep,
+                initial_mode=initial_mode,
+            )
+            result = replace(
+                current_result,
+                attempts=previous_attempts + current_result.attempts,
+                recoveries=int(state.get("recoveries", 0)),
+            )
         state.update({
             "status": result.status,
             "ended_at": _now(),

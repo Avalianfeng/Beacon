@@ -44,6 +44,10 @@ function versionOk(version, minVersion) {
   return true;
 }
 
+function pythonVersionOk(version) {
+  return versionOk(version, "3.11") && !versionOk(version, "3.14");
+}
+
 const WINGET_PACKAGES = {
   python: "Python.Python.3.12",
   node: "OpenJS.NodeJS.LTS",
@@ -77,7 +81,7 @@ export async function handleEnvRoutes(request, response, url) {
       python: {
         installed: pythonResult.installed,
         version: pythonResult.version,
-        ok: pythonResult.installed && versionOk(pythonResult.version, "3.11"),
+        ok: pythonResult.installed && pythonVersionOk(pythonResult.version),
       },
       node: {
         installed: node.installed,
@@ -91,7 +95,7 @@ export async function handleEnvRoutes(request, response, url) {
       },
       allOk:
         pythonResult.installed &&
-        versionOk(pythonResult.version, "3.11") &&
+        pythonVersionOk(pythonResult.version) &&
         node.installed &&
         versionOk(node.version, "18") &&
         uv.installed,

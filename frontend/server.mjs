@@ -230,21 +230,35 @@ function _notifySseClients(run) {
   run.sseClients.clear();
 }
 
-async function _spawnResume(run, approve, notes) {
+function _publicRun(run) {
+  const { child, sseClients, stdoutBuffer, ...safeRun } = run;
+  const checkpointPath = resolve(safeProjectPath(run.out), "checkpoints.sqlite");
+  return {
+    ...safeRun,
+    recoverable: run.status === "failed" && existsSync(checkpointPath),
+  };
+}
+
+async function _spawnContinuation(run, { mode, approve = null, notes = "" }) {
   const commandParts = splitCommandLine(env.MATH_AGENT_COMMAND || "uv run math-agent");
   const command = commandParts[0];
-  const args = [...commandParts.slice(1), "supervise-resume",
+  const isHumanReview = mode === "resume";
+  const subcommand = isHumanReview ? "supervise-resume" : "supervise-recover";
+  const args = [...commandParts.slice(1), subcommand,
     "--out", run.out, "--thread", run.threadId];
-  if (approve) { args.push("--approve"); } else { args.push("--no-approve"); }
-  if (notes) { args.push("--notes", notes); }
+  if (isHumanReview) {
+    if (approve) { args.push("--approve"); } else { args.push("--no-approve"); }
+    if (notes) { args.push("--notes", notes); }
+  }
 
   const runDir = safeProjectPath(`runs/ui-server/${run.id}`);
-  const logPath = resolve(runDir, "resume.log");
+  const logPath = resolve(runDir, isHumanReview ? "resume.log" : "recover.log");
   const logStream = createWriteStream(logPath, { flags: "a" });
   logStream.write(`$ ${command} ${args.join(" ")}\n\n`);
 
-  // 重置 run 状态为 running
+  // 恢复沿用原 run id，前端的 SSE 和状态轮询无需切换任务。
   run.status = "running";
+  run.command = `${command} ${args.join(" ")}`;
   run.endedAt = null;
   run.exitCode = null;
   run.stdoutBuffer = "";
@@ -291,6 +305,8 @@ async function _spawnResume(run, approve, notes) {
       run.status = "paused";
     } else if (run.stdoutBuffer.includes("[DEGRADED]")) {
       run.status = "degraded";
+    } else if (mode === "recover" && run.stdoutBuffer.includes("[BLOCKED]")) {
+      run.status = "blocked";
     } else {
       run.status = code === 0 ? "completed" : "failed";
     }
@@ -442,8 +458,7 @@ async function handleApi(request, response, url) {
       run.status = "stopped";
       run.endedAt = new Date().toISOString();
     }
-    const { child, sseClients, stdoutBuffer, ...safeRun } = run;
-    sendJson(response, 200, { run: safeRun });
+    sendJson(response, 200, { run: _publicRun(run) });
     return;
   }
 
@@ -522,8 +537,7 @@ async function handleApi(request, response, url) {
     try {
       log = await readFile(run.logPath, "utf8");
     } catch {}
-    const { child, sseClients, stdoutBuffer, ...safeRun } = run;
-    sendJson(response, 200, { ...safeRun, log: log.slice(-6000) });
+    sendJson(response, 200, { ..._publicRun(run), log: log.slice(-6000) });
     return;
   }
 
@@ -670,8 +684,7 @@ async function handleApi(request, response, url) {
       _notifySseClients(run);
     });
 
-    const { child: _child, sseClients: _s, stdoutBuffer: _b, ...safeRun } = run;
-    sendJson(response, 202, { run: safeRun });
+    sendJson(response, 202, { run: _publicRun(run) });
     return;
   }
 
@@ -688,9 +701,34 @@ async function handleApi(request, response, url) {
       return;
     }
     const body = await readJsonBody(request);
-    await _spawnResume(run, body.approve !== false, body.notes || "");
-    const { child, sseClients, stdoutBuffer, ...safeRun } = run;
-    sendJson(response, 200, { run: safeRun });
+    await _spawnContinuation(run, {
+      mode: "resume",
+      approve: body.approve !== false,
+      notes: body.notes || "",
+    });
+    sendJson(response, 200, { run: _publicRun(run) });
+    return;
+  }
+
+  // POST /api/runs/:id/recover -- recover a failed run from its latest checkpoint
+  if (request.method === "POST" && url.pathname.startsWith("/api/runs/") && url.pathname.endsWith("/recover")) {
+    const id = decodeURIComponent(url.pathname.split("/").at(-2) || "");
+    const run = runs.get(id);
+    if (!run) {
+      sendJson(response, 404, { error: "Run not found." });
+      return;
+    }
+    if (run.status !== "failed") {
+      sendJson(response, 409, { error: `Run is ${run.status}, not failed.` });
+      return;
+    }
+    const checkpointPath = resolve(safeProjectPath(run.out), "checkpoints.sqlite");
+    if (!existsSync(checkpointPath)) {
+      sendJson(response, 409, { error: "Run has no checkpoint to recover from." });
+      return;
+    }
+    await _spawnContinuation(run, { mode: "recover" });
+    sendJson(response, 200, { run: _publicRun(run) });
     return;
   }
 

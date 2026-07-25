@@ -15,3 +15,9 @@ npm start
 然后访问 `http://127.0.0.1:5173`。直接打开 `index.html` 只能查看静态页面，无法调用运行、恢复和产物接口。
 
 题面导入支持 JSON、Markdown、TXT、PDF 和 Word。数据附件支持 Excel、CSV、PDF、Word、TXT 和 Markdown，可多选上传；服务端会保存附件并生成摘要，运行时把真实文件路径写入题目配置，供后端审计读取。
+
+运行失败后，产物面板会保留失败日志并显示“从最近检查点恢复”。该操作只对当前 Web 会话内状态为
+`failed` 且输出目录中存在 `checkpoints.sqlite` 的任务开放；服务端通过
+`math-agent supervise-recover` 从最近节点继续，并沿用 supervisor 的同节点失败上限与总恢复预算。
+恢复再次达到安全上限后，页面进入 `blocked`，不会继续显示恢复按钮。人工审核暂停仍使用独立的
+“批准并继续/拒绝”流程，不会与错误恢复混用。

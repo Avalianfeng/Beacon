@@ -106,6 +106,28 @@ def test_supervise_delegates_to_process_supervisor(tmp_path):
     assert "--no-interrupt" in kwargs["run_args"]
 
 
+def test_supervise_recover_starts_supervisor_from_existing_checkpoint(tmp_path):
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "checkpoints.sqlite").write_bytes(b"checkpoint")
+
+    with patch("math_agent.cli._require_trace_thread"), patch(
+        "math_agent.cli.run_process_supervisor",
+        return_value=SupervisorResult(status="completed", attempts=1),
+    ) as supervised:
+        result = runner.invoke(app, [
+            "supervise-recover", "--out", str(out), "--thread", "recover-thread",
+        ])
+
+    assert result.exit_code == 0, result.output
+    kwargs = supervised.call_args.kwargs
+    assert kwargs["out"] == out.resolve()
+    assert kwargs["thread"] == "recover-thread"
+    assert kwargs["initial_mode"] == "recover"
+    assert kwargs["persistent_recover_failures"] is True
+    assert kwargs["persistent_recovery_budget"] is True
+
+
 def test_supervise_returns_nonzero_for_degraded_completion(tmp_path):
     problem = _problem(tmp_path)
     with patch(

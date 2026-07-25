@@ -9,6 +9,8 @@
 ## 实现与验证
 
 - 保持 CLI、Web UI 和公开状态字段向后兼容。
+- OpenAI 兼容路由的模型名必须使用 `openai/<model>`；`.env.example` 与 Web 配置归一化必须保持一致。
+- 调整 Python 或 LiteLLM 依赖约束后，必须在 Windows 验证 `uv sync` 和 `math-agent supervise --help`。
 - LLM、runner、supervisor 和 finalizer 的硬期限、整树回收、数据血缘与质量门禁不得被绕过。
 - 不允许硬编码、全零、非法数值、退出码 0 的失败声明或未读取附件的结果进入正式论文。
 - `primary`、`baseline`、`supporting` 和临时 attempt 必须保持证据职责隔离。

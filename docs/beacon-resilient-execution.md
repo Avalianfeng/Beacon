@@ -41,7 +41,14 @@ Get-Content -Wait runs/my-run/supervisor.log
 ```powershell
 uv run math-agent supervise --problem tests/fixtures/sample_problem.json --out runs/my-run --no-interrupt
 uv run math-agent recover --out runs/my-run --thread default
+uv run math-agent supervise-recover --out runs/my-run --thread default
 ```
+
+`recover` 只执行一次 checkpoint 续跑；`supervise-recover` 会继续监管恢复 worker，直到完成、暂停、
+降级或被恢复预算阻断。Web UI 在任务失败后提供“从最近检查点恢复”按钮，调用后者继续当前任务。
+该入口会沿用 `.recover_failed_node` 的跨进程同节点计数；达到安全上限后 Web 状态变为 `blocked`，
+不能通过重复点击重置预算。它不会注入 `human_decision`；human_review 暂停仍由
+`supervise-resume` 的明确批准或拒绝处理。
 
 真实完整流程脚本也已经使用固定目录和 SQLite checkpoint：
 
@@ -87,6 +94,17 @@ supervisor 另有整次任务恢复总预算，默认 20 次。鉴权失败、�
 不变量失败会立即停止；502、连接失败、限流、单次 timeout 和 worker 被杀会按节点退避恢复。
 `failure.json` 只保存节点、错误类别和截断消息，不保存 prompt、模型响应或密钥。
 
+Web 恢复按钮只在任务状态为 `failed` 且输出目录存在 `checkpoints.sqlite` 时显示。鉴权失败、
+缺少 LiteLLM provider 前缀等确定性配置错误会进入 `blocked`，继续点击恢复也无法解决。先修正
+配置，再从同一 checkpoint 手动续跑：
+
+```powershell
+uv run math-agent recover --out runs/my-run --thread default
+```
+
+OpenAI 兼容路由的模型名必须写成 `openai/<model>`；裸模型名即使已经配置
+`OPENAI_API_BASE`，LiteLLM 仍可能因无法判断 provider 而在发出请求前拒绝调用。
+
 ## 图内最终收口
 
 正常流程不再以“latex 节点返回”作为完成标准，而是进入 `finalizer`：
@@ -116,3 +134,4 @@ checkpoint。新运行不得依赖该脚本，它也不会改写旧 checkpoint �
 8. supervisor 在 worker 被杀后自动 recover，同一节点三次失败后停止；
 9. finalizer 只通过原子文件提交完成状态，半写入文件不会被认作完成；
 10. 同一输出目录不能同时运行两个 worker，`--force` 不能越过活跃锁删除 checkpoint。
+11. Web UI 失败任务只能在 checkpoint 存在时进入受监管恢复，并与 human_review 的 resume 路径隔离。

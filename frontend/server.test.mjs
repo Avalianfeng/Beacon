@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const frontendDir = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const projectRoot = resolve(frontendDir, "..");
+const fakeMathAgent = resolve(frontendDir, "test-fixtures", "fake-math-agent.mjs");
 const port = 20_000 + Math.floor(Math.random() * 10_000);
 const base = `http://127.0.0.1:${port}`;
 let child;
@@ -22,10 +24,26 @@ async function waitUntilReady() {
   throw new Error(`server did not start: ${stderr}`);
 }
 
+async function waitForRunStatus(runId, expectedStatus) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const response = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}`);
+    if (response.ok) {
+      const run = await response.json();
+      if (run.status === expectedStatus) return run;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+  throw new Error(`run ${runId} did not reach ${expectedStatus}`);
+}
+
 test.before(async () => {
   child = spawn(process.execPath, ["frontend/server.mjs"], {
     cwd: projectRoot,
-    env: { ...process.env, PORT: String(port) },
+    env: {
+      ...process.env,
+      PORT: String(port),
+      MATH_AGENT_COMMAND: `"${process.execPath}" "${fakeMathAgent}"`,
+    },
     windowsHide: true,
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -190,6 +208,77 @@ test("POST /api/run accepts null fixturePath without 400 error", async () => {
   assert.ok(data.run.id);
   // 清理
   await fetch(`${base}/api/runs/${data.run.id}/stop`, { method: "POST" });
+});
+
+test("POST /api/runs/:id/recover 从失败任务的 checkpoint 恢复", async () => {
+  const outputDir = `runs/ui-test-recover-${Date.now()}`;
+  const response = await fetch(`${base}/api/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "recover-test",
+      background: "recover-test",
+      fixturePath: "tests/fixtures/does-not-exist.json",
+      outputDir,
+      threadId: "recover-test",
+      noInterrupt: true,
+      ragEnabled: false,
+    }),
+  });
+  assert.equal(response.status, 202);
+  const { run } = await response.json();
+  const failedRun = await waitForRunStatus(run.id, "failed");
+  assert.equal(failedRun.recoverable, true);
+
+  const absoluteOut = resolve(projectRoot, outputDir);
+  await mkdir(absoluteOut, { recursive: true });
+  await writeFile(resolve(absoluteOut, "checkpoints.sqlite"), "checkpoint");
+
+  const recoverResponse = await fetch(`${base}/api/runs/${run.id}/recover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(recoverResponse.status, 200);
+  const recovered = (await recoverResponse.json()).run;
+  assert.equal(recovered.status, "running");
+  assert.equal(recovered.recoverable, false);
+  assert.match(recovered.command, /supervise-recover/);
+});
+
+test("恢复达到安全上限后进入 blocked 且不能再次恢复", async () => {
+  const outputDir = `runs/ui-test-recover-blocked-${Date.now()}`;
+  const response = await fetch(`${base}/api/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "recover-blocked-test",
+      background: "recover-blocked-test",
+      outputDir,
+      threadId: "recover-blocked-test",
+      noInterrupt: true,
+      ragEnabled: false,
+    }),
+  });
+  const { run } = await response.json();
+  const failedRun = await waitForRunStatus(run.id, "failed");
+  assert.equal(failedRun.recoverable, true);
+
+  const firstRecover = await fetch(`${base}/api/runs/${run.id}/recover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(firstRecover.status, 200);
+
+  const blockedRun = await waitForRunStatus(run.id, "blocked");
+  assert.equal(blockedRun.recoverable, false);
+  const secondRecover = await fetch(`${base}/api/runs/${run.id}/recover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(secondRecover.status, 409);
 });
 
 test("GET /api/env/check 返回环境检测结果", async () => {

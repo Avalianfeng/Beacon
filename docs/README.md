@@ -1,6 +1,6 @@
 # Beacon 文档索引与当前状态
 
-最后核对：2026-07-17。
+最后核对：2026-07-25。
 
 ## 当前结论
 
@@ -32,11 +32,24 @@
   CLI 闭环。它通过正式主方案数值、四附件数据血缘、三类基线、深度实验和篇幅门禁；PDF 共
   31 页，正文 25 页、25057 个非空白字符，附录从第 30 个物理页开始。全部 31 页已渲染检查，
   无乱码、裁切、重叠或严重横向溢出。
-- 当前 Python 回归为 586 passed / 4 skipped；Web UI 已有独立回归证据为 13/13，2026-07-17 本次未重复运行。
+- 当前 Python 回归为 591 passed / 4 skipped；Web UI 回归为 15/15。Windows 环境已验证
+  `uv sync` 可直接安装 LiteLLM 1.91.0，且 `math-agent supervise --help` 可正常启动。
 
 系统并不承诺外部上游永远不出现 502、429、断连或超时；“已解决”的含义是这些故障现在受
 单次/总硬期限、错误分类、worker 回收、跨 worker 熔断、同节点恢复上限和 checkpoint 定点恢复
 约束，不再无限挂起、无限重试或污染正式结果。
+
+## 恢复入口与本地环境约束
+
+Web UI 仅在任务状态为 `failed` 且存在 checkpoint 时显示“从最近检查点恢复”。确定性配置错误
+会进入 `blocked`；修正配置后使用 `math-agent recover --out <run-dir> --thread <thread>` 从原
+checkpoint 续跑。`human_review` 的批准或拒绝仍使用 `resume`/`supervise-resume`，不能由恢复按钮
+代替。
+
+当前支持 Python 3.11--3.13，并固定 LiteLLM 1.91.0，确保 Windows 能直接安装 wheel，不依赖
+Visual Studio C++ linker。OpenAI 兼容路由的模型名必须使用 `openai/<model>` 格式；仅配置
+`OPENAI_API_BASE` 不能让 LiteLLM 从裸模型名推断 provider。示例配置、README 与 Web 保存逻辑
+必须保持这一约束一致。
 
 ## 为什么旧 PDF 只有 8--10 页，当前如何保证 20 页正文
 
@@ -80,7 +93,7 @@ finalizer 又只检查编译、评分和证据质量，没有检查附录前的�
 ## 验证入口
 
 ```powershell
-uv run pytest -q
+uv run --extra dev pytest -q
 npm.cmd test -- --run
 uv run math-agent status --out runs/green-logistics-rootfix-v4-20260717 --thread green-logistics-rootfix-v4
 uv run python scripts/render_content_optimized_reference.py `

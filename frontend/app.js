@@ -430,9 +430,29 @@ function handleRunEnd(run) {
     showToast("人工审核已拒绝，未生成最终稿");
   } else if (run.status === "stopped") {
     showToast("流水线已停止");
+  } else if (run.status === "degraded") {
+    showToast("流水线已收口，但存在需要检查的警告");
+    loadArtifacts("paper").catch(() => {});
+  } else if (run.status === "blocked") {
+    showToast("恢复已达到安全上限，请先处理日志中的问题");
+  } else if (run.status === "failed" && run.recoverable) {
+    showToast("流水线失败，可从最近检查点恢复");
+    showRecoverBar(run);
   } else {
-    showToast("流水线失败，已显示日志");
+    showToast("流水线失败，当前没有可用 checkpoint");
   }
+}
+
+function showRecoverBar(run) {
+  artifactPreview.innerHTML = `
+    <h3>流水线已中断</h3>
+    <p>任务运行失败。如果已有 checkpoint，可以从最近保存的节点继续，无需从头重跑。</p>
+    <div class="resume-bar">
+      <button class="primary-button" type="button" id="recoverRun">从最近检查点恢复</button>
+    </div>
+    <pre class="log-preview">${escapeHtml(run.log || "")}</pre>
+  `;
+  document.querySelector("#recoverRun")?.addEventListener("click", recoverFailedRun);
 }
 
 function showResumeBar(run) {
@@ -457,16 +477,43 @@ async function resumeRun(approve) {
       method: "POST",
       body: JSON.stringify({ approve }),
     });
-    currentRunId = run.id;
     showToast(approve ? "已批准，继续运行" : "已拒绝，正在安全结束");
-    // 关闭旧 SSE，重新开始
-    if (logStream) { try { logStream.close(); } catch {} logStream = null; }
     stageIndex = stages.indexOf("Human Review");
-    updatePipeline("running");
     setPreview("正在恢复运行", "正在执行 resume 命令，日志会自动刷新。");
-    startLogStream(currentRunId);
-    pollTimer = window.setTimeout(pollCurrentRun, 2000);
+    restartRunMonitoring(run);
   } catch (error) {
+    showToast(`恢复失败: ${error.message}`);
+  }
+}
+
+function restartRunMonitoring(run) {
+  currentRunId = run.id;
+  if (logStream) { try { logStream.close(); } catch {} logStream = null; }
+  updatePipeline("running");
+  startLogStream(currentRunId);
+  pollTimer = window.setTimeout(pollCurrentRun, 2000);
+}
+
+async function recoverFailedRun() {
+  if (!currentRunId) return;
+  const button = document.querySelector("#recoverRun");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在恢复…";
+  }
+  try {
+    const { run } = await api(`/api/runs/${encodeURIComponent(currentRunId)}/recover`, {
+      method: "POST",
+      body: "{}",
+    });
+    showToast("已从最近检查点恢复运行");
+    setPreview("正在恢复运行", "正在从最近 checkpoint 继续，日志会自动刷新。");
+    restartRunMonitoring(run);
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "从最近检查点恢复";
+    }
     showToast(`恢复失败: ${error.message}`);
   }
 }
@@ -743,7 +790,7 @@ async function renderEnvCheckStep() {
   try {
     const data = await api("/api/env/check");
     const list = document.querySelector("#envCheckList");
-    list.innerHTML = renderEnvItem("Python", "≥ 3.11", data.python) +
+    list.innerHTML = renderEnvItem("Python", "3.11–3.13", data.python) +
       renderEnvItem("Node.js", "≥ 18", data.node) +
       renderEnvItem("uv", "Python 包管理器", data.uv);
     onboardingNext.disabled = !data.allOk;
