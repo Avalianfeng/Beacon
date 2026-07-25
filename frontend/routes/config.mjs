@@ -186,7 +186,23 @@ export async function handleConfigRoutes(request, response, url) {
   // POST /api/config/test-llm - 测试 LLM 连接
   if (request.method === "POST" && url.pathname === "/api/config/test-llm") {
     const body = await readJsonBody(request);
-    const { apiBase, apiKey, model } = body;
+    const envVars = parseEnvFile(ENV_PATH);
+    // 字段未传时回退 .env；显式空串则视为缺失（便于校验）
+    // 前端展示掩码密钥（含 ***）时回退到已保存的 key
+    const apiBase = body.apiBase !== undefined
+      ? String(body.apiBase || "").trim()
+      : (envVars.OPENAI_API_BASE || "");
+    const rawKey = body.apiKey !== undefined ? String(body.apiKey) : "";
+    const apiKey = (body.apiKey !== undefined && rawKey && !rawKey.includes("***"))
+      ? rawKey
+      : (body.apiKey === undefined || rawKey.includes("***") ? (envVars.OPENAI_API_KEY || "") : "");
+    // 直连厂商 HTTP 测通时用裸模型名（去掉 openai/ 等兼容前缀）
+    const rawModel = (
+      body.model !== undefined
+        ? String(body.model || "")
+        : String(envVars.MATH_AGENT_DEFAULT_MODEL || "")
+    ).trim();
+    const model = rawModel.replace(/^openai\//i, "");
 
     if (!apiBase || !apiKey || !model) {
       throw new HttpError(400, "apiBase, apiKey, and model are required.");

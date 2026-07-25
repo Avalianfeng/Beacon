@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildProgressDto, mapFailureMessage } from "./lib/progress.mjs";
+import { buildProgressDto, mapFailureMessage, pickFailureMessage } from "./lib/progress.mjs";
 
 const frontendDir = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const projectRoot = resolve(frontendDir, "..");
@@ -232,11 +232,12 @@ test("GET /api/health 包含 onboarding 字段", async () => {
   assert.ok(["no_env", "no_api_key", "done"].includes(data.onboarding.reason));
 });
 
-test("POST /api/config/test-llm 拒绝缺少参数的请求", async () => {
+test("POST /api/config/test-llm 在地址/密钥/模型皆空时拒绝", async () => {
   const response = await fetch(`${base}/api/config/test-llm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apiBase: "https://example.com/v1" }),
+    // 显式空串，避免回退到本机 .env 后误变成真实探测
+    body: JSON.stringify({ apiBase: "", apiKey: "", model: "" }),
   });
   assert.equal(response.status, 400);
 });
@@ -261,6 +262,68 @@ test("mapFailureMessage 将模型名错误映射为设置建议", () => {
   );
   assert.equal(mapped.suggested_action, "open_settings");
   assert.match(mapped.user_detail, /模型名称/);
+});
+
+test("buildProgressDto 在 worker_busy 时显示 recovering 且禁止继续", () => {
+  const dto = buildProgressDto({
+    out: "runs/demo",
+    thread: "default",
+    supervisor: {
+      status: "blocked",
+      mode: "recover",
+      last_node: "writer_section",
+      message: "LLM 调用超时：writer_section",
+    },
+    failure: null,
+    completion: null,
+    nextNode: "writer_section",
+    finalStatus: "",
+    checkpointExists: true,
+    snapshot: { next_node: "writer_section", writer_sections_remaining: 4 },
+    memoryRun: { status: "failed" },
+    workerBusy: true,
+    recoverFailed: { node: "writer_section", count: 2 },
+  });
+  assert.equal(dto.user_status, "recovering");
+  assert.equal(dto.can_continue, false);
+  assert.match(dto.user_detail, /后台已有任务|写论文|当前进度/);
+  assert.equal(dto.tech.worker_busy, true);
+});
+
+test("buildProgressDto 忽略与当前节点不一致的过期 supervisor 模型报错", () => {
+  const stale = pickFailureMessage(
+    null,
+    {
+      last_node: "coder_generate",
+      message: "The supported API model names are deepseek-v4-pro, but you passed gemini/x",
+    },
+    "writer_section",
+    { node: "writer_section", count: 2 },
+  );
+  assert.match(stale, /writer_section/);
+  assert.doesNotMatch(stale, /supported API model names/i);
+
+  const dto = buildProgressDto({
+    out: "runs/demo",
+    thread: "default",
+    supervisor: {
+      status: "blocked",
+      last_node: "coder_generate",
+      message: "The supported API model names are deepseek-v4-pro, but you passed gemini/x",
+    },
+    failure: null,
+    completion: null,
+    nextNode: "writer_section",
+    finalStatus: "",
+    checkpointExists: true,
+    snapshot: { next_node: "writer_section", writer_sections_remaining: 6 },
+    memoryRun: null,
+    recoverFailed: { node: "writer_section", count: 2 },
+  });
+  assert.equal(dto.user_status, "needs_attention");
+  assert.match(dto.user_detail, /writer_section|超时|失败/);
+  assert.doesNotMatch(dto.user_detail, /模型名称不被/);
+  assert.equal(dto.suggested_action, "continue");
 });
 
 test("buildProgressDto 对 blocked + failure 给出继续/设置引导", () => {

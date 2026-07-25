@@ -168,6 +168,29 @@ function readHintNode(supervisor, failure, nextNode) {
 }
 
 /**
+ * 选择用于展示的失败原文。
+ * supervisor.json 可能长期残留旧错误（例如 DeepSeek 时代的模型名报错），
+ * 而 checkpoint 已前进到 writer_section：此时绝不能再把它映射成「模型不支持」。
+ */
+export function pickFailureMessage(failure, supervisor, nextNode, recoverFailed = null) {
+  if (failure?.message) return String(failure.message);
+  const supMsg = String(supervisor?.message || "");
+  const supNode = String(supervisor?.last_node || "");
+  const current = String(nextNode || "");
+  if (supMsg && current && supNode && supNode !== current) {
+    if (recoverFailed?.node) {
+      return `节点 ${recoverFailed.node} 最近 recover 失败（第 ${recoverFailed.count || 1} 次）`;
+    }
+    return `当前停在 ${current}；忽略过期的 supervisor 报错。`;
+  }
+  if (supMsg) return supMsg;
+  if (recoverFailed?.node) {
+    return `节点 ${recoverFailed.node} 最近 recover 失败（第 ${recoverFailed.count || 1} 次）`;
+  }
+  return "";
+}
+
+/**
  * @param {object} input
  * @param {object|null} input.supervisor
  * @param {object|null} input.failure
@@ -177,6 +200,7 @@ function readHintNode(supervisor, failure, nextNode) {
  * @param {boolean} input.checkpointExists
  * @param {object|null} input.snapshot  progress_snapshot.json
  * @param {object|null} input.memoryRun  内存中的 UI run
+ * @param {boolean} [input.workerBusy]  输出目录锁被占用（CLI/后台 recover 正在跑）
  * @param {string} input.out
  * @param {string} input.thread
  */
@@ -186,6 +210,7 @@ export function buildProgressDto(input) {
   const completion = input.completion || null;
   const snapshot = input.snapshot || null;
   const memoryRun = input.memoryRun || null;
+  const workerBusy = Boolean(input.workerBusy);
   const nextNode = input.nextNode || snapshot?.next_node || "";
   const finalStatus = input.finalStatus || completion?.status || "";
   const checkpointExists = Boolean(input.checkpointExists);
@@ -197,7 +222,9 @@ export function buildProgressDto(input) {
     macro_total: MACRO_STAGES.length,
   };
 
-  const mapped = mapFailureMessage(failure?.message || supervisor?.message || "");
+  const recoverFailed = input.recoverFailed || null;
+  const rawFailureMessage = pickFailureMessage(failure, supervisor, nextNode, recoverFailed);
+  const mapped = mapFailureMessage(rawFailureMessage);
   let user_status = "idle";
   let user_title = "尚未开始";
   let user_detail = "上传题目后，点击「开始生成论文」。";
@@ -210,13 +237,26 @@ export function buildProgressDto(input) {
   const memStatus = memoryRun?.status || "";
   const supStatus = supervisor?.status || "";
   const mode = supervisor?.mode || "";
+  // supervisor 停在旧节点时，不能再用它的 blocked 文案覆盖当前写作/看图状态
+  const supervisorStale = Boolean(
+    nextNode && supervisor?.last_node && supervisor.last_node !== nextNode,
+  );
+  // CLI 直跑 recover 不会把 supervisor 写成 running；目录锁才是「后台已在跑」的真相
+  const effectivelyRunning =
+    memStatus === "running"
+    || (supStatus === "running" && memStatus !== "stopped")
+    || (workerBusy && memStatus !== "stopped");
 
-  if (memStatus === "running" || (supStatus === "running" && memStatus !== "stopped")) {
-    user_status = mode === "recover" ? "recovering" : "running";
-    user_title = mode === "recover" ? "正在从中断处继续…" : "正在生成中…";
+  if (effectivelyRunning) {
+    const recovering = mode === "recover" || (workerBusy && mode !== "run");
+    user_status = recovering ? "recovering" : "running";
+    user_title = recovering ? "正在从中断处继续…" : "正在生成中…";
     user_detail = macro.macro_index
       ? `当前进度：${macro.macro_label}。完整流程可能需要数十分钟到数小时，请耐心等待。`
       : "任务已启动，正在准备中。";
+    if (workerBusy && memStatus !== "running" && supStatus !== "running") {
+      user_detail = `${user_detail} 后台已有任务在写当前目录，请勿重复点继续。`;
+    }
     suggested_action = "stop";
     suggested_label = "停止";
     can_stop = true;
@@ -262,15 +302,22 @@ export function buildProgressDto(input) {
     suggested_action = checkpointExists ? "continue" : "start";
     suggested_label = checkpointExists ? "继续任务" : "开始生成论文";
     can_continue = checkpointExists;
-  } else if (supStatus === "blocked" || memStatus === "failed" || failure) {
+  } else if ((!supervisorStale && supStatus === "blocked") || memStatus === "failed" || failure || recoverFailed) {
     user_status = mapped.config_error ? "needs_settings" : "needs_attention";
     user_title = "任务暂时中断";
-    user_detail = mapped.user_detail || "运行遇到问题，已停在当前步骤。";
-    suggested_action = mapped.suggested_action || "continue";
-    suggested_label = mapped.suggested_label || "继续任务";
-    can_continue = !mapped.config_error || suggested_action === "continue";
-    if (mapped.config_error) {
-      can_continue = true; // 仍允许用户改完设置后继续
+    if (supervisorStale && recoverFailed?.node) {
+      user_detail = `「${recoverFailed.node}」步骤最近失败（第 ${recoverFailed.count || 1} 次）。多为超时或模型响应过慢，可点继续重试；连续 3 次会被暂停。`;
+      suggested_action = "continue";
+      suggested_label = "继续任务";
+      can_continue = true;
+    } else {
+      user_detail = mapped.user_detail || "运行遇到问题，已停在当前步骤。";
+      suggested_action = mapped.suggested_action || "continue";
+      suggested_label = mapped.suggested_label || "继续任务";
+      can_continue = !mapped.config_error || suggested_action === "continue";
+      if (mapped.config_error) {
+        can_continue = true; // 仍允许用户改完设置后继续
+      }
     }
   } else if (supStatus === "stale") {
     user_status = "needs_attention";
@@ -329,6 +376,7 @@ export function buildProgressDto(input) {
       snapshot,
       memory_run_status: memStatus || null,
       hint_node: hintNode || null,
+      worker_busy: workerBusy,
     },
   };
 }

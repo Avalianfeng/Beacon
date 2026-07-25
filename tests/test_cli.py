@@ -192,6 +192,8 @@ def test_status_json_includes_failure(tmp_path):
     assert payload["next_node"] == "coder_generate"
     assert payload["failure"]["node"] == "coder_generate"
     assert payload["snapshot"]["coder_queue_len"] == 2
+    assert "worker_busy" in payload
+    assert payload["worker_busy"] is False
 
 
 def test_status_marks_running_supervisor_with_dead_pid_as_stale(tmp_path):

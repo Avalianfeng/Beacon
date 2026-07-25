@@ -81,7 +81,20 @@ export async function loadStatusPayload(out, thread, env, buildChildEnv) {
     });
   });
 
-  if (fromCli) return fromCli;
+  const recoverFailed = await readJsonSafe(resolve(outDir, ".recover_failed_node"));
+  const { is_locked } = await import("../lib/worker-lock.mjs");
+  const probedBusy = async () =>
+    is_locked(outDir, { command: env.MATH_AGENT_COMMAND, buildChildEnv });
+
+  if (fromCli) {
+    const workerBusy =
+      typeof fromCli.worker_busy === "boolean" ? fromCli.worker_busy : await probedBusy();
+    return {
+      ...fromCli,
+      recover_failed: recoverFailed,
+      worker_busy: workerBusy,
+    };
+  }
 
   const supervisor = await readJsonSafe(resolve(outDir, "supervisor.json"));
   const failure = await readJsonSafe(resolve(outDir, "failure.json"));
@@ -96,6 +109,8 @@ export async function loadStatusPayload(out, thread, env, buildChildEnv) {
     completion,
     failure,
     snapshot,
+    recover_failed: recoverFailed,
+    worker_busy: await probedBusy(),
   };
 }
 
@@ -117,7 +132,9 @@ export async function handleProgressGet(request, response, url, ctx) {
     finalStatus: status.final_status || "",
     checkpointExists: Boolean(status.checkpoint_exists),
     snapshot: status.snapshot,
+    recoverFailed: status.recover_failed || null,
     memoryRun,
+    workerBusy: Boolean(status.worker_busy),
   });
   sendJson(response, 200, { ...dto, macros: MACRO_STAGES.map((s) => ({ id: s.id, label: s.label })) });
 }
@@ -198,6 +215,21 @@ export async function handleRecover(request, response, url, ctx) {
   if (!run) throw new HttpError(404, "Run not found.");
   if (["running", "paused"].includes(run.status) && run.child) {
     throw new HttpError(409, `Run is ${run.status}; stop or finish it before continue.`);
+  }
+
+  // 目录锁被占用时绝不再起 recover，避免抢锁秒败被当成「模型又挂了」
+  const status = await loadStatusPayload(run.out, run.threadId || "default", ctx.env, ctx.buildChildEnv);
+  if (status.worker_busy) {
+    run.status = "running";
+    run.endedAt = null;
+    run.exitCode = null;
+    const { child, sseClients, stdoutBuffer, ...safeRun } = run;
+    sendJson(response, 200, {
+      run: safeRun,
+      alreadyRunning: true,
+      message: "后台已有任务正在写入该目录，已改为跟踪进度（未再启动 recover）。",
+    });
+    return;
   }
 
   const commandParts = splitCommandLine(ctx.env.MATH_AGENT_COMMAND || "uv run math-agent");
