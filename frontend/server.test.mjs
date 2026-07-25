@@ -359,6 +359,32 @@ test("GET /api/runs-history 返回任务列表", async () => {
   assert.ok(Array.isArray(data.runs));
 });
 
+test("GET /api/artifacts 递归列出子目录图片", async () => {
+  const out = "runs/ui-test-figures";
+  const outDir = resolve(projectRoot, out);
+  const nested = resolve(outDir, "fig_0_attempt_0");
+  await mkdir(nested, { recursive: true });
+  // minimal PNG (1x1)
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await writeFile(resolve(nested, "demo.png"), png);
+  try {
+    const response = await fetch(`${base}/api/artifacts?out=${encodeURIComponent(out)}`);
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.ok(data.intermediate);
+    assert.equal(data.intermediate.figureCount, 1);
+    assert.ok(data.figures.some((f) => f.name.includes("demo.png")));
+    const fileRes = await fetch(`${base}${data.figures[0].url}`);
+    assert.equal(fileRes.status, 200);
+    assert.match(fileRes.headers.get("content-type") || "", /image\/png/);
+  } finally {
+    await rm(outDir, { recursive: true, force: true });
+  }
+});
+
 test("POST /api/runs/:id/stop 对已附着任务可用", async () => {
   const runRes = await fetch(`${base}/api/run`, {
     method: "POST",

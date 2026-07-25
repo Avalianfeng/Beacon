@@ -215,6 +215,50 @@ async function listDirectoryFiles(dirPath) {
   }
 }
 
+/** 递归收集 out 目录内图片与关键中间产物（限深，避免扫爆）。 */
+async function collectIntermediateArtifacts(outDir, outParam, { maxDepth = 3, maxFiles = 80 } = {}) {
+  const images = [];
+  const scripts = [];
+  const extras = [];
+
+  async function walk(dir, prefix, depth) {
+    if (depth > maxDepth || images.length + scripts.length >= maxFiles) return;
+    let entries = [];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (images.length + scripts.length >= maxFiles) break;
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const full = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "ui-server" || entry.name.startsWith(".")) continue;
+        await walk(full, rel, depth + 1);
+        continue;
+      }
+      const lower = entry.name.toLowerCase();
+      if (/\.(png|jpe?g|webp)$/i.test(lower)) {
+        images.push({
+          name: rel.replace(/\\/g, "/"),
+          url: `/api/file?out=${encodeURIComponent(outParam)}&name=${encodeURIComponent(rel.replace(/\\/g, "/"))}`,
+        });
+      } else if (lower.endsWith(".py") && (rel.includes("fig_") || rel.includes("attempt") || lower.includes("run"))) {
+        scripts.push({
+          name: rel.replace(/\\/g, "/"),
+          url: `/api/file?out=${encodeURIComponent(outParam)}&name=${encodeURIComponent(rel.replace(/\\/g, "/"))}`,
+        });
+      } else if (["paper.md", "paper.tex", "state_summary.json", "trace.json"].includes(lower)) {
+        extras.push(rel.replace(/\\/g, "/"));
+      }
+    }
+  }
+
+  await walk(outDir, "", 0);
+  return { images, scripts: scripts.slice(0, 20), extras };
+}
+
 function terminateRunProcess(run) {
   if (!run.child || !run.pid) return;
   if (process.platform === "win32") {
@@ -423,13 +467,13 @@ async function handleApi(request, response, url) {
     try {
       completion = JSON.parse(await readFile(resolve(outDir, "completion.json"), "utf8"));
     } catch {}
-    const figureFiles = files
-      .filter((f) => f.type === "file" && /\.(png|jpe?g|webp)$/i.test(f.name))
-      .map((f) => ({
-        name: f.name,
-        url: `/api/file?out=${encodeURIComponent(out)}&name=${encodeURIComponent(f.name)}`,
-      }));
+    const intermediate = await collectIntermediateArtifacts(outDir, out);
+    const figureFiles = intermediate.images;
     const hasPdf = files.some((f) => f.type === "file" && f.name.toLowerCase() === "paper.pdf");
+    const hasBlueprint = Boolean(stateSummary?.problem_blueprint);
+    const modelCount = Array.isArray(stateSummary?.model_versions)
+      ? stateSummary.model_versions.length
+      : (stateSummary?.stage_target ? 1 : 0);
     sendJson(response, 200, {
       out,
       exists: files.length > 0,
@@ -439,6 +483,17 @@ async function handleApi(request, response, url) {
         ? `/api/file?out=${encodeURIComponent(out)}&name=paper.pdf`
         : null,
       figures: figureFiles,
+      scripts: intermediate.scripts,
+      intermediate: {
+        hasBlueprint,
+        hasPaper: Boolean(paper),
+        hasPdf,
+        figureCount: figureFiles.length,
+        scriptCount: intermediate.scripts.length,
+        stageTarget: stateSummary?.stage_target || null,
+        modelHint: modelCount,
+        extras: intermediate.extras,
+      },
       completion,
       traceSummary: trace
         ? {

@@ -1765,6 +1765,15 @@ input[type="range"] {
   background: #f6f7f8;
 }
 
+.intermediate-panel {
+  margin-bottom: 18px;
+}
+
+.intermediate-body {
+  display: grid;
+  gap: 12px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

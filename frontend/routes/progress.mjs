@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { buildProgressDto, MACRO_STAGES } from "../lib/progress.mjs";
@@ -320,14 +320,14 @@ export async function handleRunsHistory(request, response) {
 
 export async function handleArtifactFile(request, response, url) {
   const out = url.searchParams.get("out") || "runs/ui-latest";
-  const name = url.searchParams.get("name") || "";
-  if (!name || name.includes("..") || name.includes("/") || name.includes("\\")) {
+  const name = (url.searchParams.get("name") || "").replace(/\\/g, "/");
+  if (!name || name.includes("..") || name.startsWith("/") || name.includes("\0")) {
     throw new HttpError(400, "Invalid file name.");
   }
   const outDir = safeProjectPath(out);
   const filePath = resolve(outDir, name);
-  const rel = relative(outDir, filePath);
-  if (rel.startsWith("..") || rel.includes("..")) {
+  const rel = relative(outDir, filePath).replace(/\\/g, "/");
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith("../") || rel.includes("/../")) {
     throw new HttpError(403, "Path is outside the output directory.");
   }
   const body = await readFile(filePath);
@@ -339,6 +339,7 @@ export async function handleArtifactFile(request, response, url) {
     ".pdf": "application/pdf",
     ".md": "text/markdown; charset=utf-8",
     ".json": "application/json; charset=utf-8",
+    ".py": "text/x-python; charset=utf-8",
   };
   response.writeHead(200, { "Content-Type": types[ext] || "application/octet-stream" });
   response.end(body);

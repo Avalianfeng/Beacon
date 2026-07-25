@@ -94,6 +94,10 @@ const attentionSecondary = document.querySelector("#attentionSecondary");
 const progressHint = document.querySelector("#progressHint");
 const techDetailsBody = document.querySelector("#techDetailsBody");
 const runsHistory = document.querySelector("#runsHistory");
+const intermediatePanel = document.querySelector("#intermediatePanel");
+const intermediateBody = document.querySelector("#intermediateBody");
+const intermediateHint = document.querySelector("#intermediateHint");
+const refreshIntermediateButton = document.querySelector("#refreshIntermediate");
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -236,7 +240,16 @@ function renderAttention(progress) {
   attentionCard.hidden = !show;
   if (!show) return;
   attentionTitle.textContent = progress.user_title || "";
-  attentionDetail.textContent = progress.user_detail || "";
+  let detail = progress.user_detail || "";
+  const mid = lastArtifacts?.intermediate;
+  if (mid && (mid.figureCount > 0 || mid.hasBlueprint || mid.hasPaper)) {
+    const bits = [];
+    if (mid.hasBlueprint) bits.push("题目理解/蓝图");
+    if (mid.figureCount) bits.push(`${mid.figureCount} 张图`);
+    if (mid.hasPaper) bits.push("论文草稿");
+    detail = `${detail} 下方「已生成内容」可预览：${bits.join("、")}。`;
+  }
+  attentionDetail.textContent = detail;
   attentionPrimary.textContent = progress.suggested_label || "继续";
   attentionPrimary.onclick = () => handleSuggestedAction(progress);
   if (progress.user_status === "needs_review") {
@@ -493,9 +506,58 @@ function renderBlueprint(summary) {
   artifactPreview.innerHTML = html;
 }
 
+function renderIntermediatePanel(payload) {
+  if (!intermediatePanel || !intermediateBody) return;
+  const mid = payload?.intermediate;
+  const figures = payload?.figures || [];
+  const hasAnything = mid && (mid.figureCount > 0 || mid.hasBlueprint || mid.hasPaper || mid.scriptCount > 0);
+  intermediatePanel.hidden = !hasAnything;
+  if (!hasAnything) return;
+  if (intermediateHint) {
+    intermediateHint.textContent = mid.hasPaper
+      ? "已有论文相关产物；任务若仍中断，可先查看下面内容。"
+      : "任务可能尚未结束，但这些内容已经生成，可先查看。";
+  }
+  const chips = [];
+  if (mid.hasBlueprint) chips.push("<span class=\"bp-tag ok\">蓝图/题目理解</span>");
+  if (mid.stageTarget) chips.push(`<span class=\"bp-tag\">模型阶段 ${escapeHtml(mid.stageTarget)}</span>`);
+  if (mid.figureCount) chips.push(`<span class=\"bp-tag\">图片 ${mid.figureCount}</span>`);
+  if (mid.scriptCount) chips.push(`<span class=\"bp-tag\">脚本 ${mid.scriptCount}</span>`);
+  if (mid.hasPaper) chips.push("<span class=\"bp-tag ok\">论文草稿</span>");
+  const gallery = figures.slice(0, 12).map((f) =>
+    `<a class="figure-thumb" href="${escapeHtml(f.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(f.url)}" alt="${escapeHtml(f.name)}" loading="lazy" /><span>${escapeHtml(f.name)}</span></a>`,
+  ).join("");
+  const scriptList = (payload.scripts || []).slice(0, 8).map((s) =>
+    `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.name)}</a>`,
+  ).join(" · ");
+  intermediateBody.innerHTML = `
+    <div class="bp-meta">${chips.join("")}</div>
+    ${gallery ? `<div class="figure-gallery">${gallery}</div>` : "<p class=\"hint\">暂无预览图。</p>"}
+    ${scriptList ? `<p class="hint">相关脚本：${scriptList}</p>` : ""}
+    <div class="resume-bar">
+      <button class="ghost-button" type="button" id="gotoBlueprint">查看题目理解</button>
+      <button class="ghost-button" type="button" id="gotoPaper">查看论文</button>
+      <button class="ghost-button" type="button" id="gotoFigures">打开图表页</button>
+    </div>
+  `;
+  document.querySelector("#gotoBlueprint")?.addEventListener("click", () => {
+    document.querySelector('[data-tab="blueprint"]')?.click();
+    document.querySelector("#outputs")?.scrollIntoView({ behavior: "smooth" });
+  });
+  document.querySelector("#gotoPaper")?.addEventListener("click", () => {
+    document.querySelector('[data-tab="paper"]')?.click();
+    document.querySelector("#outputs")?.scrollIntoView({ behavior: "smooth" });
+  });
+  document.querySelector("#gotoFigures")?.addEventListener("click", () => {
+    document.querySelector('[data-tab="figures"]')?.click();
+    document.querySelector("#outputs")?.scrollIntoView({ behavior: "smooth" });
+  });
+}
+
 async function loadArtifacts(tab = "paper") {
   const payload = await api(`/api/artifacts?out=${encodeURIComponent(outputDir.value || "runs/ui-latest")}`);
   lastArtifacts = payload;
+  renderIntermediatePanel(payload);
   const actualScore = payload.stateSummary?.evaluation_overall;
   qualityScore.textContent = Number.isFinite(Number(actualScore))
     ? Number(actualScore).toFixed(2)
@@ -688,6 +750,7 @@ function handleRunEnd(run) {
   refreshProgress().then(() => {
     if (showTechLogs) setRunLogPreview(run);
   });
+  loadArtifacts(document.querySelector(".tabs .active")?.dataset?.tab || "paper").catch(() => {});
   if (run.status === "completed") {
     showToast("论文已生成完成");
     loadArtifacts("paper").catch(() => {});
@@ -1525,7 +1588,13 @@ activateNav(window.location.hash || "#workspace");
 updateCommand();
 updatePipeline();
 loadRunsHistory();
+refreshIntermediateButton?.addEventListener("click", () => {
+  loadArtifacts(document.querySelector(".tabs .active")?.dataset?.tab || "paper")
+    .then(() => showToast("已刷新过程产物"))
+    .catch((e) => showToast(e.message));
+});
 attachExistingRun().catch(() => {
   refreshProgress().catch(() => {});
+  loadArtifacts("paper").catch(() => {});
 });
 
