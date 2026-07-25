@@ -10,6 +10,13 @@ import { fileURLToPath } from "node:url";
 import { handleEnvRoutes } from "./routes/env.mjs";
 import { handleConfigRoutes } from "./routes/config.mjs";
 import { handleOnboardingRoutes, getOnboardingStatus } from "./routes/onboarding.mjs";
+import {
+  handleArtifactFile,
+  handleAttach,
+  handleProgressGet,
+  handleRecover,
+  handleRunsHistory,
+} from "./routes/progress.mjs";
 
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const projectRoot = resolve(root, "..");
@@ -403,6 +410,7 @@ async function handleApi(request, response, url) {
     let paper = "";
     let trace = null;
     let stateSummary = null;
+    let completion = null;
     try {
       paper = await readFile(resolve(outDir, "paper.md"), "utf8");
     } catch {}
@@ -412,20 +420,80 @@ async function handleApi(request, response, url) {
     try {
       stateSummary = JSON.parse(await readFile(resolve(outDir, "state_summary.json"), "utf8"));
     } catch {}
+    try {
+      completion = JSON.parse(await readFile(resolve(outDir, "completion.json"), "utf8"));
+    } catch {}
+    const figureFiles = files
+      .filter((f) => f.type === "file" && /\.(png|jpe?g|webp)$/i.test(f.name))
+      .map((f) => ({
+        name: f.name,
+        url: `/api/file?out=${encodeURIComponent(out)}&name=${encodeURIComponent(f.name)}`,
+      }));
+    const hasPdf = files.some((f) => f.type === "file" && f.name.toLowerCase() === "paper.pdf");
     sendJson(response, 200, {
       out,
       exists: files.length > 0,
       files,
-      paperExcerpt: paper.slice(0, 1800),
+      paperExcerpt: paper.slice(0, 4000),
+      paperPdfUrl: hasPdf
+        ? `/api/file?out=${encodeURIComponent(out)}&name=paper.pdf`
+        : null,
+      figures: figureFiles,
+      completion,
       traceSummary: trace
         ? {
             threadId: trace.thread_id,
             llmCalls: trace.llm_calls,
+            llmFailures: trace.llm_failures,
+            llmTimeouts: trace.llm_timeouts,
             tokens: trace.tokens,
             nodes: Array.isArray(trace.nodes) ? trace.nodes.length : 0,
+            nodeDurations: Array.isArray(trace.nodes) ? trace.nodes.slice(-40) : [],
+            attempts: Array.isArray(trace.llm_attempt_records)
+              ? trace.llm_attempt_records.slice(-40)
+              : [],
+            perModel: trace.per_model || null,
           }
         : null,
       stateSummary,
+    });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/progress") {
+    await handleProgressGet(request, response, url, {
+      env,
+      runs,
+      buildChildEnv,
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/attach") {
+    await handleAttach(request, response, { env, runs, buildChildEnv });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/runs-history") {
+    await handleRunsHistory(request, response);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/file") {
+    await handleArtifactFile(request, response, url);
+    return;
+  }
+
+  if (
+    request.method === "POST"
+    && url.pathname.startsWith("/api/runs/")
+    && url.pathname.endsWith("/recover")
+  ) {
+    await handleRecover(request, response, url, {
+      env,
+      runs,
+      buildChildEnv,
+      notifySse: _notifySseClients,
     });
     return;
   }
@@ -657,8 +725,12 @@ async function handleApi(request, response, url) {
       if (run.status !== "stopped") {
         if (code === 0 && run.stdoutBuffer.includes("pipeline paused before human_review")) {
           run.status = "paused";
+        } else if (code === 0 && run.stdoutBuffer.includes("pipeline rejected at human_review")) {
+          run.status = "rejected";
         } else if (run.stdoutBuffer.includes("[DEGRADED]")) {
           run.status = "degraded";
+        } else if (run.stdoutBuffer.includes("[BLOCKED]")) {
+          run.status = "failed";
         } else {
           run.status = code === 0 ? "completed" : "failed";
         }

@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdir, writeFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildProgressDto, mapFailureMessage } from "./lib/progress.mjs";
 
 const frontendDir = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const projectRoot = resolve(frontendDir, "..");
@@ -246,4 +248,129 @@ test("GET /api/providers 返回提供商列表", async () => {
   assert.ok(Array.isArray(data));
   assert.ok(data.length >= 5);
   assert.ok(data.some((p) => p.id === "deepseek"));
+});
+
+test("mapFailureMessage 将模型名错误映射为设置建议", () => {
+  const mapped = mapFailureMessage(
+    "The supported API model names are deepseek-v4-pro, but you passed gemini/x",
+  );
+  assert.equal(mapped.suggested_action, "open_settings");
+  assert.match(mapped.user_detail, /模型名称/);
+});
+
+test("buildProgressDto 对 blocked + failure 给出继续/设置引导", () => {
+  const dto = buildProgressDto({
+    out: "runs/demo",
+    thread: "default",
+    supervisor: { status: "blocked", last_node: "coder_generate", message: "blocked" },
+    failure: {
+      node: "coder_generate",
+      message: "OpenAIException - Connection error.",
+    },
+    completion: null,
+    nextNode: "coder_generate",
+    finalStatus: "",
+    checkpointExists: true,
+    snapshot: null,
+    memoryRun: null,
+  });
+  assert.equal(dto.macro_stage, "compute");
+  assert.equal(dto.macro_label, "计算验证");
+  assert.ok(["needs_attention", "needs_settings"].includes(dto.user_status));
+  assert.equal(dto.can_continue, true);
+  assert.match(dto.user_title, /中断|设置|任务/);
+});
+
+test("GET /api/progress 聚合用户态字段", async () => {
+  const out = "runs/ui-test-progress";
+  const outDir = resolve(projectRoot, out);
+  await mkdir(outDir, { recursive: true });
+  await writeFile(
+    resolve(outDir, "supervisor.json"),
+    JSON.stringify({
+      status: "blocked",
+      last_node: "figure_critic",
+      message: "test blocked",
+      ended_at: new Date().toISOString(),
+    }),
+    "utf8",
+  );
+  await writeFile(
+    resolve(outDir, "failure.json"),
+    JSON.stringify({
+      node: "figure_critic",
+      kind: "LLMInvalidRequestError",
+      retriable: false,
+      message: "The supported API model names are deepseek-v4-flash, but you passed gemini/x",
+    }),
+    "utf8",
+  );
+  try {
+    const response = await fetch(
+      `${base}/api/progress?out=${encodeURIComponent(out)}&thread=default`,
+    );
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.ok(data.user_title);
+    assert.ok(data.user_detail);
+    assert.equal(data.macro_stage, "figures");
+    assert.equal(data.suggested_action, "open_settings");
+    assert.ok(data.tech);
+    assert.equal(data.tech.failure.node, "figure_critic");
+  } finally {
+    await rm(outDir, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/attach 可附着已有输出目录", async () => {
+  const out = "runs/ui-test-attach";
+  const outDir = resolve(projectRoot, out);
+  await mkdir(outDir, { recursive: true });
+  await writeFile(
+    resolve(outDir, "supervisor.json"),
+    JSON.stringify({ status: "blocked", last_node: "coder_generate" }),
+    "utf8",
+  );
+  try {
+    const response = await fetch(`${base}/api/attach`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ out, thread: "default" }),
+    });
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.ok(data.run.id);
+    assert.equal(data.run.out, out);
+    assert.equal(data.attached, true);
+  } finally {
+    await rm(outDir, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/runs-history 返回任务列表", async () => {
+  const response = await fetch(`${base}/api/runs-history`);
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.ok(Array.isArray(data.runs));
+});
+
+test("POST /api/runs/:id/stop 对已附着任务可用", async () => {
+  const runRes = await fetch(`${base}/api/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "stop-test",
+      background: "bg",
+      outputDir: "runs/ui-test-stop",
+      threadId: "stop-test",
+      noInterrupt: true,
+      ragEnabled: false,
+    }),
+  });
+  assert.equal(runRes.status, 202);
+  const { run } = await runRes.json();
+  const stopRes = await fetch(`${base}/api/runs/${run.id}/stop`, { method: "POST" });
+  assert.equal(stopRes.status, 200);
+  const stopped = await stopRes.json();
+  assert.ok(["stopped", "failed", "completed"].includes(stopped.run.status));
 });
