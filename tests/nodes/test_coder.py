@@ -448,7 +448,7 @@ def test_unserviceable_green_logistics_uses_real_attachment_solver(tmp_path):
 
     names = ["订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx"]
     state = MathModelingState(
-        problem="城市绿色物流配送",
+        problem="A题：城市绿色物流配送调度",
         data_dir=str(tmp_path),
         data_files=[
             DataFileInfo(filename=name, file_type="xlsx", path=name)
@@ -473,7 +473,9 @@ def test_unserviceable_green_logistics_uses_real_attachment_solver(tmp_path):
     assert "SERVICE_TIME = 20.0" in draft.code
     assert '"weight": 3000.0, "volume": 13.5, "count": 60' in draft.code
     assert '"weight": 1250.0, "volume": 8.5, "count": 15' in draft.code
-    assert "float(row.weight) / 1250.0" in draft.code
+    assert "construct_residual_route" in draft.code
+    assert "delivered_weight = remaining_weight * fraction" in draft.code
+    assert "customer in visited" in draft.code
     assert "GREEN_ZONE_RADIUS = 10.0" in draft.code
     assert "np.linalg.norm(np.asarray(point))" in draft.code
     compile(draft.code, "<safe-solver>", "exec")
@@ -487,7 +489,7 @@ def test_exhausted_batches_without_primary_select_safe_solver_without_llm(mocker
     complete = mocker.patch("math_agent.nodes.coder.complete")
     names = ["订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx"]
     state = MathModelingState(
-        problem="城市绿色物流配送",
+        problem="A题：城市绿色物流配送调度",
         data_dir=str(tmp_path),
         output_dir=str(tmp_path),
         code_verify_iteration=MAX_CODE_VERIFY_ITERATIONS,
@@ -513,6 +515,71 @@ def test_exhausted_batches_without_primary_select_safe_solver_without_llm(mocker
     assert "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in delta["coder_pending_draft"]["code"]
 
 
+def test_green_primary_selects_verified_safe_solver_on_first_batch(mocker, tmp_path):
+    from math_agent.nodes.coder import coder_generate_node
+    from math_agent.state import DataFileInfo
+
+    complete = mocker.patch("math_agent.nodes.coder.complete")
+    names = ["订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx"]
+    state = MathModelingState(
+        problem="A题：城市绿色物流配送调度",
+        data_dir=str(tmp_path),
+        output_dir=str(tmp_path),
+        data_files=[
+            DataFileInfo(filename=name, file_type="xlsx", path=name)
+            for name in names
+        ],
+    )
+    state.model_versions.append(ModelVersion(stage="final", description="绿色配送"))
+    state.coder_phase = "generate"
+    state.coder_current_batch = 1
+    state.coder_work_queue = [{
+        "kind": "figure", "id": "figure:0", "index": 0,
+        "purpose": "主方案", "attempt": 0, "prev_err": "", "prev_kind": "",
+        "evidence_target": "primary",
+    }]
+
+    delta = coder_generate_node(state)
+
+    complete.assert_not_called()
+    assert delta["coder_phase"] == "execute"
+    assert "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in delta["coder_pending_draft"]["code"]
+
+
+def test_same_filenames_do_not_enable_green_solver_for_unrelated_problem(mocker, tmp_path):
+    from math_agent.nodes.coder import coder_generate_node
+    from math_agent.state import DataFileInfo
+
+    generated = CoderDraft(
+        purpose="通用主方案",
+        code="print('RESULT: baseline=ours total_cost=10 service_rate=1')",
+    )
+    complete = mocker.patch("math_agent.nodes.coder.complete", return_value=generated)
+    names = ["订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx"]
+    state = MathModelingState(
+        problem="普通仓储分拣排程",
+        data_dir=str(tmp_path),
+        output_dir=str(tmp_path),
+        data_files=[
+            DataFileInfo(filename=name, file_type="xlsx", path=name)
+            for name in names
+        ],
+    )
+    state.model_versions.append(ModelVersion(stage="final", description="通用排程"))
+    state.coder_phase = "generate"
+    state.coder_current_batch = 1
+    state.coder_work_queue = [{
+        "kind": "figure", "id": "figure:0", "index": 0,
+        "purpose": "主方案", "attempt": 0, "prev_err": "", "prev_kind": "",
+        "evidence_target": "primary",
+    }]
+
+    delta = coder_generate_node(state)
+
+    complete.assert_called_once()
+    assert "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" not in delta["coder_pending_draft"]["code"]
+
+
 def test_exhausted_new_batch_ignores_stale_prior_primary_and_uses_safe_solver(mocker, tmp_path):
     from math_agent.config import MAX_CODE_VERIFY_ITERATIONS
     from math_agent.nodes.coder import coder_generate_node
@@ -521,7 +588,7 @@ def test_exhausted_new_batch_ignores_stale_prior_primary_and_uses_safe_solver(mo
     complete = mocker.patch("math_agent.nodes.coder.complete")
     names = ["订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx"]
     state = MathModelingState(
-        problem="城市绿色物流配送", data_dir=str(tmp_path), output_dir=str(tmp_path),
+        problem="A题：城市绿色物流配送调度", data_dir=str(tmp_path), output_dir=str(tmp_path),
         code_verify_iteration=MAX_CODE_VERIFY_ITERATIONS,
         data_files=[DataFileInfo(filename=name, file_type="xlsx", path=name) for name in names],
     )
@@ -564,6 +631,33 @@ def test_safe_baselines_have_distinct_executed_policies(tmp_path):
         ))
 
 
+def test_safe_baseline_changes_both_scenarios_in_dual_wrapper(tmp_path):
+    from math_agent.nodes.coder import _green_logistics_template_code, _safe_baseline_draft
+
+    main = _green_logistics_template_code(str(tmp_path))
+    greedy = _safe_baseline_draft(
+        {"category": "greedy", "name": "greedy"}, main,
+    )
+    simple = _safe_baseline_draft(
+        {"category": "simple_pred", "name": "simple_pred"}, main,
+    )
+
+    assert greedy is not None and simple is not None
+    assert 'STRATEGY = "cost_aware"' not in greedy.code
+    assert greedy.code.count('STRATEGY = "first_fit"') == 2
+    assert simple.code.count("USE_TIME_VARYING_SPEED = False") == 4
+    assert simple.code.count("USE_TIME_VARYING_SPEED = True") == 2
+    assert simple.code.count(
+        "USE_TIME_VARYING_SPEED = True\n"
+        "departure_search = optimize_route_departures(routes)"
+    ) == 1
+    assert simple.code.count(
+        r"USE_TIME_VARYING_SPEED = True\n"
+        r"departure_search = optimize_route_departures(routes)"
+    ) == 1
+    compile(simple.code, "<simple-pred-dual-wrapper>", "exec")
+
+
 def test_green_logistics_solver_emits_competition_depth_evidence(tmp_path):
     """正式求解器应产生算法、动态、随机稳健性和服务诊断证据。"""
     from math_agent.nodes.coder import _green_logistics_template_code
@@ -575,6 +669,10 @@ def test_green_logistics_solver_emits_competition_depth_evidence(tmp_path):
     assert "DYNAMIC_EVENTS:" in code
     assert "ROBUSTNESS:" in code
     assert "SERVICE_DIAGNOSTICS:" in code
+    assert "representative_indices" in code
+    assert "全部线路里程分布" in code
+    assert "def flexible_standby_dispatch" in code
+    assert "按题面分割配送口径把大任务同比例拆给剩余小车型" in code
     assert "ALGORITHM_SEARCH:" in code
     assert "data_profile.png" in code
     assert "algorithm_flow.png" in code
@@ -614,7 +712,7 @@ def test_safe_solver_appends_honest_executable_model_contract():
     assert "BEACON_SAFE_SOLVER_CONTRACT" in aligned.notes
     assert "v_load[k,task]" in aligned.variables
     assert any("60/50/50/10/15" in item for item in aligned.constraint_mapping)
-    assert "BEACON_SAFE_SOLVER_CONTRACT_V4" in aligned.notes
+    assert "BEACON_SAFE_SOLVER_CONTRACT_V5" in aligned.notes
 
 
 def test_local_baseline_repair_reuses_code_and_fixes_relative_attachment_root(tmp_path):
@@ -781,15 +879,32 @@ def test_green_depth_evidence_gate_requires_statistical_and_dynamic_experiments(
     from math_agent.nodes.coder import _green_depth_evidence_error
 
     incomplete = "ALGORITHM_SEARCH: initial_score=10 final_score=9 improvement=1"
-    assert "ROBUSTNESS" in _green_depth_evidence_error(incomplete)
+    assert "DEPARTURE_SEARCH" in _green_depth_evidence_error(incomplete)
 
     complete = (
+        "SCENARIO_Q1: baseline=no_policy total_cost=90 vehicles=10 service_rate=1 "
+        "total_carbon=8 total_distance=70 fuel_vehicles=8 ev_vehicles=2 timewin_rate=.9\n"
         "ALGORITHM_SEARCH: initial_score=10 final_score=9 improvement=1 improvement_rate=.1 "
         "moves=1 passes=2 runtime_ms=3\n"
+        "DEPARTURE_SEARCH: routes_shifted=8 schedule_cost_before=10 "
+        "schedule_cost_after=4 schedule_saving=6\n"
+        "CROSS_ROUTE_SEARCH: initial_score=9 final_score=8 improvement=1 "
+        "swaps=1 evaluated_moves=20 runtime_ms=2\n"
         "ROBUSTNESS: scenarios=200 seed=2026 timewin_mean=.9 timewin_std=.02 "
         "timewin_p05=.8 late_mean=10 late_p95=20 cost_mean=100 cost_p95=120\n"
         "SERVICE_DIAGNOSTICS: late_tasks=2 mean_late_min=8 p95_late_min=14 "
         "max_late_min=15 mean_weight_util=.7 mean_volume_util=.5 empty_return_ratio=.4\n"
+        "DYNAMIC_STRESS: samples=10 success=7 success_rate=.7 mean_response_ms=1 "
+        "p95_response_ms=2 mean_distance_change=3 max_distance_change=5 "
+        "improved=1 mean_late_change=0\n"
+        "DYNAMIC_FAILURES: failures=3 capacity_and_standby_exhausted=2 "
+        "policy_or_schedule_infeasible=1 no_improving_insertion=0\n"
+        "ENERGY_METHOD_AUDIT: integrated_energy_cost=20 "
+        "point_speed_proxy_cost=21 relative_difference=.05 piecewise_segments=1\n"
+        "SMALL_EXACT: customers=8 exact_distance=40 heuristic_distance=42 "
+        "gap_pct=5 states=3000 routing_only=1\n"
+        "CAPACITY_DIAGNOSTICS: routes=10 weight_binding_routes=7 "
+        "volume_binding_routes=2 mean_weight_util=.7 mean_volume_util=.5\n"
         "DYNAMIC_EVENTS: scenarios=50 cancellation_success_rate=1 new_order_success_rate=.7 "
         "address_change_success_rate=.6 time_window_success_rate=.5 "
         "vehicle_failure_success_rate=.4 fallback_rate=.36\n"

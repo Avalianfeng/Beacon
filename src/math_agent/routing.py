@@ -5,6 +5,7 @@
 from math_agent.config import (
     MAX_MODEL_ITERATIONS, MAX_WRITER_ITERATIONS,
     MAX_BLUEPRINT_ITERATIONS, MAX_CODE_VERIFY_ITERATIONS,
+    MIN_MODEL_CRITIC_SCORE, MIN_MODEL_CODE_SCORE, MIN_PAPER_CRITIC_SCORE,
 )
 from math_agent.state import MathModelingState
 
@@ -32,20 +33,23 @@ def after_model_critic(state: MathModelingState) -> str:
     critic = state.latest_critic("modeler")
     if critic is None:
         return "retry"
+    passed = critic.approved and critic.score >= MIN_MODEL_CRITIC_SCORE
 
     if state.stage_target == "final":
-        if critic.approved or state.iteration >= MAX_MODEL_ITERATIONS:
+        if passed:
             return "to_coder"
+        if state.iteration >= MAX_MODEL_ITERATIONS:
+            return "stop"
         return "retry"
 
     # basic / improved
-    if critic.approved or state.iteration >= MAX_MODEL_ITERATIONS:
+    if passed or state.iteration >= MAX_MODEL_ITERATIONS:
         return "advance"
     return "retry"
 
 
 def after_paper_critic(state: MathModelingState) -> str:
-    """writer 闭环：critic 通过或迭代用尽 → advance；否则 retry 回 writer。"""
+    """writer 闭环：优秀论文门槛通过才前进；重试耗尽仍不通过则停止。"""
     paper_has_content = any([
         state.paper.abstract, state.paper.model_section, state.paper.solution,
     ])
@@ -54,8 +58,10 @@ def after_paper_critic(state: MathModelingState) -> str:
     critic = state.latest_critic("paper")
     if critic is None:
         return "stop" if state.writer_iteration >= MAX_WRITER_ITERATIONS else "retry"
-    if critic.approved or state.writer_iteration >= MAX_WRITER_ITERATIONS:
+    if critic.approved and critic.score >= MIN_PAPER_CRITIC_SCORE:
         return "advance"
+    if state.writer_iteration >= MAX_WRITER_ITERATIONS:
+        return "stop"
     return "retry"
 
 
@@ -91,13 +97,14 @@ def after_model_code_consistency(state: MathModelingState) -> str:
     """model_code_consistency 审查完后的去向。
 
     code_verify_iteration 语义：model_code_consistency_node 返回时已递增。
-    approved 且 score >= 7 -> advance；未通过且迭代用尽 -> advance_with_warning；否则 retry_coder。
+    approved 且达到配置门槛 -> advance；未通过则 retry_coder；
+    已有主证据但重试用尽仍未达标时停止，禁止带病进入论文阶段。
     """
     if not state.model_code_reports:
         return "retry_coder"
 
     report = state.model_code_reports[-1]
-    if report.approved and report.score >= 7:
+    if report.approved and report.score >= MIN_MODEL_CODE_SCORE:
         return "advance"
     latest = state.latest_code_artifacts()
     has_primary = any(
@@ -109,7 +116,7 @@ def after_model_code_consistency(state: MathModelingState) -> str:
     if not has_primary:
         return "retry_coder"
     if state.code_verify_iteration >= MAX_CODE_VERIFY_ITERATIONS:
-        return "advance_with_warning"
+        return "stop"
     return "retry_coder"
 
 

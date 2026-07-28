@@ -91,16 +91,18 @@ graph LR
 | **Modeler / Model Critic** | 按 basic → improved → final 建模，并检查假设与推导 |
 | **Coder / Code Consistency** | 生成可执行实验代码，并核对模型、代码和输出指标 |
 | **Sensitivity** | 执行参数扫描与鲁棒性分析 |
-| **Figure Pipeline** | 收集图像，执行多模态质量评审与图说生成 |
+| **Figure Pipeline** | 收集图像，执行多模态质量评审并生成“结论—证据—含义—边界”式图说 |
 | **Writer / Paper Critic** | 按章节写作，并在评审反馈下定向重写 |
-| **Table Assembler** | 从结构化结果生成表格并清理内部术语 |
+| **Table Assembler** | 从结构化结果生成表格，并对论文正文执行内部术语清理 |
 | **Evaluation** | 按竞赛评价维度生成量化评分 |
 | **Human Review** | 批准后才进入最终编译；拒绝则安全结束，不生成最终稿 |
-| **LaTeX** | 用 XeLaTeX 编译 PDF；不可用或失败时保留 Markdown/TeX |
+| **LaTeX** | 按语义把图插入相关论证位置、绑定图题与解释，再用 XeLaTeX 编译 PDF |
 
 **Key design choices:**
 - Every LLM call goes through a **unified `complete()` with retry, timeout, and structured output repair**
 - Paper sections use **Jinja2 templates** for consistent formatting
+- 图表按数据、模型、结果、动态实验和敏感性等语义锚点分散排放，不集中堆入附录或单独图表小节
+- writer、paper critic 与 finalizer 分层隔离调度协议、节点名和机器方案标识，防止运行时术语进入正文
 - **RAG (Retrieval-Augmented Generation)** optionally injects classic model patterns and prize-winning paper excerpts into analyst/modeler/writer prompts
 - **Checkpoint-based recovery** — if any node crashes, you can `resume` or `recover` from the last saved state
 
@@ -199,6 +201,7 @@ Beacon/
 │   │   ├── coder.py            #   Code generation
 │   │   ├── sensitivity.py      #   Parameter sensitivity analysis
 │   │   ├── figure_pipeline.py  #   Figure generation + review
+│   │   ├── figure_placement.py #   Semantic figure placement
 │   │   ├── writer.py           #   Paper writing (prep + section loop)
 │   │   ├── paper_critic.py     #   Paper quality review
 │   │   ├── evaluation.py       #   Rubric-based scoring
@@ -276,12 +279,18 @@ MATH_AGENT_LLM_TOTAL_TIMEOUT=300
 MATH_AGENT_LLM_LONG_ATTEMPT_TIMEOUT=240
 MATH_AGENT_LLM_LONG_TOTAL_TIMEOUT=420
 
-# --- Paper depth gates ---
-MATH_AGENT_MIN_PAPER_BODY_PAGES=20
-MATH_AGENT_MIN_PAPER_BODY_CHARS=15000
+# --- Model and paper quality gates ---
+MATH_AGENT_MIN_MODEL_CRITIC_SCORE=8
+MATH_AGENT_MIN_MODEL_CODE_SCORE=8
+MATH_AGENT_MIN_PAPER_CRITIC_SCORE=9
+MATH_AGENT_MIN_FINAL_SCORE=8.0
+MATH_AGENT_MIN_EVALUATION_DIMENSION=7.0
+MATH_AGENT_MIN_RESULT_CORRECTNESS=8.0
+MATH_AGENT_MIN_PAPER_BODY_PAGES=12
+MATH_AGENT_MIN_PAPER_BODY_CHARS=10000
 
 # --- RAG (optional) ---
-MATH_AGENT_RAG_ENABLED=1
+MATH_AGENT_RAG_ENABLED=0
 MATH_AGENT_RAG_EMBED=text-embedding-3-small
 MATH_AGENT_RAG_DIM=1536
 
@@ -290,7 +299,13 @@ PORT=5173
 MATH_AGENT_COMMAND=uv run math-agent
 ```
 
-For the full list of tunable parameters, see `.env.example` or `src/math_agent/config.py`.
+完整可调参数以 `.env.example` 为入口；LLM 分档时限与总预算的实现见 `src/math_agent/llm.py`。
+
+`MATH_AGENT_CODER_DETERMINISTIC=1`、`MATH_AGENT_WRITER_DETERMINISTIC=1` 和
+`MATH_AGENT_OFFLINE_REVIEW=1` 不属于常规配置。它们只用于远程生成或评审不可用、且本地已有
+完整可机检证据契约的离线回归。当前离线契约只完整覆盖城市绿色物流确定性事实稿；其他题目应
+保持关闭，让生成或评审失败显式暴露。正常运行中，绿色物流专用求解器还会校验明确题目标识，
+不能仅凭四个通用附件文件名自动启用。
 
 ---
 

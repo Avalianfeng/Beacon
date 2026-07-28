@@ -17,7 +17,13 @@ def blueprint_critic_node(state: MathModelingState) -> dict:
         return {"critic_reports": [report], "blueprint_iteration": state.blueprint_iteration + 1}
 
     blueprint_json = blueprint.model_dump_json(indent=2)
-    prompt = build_prompt(blueprint_json, state.problem, state.questions)
+    prompt = build_prompt(
+        blueprint_json,
+        state.problem,
+        state.questions,
+        background=state.background,
+        data_files=state.data_files,
+    )
     out: CriticReport = complete(
         prompt, schema=CriticReport, system=SYSTEM, model=MODEL_ROUTING["model_critic"]
     )

@@ -1,12 +1,12 @@
 """table_assembler 单元测试：禁用词清洗 + 表格生成。"""
-from math_agent.nodes.table_assembler import _clean_forbidden_words
+from math_agent.nodes.table_assembler import _clean_forbidden_words, _find_internal_terms
 
 
 def test_clean_replaces_papercritic():
     text = "本文 PaperCritic 评分较高"
     cleaned, warnings = _clean_forbidden_words(text, "model_section")
     assert "PaperCritic" not in cleaned
-    assert "[内部评审]" in cleaned
+    assert "论文评审" in cleaned
     assert len(warnings) == 1
 
 
@@ -65,6 +65,28 @@ def test_clean_preserves_clean_text():
     cleaned, warnings = _clean_forbidden_words(text, "model_section")
     assert cleaned == text
     assert warnings == []
+
+
+def test_clean_rewrites_runtime_internal_terms_as_competition_paper_language():
+    text = (
+        "正式主方案通过 RESULT 门禁，图来自 primary artifact，数值可回溯到 stdout；"
+        "checkpoint 中的 SensitivityRun 不混入历史 attempt。"
+    )
+
+    cleaned, warnings = _clean_forbidden_words(text, "solution")
+
+    assert _find_internal_terms(cleaned) == []
+    assert "本文方案" in cleaned
+    assert "计算结果" in cleaned
+    assert "有效性检查" in cleaned
+    assert "原始数值输出" in cleaned
+    assert "敏感性实验记录" in cleaned
+    assert warnings
+
+
+def test_find_internal_terms_reports_unresolved_protocol_labels():
+    leaked = _find_internal_terms("正文仍含 checkpoint、stdout 和 RESULT 门禁。")
+    assert {"checkpoint", "stdout", "RESULT", "门禁"}.issubset(set(leaked))
 
 
 def test_clean_handles_empty_string():
@@ -155,6 +177,26 @@ def test_sensitivity_table_uses_latest_run_per_parameter():
     assert table.count("| speed |") == 1
     assert "1.446e+05" in table
     assert "2.4e+05" not in table
+
+
+def test_sensitivity_table_decodes_interaction_parameter_for_readers():
+    run = SensitivityRun(
+        parameter="速度比例×限行开始时刻二维组合编码",
+        values=[8007, 8008, 8009, 10007, 10008, 10009, 12007, 12008, 12009],
+        metric="Z",
+        results=[
+            94541.15, 92673.57, 92817.31,
+            92704.02, 91544.49, 91425.33,
+            92301.92, 91006.45, 90933.57,
+        ],
+    )
+
+    table = _generate_sensitivity_table([run])
+
+    assert "速度比例与限行开始时刻（3×3全因子）" in table
+    assert "速度0.8–1.2；开始时刻7–9时" in table
+    assert "8007" not in table
+    assert "12009" not in table
 
 
 from math_agent.nodes.table_assembler import _inject_table
@@ -290,13 +332,19 @@ def test_comparison_table_from_baselines():
         ),
         CodeArtifact(
             purpose="主方案", code="", success=True,
-            stdout="RESULT: baseline=ours total_cost=750.5 service_rate=0.95",
+            stdout=(
+                "SCENARIO_Q1: baseline=no_policy total_cost=710.2 vehicles=6 "
+                "fuel_vehicles=5 ev_vehicles=1 total_carbon=80.0 timewin_rate=0.96\n"
+                "RESULT: baseline=ours total_cost=750.5 service_rate=0.95"
+            ),
             category="figure",
         ),
     ]
     table = _generate_comparison_table(artifacts)
     assert "| 方案 |" in table
-    assert "无调度" in table
+    assert "无邻域与发车优化" in table
+    assert "Q1无政策方案" in table
+    assert "710.2" in table
     assert "1245.3" in table
     assert "980.0" in table
     assert "750.5" in table
@@ -323,7 +371,7 @@ def test_comparison_table_omits_failed_baselines():
         ),
     ]
     table = _generate_comparison_table(artifacts)
-    assert "无调度" not in table
+    assert "无邻域与发车优化" not in table
     assert "运行失败" not in table
     assert "980.0" in table
 
@@ -369,7 +417,7 @@ def test_table_assembler_node_injects_comparison_table():
     s.paper = PaperSections(solution="## 求解算法与流程\n求解过程。")
     result = table_assembler_node(s)
     assert "| 方案 |" in result["paper"].solution
-    assert "无调度" in result["paper"].solution
+    assert "无邻域与发车优化" in result["paper"].solution
 
 
 def test_table_assembler_ignores_old_coder_batches():

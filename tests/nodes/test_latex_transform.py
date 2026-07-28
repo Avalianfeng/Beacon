@@ -3,7 +3,7 @@ from math_agent.nodes.latex_transform import (
     _wrap_unicode_math, _md_headings_to_latex, _md_inline_code_to_math,
     _wrap_naked_subscripts, _md_bold_to_latex, _md_bullets_to_latex,
     _md_table_to_latex, _escape_remaining_underscores, _promote_inline_equations,
-    _pad_math_commands, _prepare_section,
+    _pad_math_commands, _prepare_section, _wrap_unicode_subscripts,
 )
 
 
@@ -30,6 +30,10 @@ def test_wrap_unicode_math_skips_inside_existing_math():
 def test_wrap_unicode_math_no_op_on_pure_text():
     s = "纯中文与 ascii 段落 abc 123."
     assert _wrap_unicode_math(s) == s
+
+
+def test_wrap_unicode_subscripts_keeps_co2_visible():
+    assert _wrap_unicode_subscripts("碳排放 kg CO₂") == "碳排放 kg CO$_{2}$"
 
 
 def test_wrap_unicode_math_attaches_subscript():
@@ -79,6 +83,22 @@ def test_md_inline_code_unwraps_unicode_inside():
     assert r"$\gamma$" in out
     assert "α" not in out
     assert "γ" not in out
+
+
+def test_md_inline_code_does_not_double_wrap_existing_math():
+    source = r"变量 `$x_{k,i,j}$` 与 `$\rho_{k,i}$`，需求 `$q_i$`、`$vol_i$`。"
+    out = _md_inline_code_to_math(source)
+    assert "$$" not in out
+    assert r"$x_{k,i,j}$" in out
+    assert r"$\rho_{k,i}$" in out
+    assert r"$q_i$" in out
+    assert r"$vol_i$" in out
+
+
+def test_md_inline_code_keeps_chinese_labels_in_text_mode():
+    out = _md_inline_code_to_math("见`数据画像`与`动态压力测试`。")
+    assert out == "见数据画像与动态压力测试。"
+    assert "$" not in out
 
 
 def test_md_inline_code_preserves_normal_text():
@@ -251,6 +271,23 @@ def test_md_table_to_latex():
     assert "下文。" in out
 
 
+def test_md_tall_table_uses_page_breakable_longtable():
+    rows = "\n".join(f"| $x_{i}$ | 第{i}个符号 | — | 参数 |" for i in range(15))
+    source = (
+        "| 符号 | 含义 | 单位 | 类型 |\n"
+        "|---|---|---|---|\n"
+        f"{rows}\n"
+    )
+
+    out = _md_table_to_latex(source)
+
+    assert r"\begin{longtable}" in out
+    assert r"\endfirsthead" in out
+    assert r"\endhead" in out
+    assert r"\end{longtable}" in out
+    assert r"\begin{tabularx}" not in out
+
+
 def test_md_table_escapes_ampersand_in_cells():
     r"""cell 内容里的裸 & 必须转义为 \&。"""
     s = """| 符号 | 含义 | 单位 |
@@ -386,6 +423,12 @@ def test_prepare_section_table_inline_math_not_promoted(workdir):
     out = _prepare_section(md)
     assert r"\begin{equation}" not in out, f"表格内 inline math 被提升: {out!r}"
     assert r"\begin{tabularx}" in out
+
+
+def test_prepare_section_scales_single_line_long_display_math():
+    source = r"\[ \text{for each time band } [b_m,b_{m+1}) : \Delta = " + "d_{ij}+" * 30 + r"0 \]"
+    out = _prepare_section(source)
+    assert r"\resizebox{0.98\linewidth}{!}" in out
 
 
 def test_prepare_section_pipeline_defuses_cdot_dist():

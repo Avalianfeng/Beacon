@@ -103,6 +103,22 @@ _UNICODE_MATH_MAP = {
     # 上标 unicode
     "²": r"^2", "³": r"^3", "¹": r"^1", "⁰": r"^0",
 }
+_UNICODE_SUBSCRIPT_DIGITS = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+_UNICODE_SUBSCRIPT_RE = re.compile(r"[₀₁₂₃₄₅₆₇₈₉]+")
+
+
+def _wrap_unicode_subscripts(s: str) -> str:
+    """把正文中的 Unicode 下标数字转换为 LaTeX 数学下标。"""
+    if not s:
+        return s
+    segments = split_text_math(s)
+    for index, (text, math) in enumerate(segments):
+        text = _UNICODE_SUBSCRIPT_RE.sub(
+            lambda match: "$_{" + match.group(0).translate(_UNICODE_SUBSCRIPT_DIGITS) + "}$",
+            text,
+        )
+        segments[index] = (text, math)
+    return "".join(text + (math or "") for text, math in segments)
 
 
 def _wrap_unicode_math(s: str) -> str:
@@ -290,7 +306,16 @@ def _expand_unicode_math(content: str) -> str:
 
 def _math_match_sub(m: re.Match) -> str:
     """re.sub 回调：取 group(1)，展开 Unicode 数学符号，包成 $...$。"""
-    return f"${_expand_unicode_math(m.group(1))}$"
+    content = _expand_unicode_math(m.group(1))
+    # 中文术语被反引号强调时仍是正文，不应进入 Latin Modern 数学字体；
+    # 否则会出现 Missing character 并在 PDF 中丢字。
+    if re.search(r"[\u3400-\u9fff]", content):
+        return content
+    # Writer 有时把已经带 `$...$` 的公式再放进 Markdown 反引号。
+    # 此时保留原数学定界符，不能再次包裹成 `$$...$$`/`$$$...$$$`。
+    if content.startswith("$") and content.endswith("$"):
+        return content
+    return f"${content}$"
 
 
 def _md_inline_code_to_math(s: str) -> str:
@@ -431,19 +456,50 @@ def _md_table_to_latex(s: str) -> str:
                 else:
                     col_spec = "X" * ncols
                 col_spec = (col_spec + "X" * ncols)[:ncols]
-                tbl = [r"\noindent\begin{tabularx}{\linewidth}{" + col_spec + r"}",
-                       r"\toprule",
-                       " & ".join(header_cells) + r" \\",
-                       r"\midrule"]
                 j = i + 2
+                body_rows: list[str] = []
                 while j < len(lines) and lines[j].lstrip().startswith("|"):
                     cells = _split_row(lines[j])
                     cells = [_escape_cell_amps(c) for c in cells]
                     cells = (cells + [""] * ncols)[:ncols]
-                    tbl.append(" & ".join(cells) + r" \\")
+                    body_rows.append(" & ".join(cells) + r" \\")
                     j += 1
-                tbl.append(r"\bottomrule")
-                tbl.append(r"\end{tabularx}")
+                if len(body_rows) > 12:
+                    if ncols == 4:
+                        long_spec = (
+                            r"@{}p{0.15\linewidth}p{0.47\linewidth}"
+                            r"p{0.12\linewidth}p{0.14\linewidth}@{}"
+                        )
+                    else:
+                        width = 0.88 / max(1, ncols)
+                        long_spec = "@{}" + "".join(
+                            rf"p{{{width:.3f}\linewidth}}" for _ in range(ncols)
+                        ) + "@{}"
+                    header = " & ".join(header_cells) + r" \\"
+                    tbl = [
+                        r"\begin{longtable}{" + long_spec + r"}",
+                        r"\toprule",
+                        header,
+                        r"\midrule",
+                        r"\endfirsthead",
+                        r"\toprule",
+                        header,
+                        r"\midrule",
+                        r"\endhead",
+                        *body_rows,
+                        r"\bottomrule",
+                        r"\end{longtable}",
+                    ]
+                else:
+                    tbl = [
+                        r"\noindent\begin{tabularx}{\linewidth}{" + col_spec + r"}",
+                        r"\toprule",
+                        " & ".join(header_cells) + r" \\",
+                        r"\midrule",
+                        *body_rows,
+                        r"\bottomrule",
+                        r"\end{tabularx}",
+                    ]
                 out.append("")
                 out.extend(tbl)
                 out.append("")
@@ -473,14 +529,14 @@ def _escape_remaining_underscores(s: str) -> str:
 
     _env_re = re.compile(
         r"\\begin\{(equation|align|gather|multline|split|aligned|gathered|cases|"
-        r"matrix|pmatrix|bmatrix|vmatrix|smallmatrix|array|subarray|tabularx)"
+        r"matrix|pmatrix|bmatrix|vmatrix|smallmatrix|array|subarray|tabularx|longtable)"
         r"\*?\}.*?\\end\{\1\*?\}",
         re.DOTALL,
     )
     for m in _env_re.finditer(s):
         content = m.group(0)
         env_name = m.group(1)
-        if env_name == "tabularx":
+        if env_name in {"tabularx", "longtable"}:
             content = _escape_text_chars_skip_math(content, chars="_%#")
         protected.append((m.start(), m.end(), content))
 
@@ -529,7 +585,7 @@ def _escape_remaining_underscores(s: str) -> str:
 _LONG_MATH_INDICATORS = ("=", r"\leq", r"\geq", r"\sum", r"\prod", r"\int", r"\le ", r"\ge ", "\\le}", "\\ge}")
 
 _TABLE_SPLIT_RE = re.compile(
-    r"(\\begin\{tabularx\}.*?\\end\{tabularx\})",
+    r"(\\begin\{(?:tabularx|longtable)\}.*?\\end\{(?:tabularx|longtable)\})",
     re.DOTALL,
 )
 
@@ -638,10 +694,20 @@ def _prepare_section(s: str) -> str:
     s = _md_inline_code_to_math(s)
     s = _normalize_set_braces(s)
     s = _wrap_naked_subscripts(s)
+    s = _wrap_unicode_subscripts(s)
     s = _wrap_unicode_math(s)
     s = _promote_inline_equations(s)
     s = _pad_math_commands(s)
     s = _escape_remaining_underscores(s)
+    s = re.sub(
+        r"\\\[\s*([^\n]{100,}?)\s*\\\]",
+        lambda match: (
+            r"\[\resizebox{0.98\linewidth}{!}{$\displaystyle "
+            + match.group(1)
+            + r"$}\]"
+        ),
+        s,
+    )
     return s
 
 
@@ -650,6 +716,7 @@ def _prepare_inline_text(s: str) -> str:
     s = _md_inline_code_to_math(s)
     s = _normalize_set_braces(s)
     s = _wrap_naked_subscripts(s)
+    s = _wrap_unicode_subscripts(s)
     s = _wrap_unicode_math(s)
     s = _pad_math_commands(s)
     segs = split_text_math(s)

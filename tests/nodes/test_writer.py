@@ -10,6 +10,9 @@ from math_agent.nodes.writer import (
     _verified_solution,
     _verified_sensitivity_section,
     _verified_green_references,
+    _verified_result_map,
+    _verified_structured_map,
+    _enforce_section_contract,
     render_markdown,
 )
 from math_agent.state import (
@@ -62,6 +65,91 @@ def test_deterministic_writer_is_explicit_only(monkeypatch):
     assert _should_use_deterministic_writer()
 
 
+def test_verified_green_evidence_is_scenario_aware():
+    state = MathModelingState(
+        problem="p",
+        code_artifacts=[CodeArtifact(
+            purpose="main",
+            code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+            success=True,
+            evidence_role="primary",
+            stdout=(
+                "SCENARIO_BEGIN: q1_no_policy\n"
+                "SCENARIO_Q1: baseline=no_policy total_cost=91 total_carbon=11\n"
+                "BREAKDOWN: Z_wait=1 Z_late=2\n"
+                "SCENARIO_END: q1_no_policy\n"
+                "SCENARIO_BEGIN: q2_green_policy\n"
+                "RESULT: baseline=ours total_cost=92 total_carbon=10\n"
+                "BREAKDOWN: Z_wait=3 Z_late=4\n"
+                "SCENARIO_END: q2_green_policy\n"
+            ),
+        )],
+    )
+
+    metrics = _verified_result_map(state)
+
+    assert metrics["q1_no_policy"]["total_cost"] == 91
+    assert metrics["ours"]["total_cost"] == 92
+    assert _verified_structured_map(state, "BREAKDOWN")["Z_wait"] == 3
+    assert _verified_structured_map(
+        state, "BREAKDOWN", "q1_no_policy",
+    )["Z_wait"] == 1
+
+
+def test_green_section_contract_restores_latex_control_characters():
+    from math_agent.prompts.writer_section import schema_for_group
+
+    state = MathModelingState(
+        problem="p",
+        code_artifacts=[CodeArtifact(
+            purpose="main", code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+            success=True, evidence_role="primary",
+        )],
+    )
+    section = schema_for_group("model")(
+        model_section="变量 \rho 与 \theta，公式 \frac{a}{b}，系数 \beta。",
+    )
+
+    repaired = _enforce_section_contract("model", section, state)
+
+    assert "\r" not in repaired.model_section
+    assert "\t" not in repaired.model_section
+    assert "\x0c" not in repaired.model_section
+    assert "\x08" not in repaired.model_section
+    assert r"\rho" in repaired.model_section
+    assert r"\theta" in repaired.model_section
+    assert r"\frac" in repaired.model_section
+    assert r"\beta" in repaired.model_section
+
+
+def test_green_section_contract_localizes_internal_evidence_labels():
+    from math_agent.prompts.writer_section import schema_for_group
+
+    state = MathModelingState(
+        problem="p",
+        code_artifacts=[CodeArtifact(
+            purpose="main", code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+            success=True, evidence_role="primary",
+        )],
+    )
+    section = schema_for_group("solution")(
+        solution=(
+            "ALGORITHM_SEARCH 后执行 DEPARTURE_SEARCH 与 CROSS_ROUTE_SEARCH，"
+            "超过 BANEND 时记录 fallback_rate。"
+        ),
+    )
+
+    repaired = _enforce_section_contract("solution", section, state)
+
+    assert "ALGORITHM_SEARCH" not in repaired.solution
+    assert "DEPARTURE_SEARCH" not in repaired.solution
+    assert "CROSS_ROUTE_SEARCH" not in repaired.solution
+    assert "BANEND" not in repaired.solution
+    assert "fallback_rate" not in repaired.solution
+    assert "路线内邻域搜索" in repaired.solution
+    assert "回退率" in repaired.solution
+
+
 def test_fallback_text_has_real_newlines_and_no_encoding_pollution():
     state = _state()
     for group in (
@@ -110,9 +198,30 @@ def test_render_markdown_excludes_stale_supporting_metrics():
 
     markdown = render_markdown(state)
 
-    assert "total_cost=123.4" in markdown
+    assert "总成本=123.4" in markdown
     assert "999999" not in markdown
     assert "旧补充图" not in markdown
+
+
+def test_render_markdown_demotes_embedded_section_headings():
+    state = _state()
+    state.paper.model_section = "## 问题一\n内容\n### 变量\n说明"
+
+    markdown = render_markdown(state)
+
+    assert "## 4. 模型的建立" in markdown
+    assert "### 问题一" in markdown
+    assert "#### 变量" in markdown
+    assert "\n## 问题一" not in markdown
+
+
+def test_verified_notation_contains_no_control_characters():
+    section = _verified_assumptions_notation(_state())
+    body = section.assumptions + section.notation
+
+    assert r"\tau(d,t)" in body
+    assert r"E_{\rm carbon}" in body
+    assert not any(char in body for char in ("\x08", "\t", "\r", "\x0c"))
 
 
 def test_verified_model_section_matches_executed_contract():

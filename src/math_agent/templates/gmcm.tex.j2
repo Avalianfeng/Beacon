@@ -1,5 +1,6 @@
 \documentclass[bwprint]{gmcmthesis}
 \usepackage{amsmath}
+\usepackage[section]{placeins}
 \lstset{
   basicstyle=\ttfamily\scriptsize,
   columns=fullflexible,
@@ -48,21 +49,6 @@
 \section{模型的求解与实验}
 {{ paper.solution }}
 
-{% if figures %}
-\subsection{关键图表}
-{% for fig in figures %}
-\begin{figure}[!h]
-\centering
-\includegraphics[width=0.75\linewidth]{ {{- fig.path -}} }
-\caption{ {{- fig.caption | default(fig.purpose) -}} }
-\label{fig:{{ loop.index }}}
-\end{figure}
-
-{{ fig.analysis }}
-
-{% endfor %}
-{% endif %}
-
 \section{敏感性分析}
 {{ paper.sensitivity }}
 
@@ -86,15 +72,17 @@
 {% if code_artifacts %}
 \newpage
 \appendix
-\section{关键算法代码与说明}
+\section{ {{- appendix_title -}} }
 {% for art in code_artifacts %}
 \subsection{ {{- art.purpose -}} }
+{% if art.curated_code %}
 \begin{lstlisting}[language=Python]
 {{ art.curated_code }}
 \end{lstlisting}
+{% endif %}
 
 {% if art.curated_stdout %}
-\subsubsection*{关键输出摘要}
+\subsubsection*{主要计算结果}
 \begin{lstlisting}[basicstyle=\ttfamily\scriptsize,breaklines=true,breakatwhitespace=false,columns=fullflexible]
 {{ art.curated_stdout }}
 \end{lstlisting}

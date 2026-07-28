@@ -13,6 +13,14 @@ SYSTEM = (
     "目标函数是否对应 blueprint、约束是否对应 blueprint、"
     "final model 是否包含 baseline、validation plan 是否可执行。"
     "交叉验证 question_coverage：如果模型声称覆盖了某小问，但 equations 中找不到对应的公式，记为 issue。"
+    "若模型明确采用启发式与递推仿真，可执行的递推/谓词/伪代码就是合法数学模型；"
+    "不要强迫其伪装成 MILP。反之，声称精确 MILP、全局最优或商业求解器时，必须有完整公式和实际证据。"
+    "题面允许拆分时，sum_k rho_ik=1 与同车同客户一次到访是正确口径，不能误判为必须 sum_k y_ik=1。"
+    "评审必须尊重渐进阶段：basic 只需形成问题1的最简可解模型，不得因尚未覆盖问题2/3扣为严重问题；"
+    "improved 应覆盖问题1/2并增强现实约束；只有 final 必须覆盖全部小问、baseline 与验证计划。"
+    "弧段载重率若按每条弧出发时的剩余载重定义，并在服务后递减，就是实时载重，不得误判为忽略载重变化。"
+    "题面给出速度分布时，用均值构造主情景、再用速度缩放敏感性或蒙特卡洛验证是合法竞赛建模路线，"
+    "不能仅因未在主模型中写机会约束就判为严重问题。"
 )
 
 
@@ -60,8 +68,15 @@ def build_prompt(problem, assumptions, model, blueprint=None):
     if model.stage == "final":
         cov = f"\n\n{_coverage_context(model)}"
         bp += "\n\n## 对齐检查要求\nfinal 模型必须包含 baseline，validation plan 必须可执行。"
+    elif model.stage == "basic":
+        bp += "\n\n## 阶段检查要求\nbasic 是问题1的最简可解模型，不要求提前覆盖问题2/3。"
+    elif model.stage == "improved":
+        bp += "\n\n## 阶段检查要求\nimproved 应覆盖问题1/2；问题3可留到 final。"
+    derivation_audit = ""
+    if model.derivation_notes:
+        derivation_audit = f"\n\n## 推导一致性检查发现的问题\n{model.derivation_notes}"
     return (
         f"# 题目\n{problem}\n\n# 假设\n{asum}\n\n# 模型（{model.stage}）\n"
-        f"{model.description}\n方程：\n{eqs}\n变量：\n{vars_}{bp}{cov}\n\n"
+        f"{model.description}\n方程：\n{eqs}\n变量：\n{vars_}{bp}{cov}{derivation_audit}\n\n"
         f"请输出 JSON：{{\"target\":\"modeler\",\"score\":int,\"issues\":[{{\"section\":\"general\",\"problem\":str}}, ...],\"suggestions\":[str],\"approved\":bool}}"
     )

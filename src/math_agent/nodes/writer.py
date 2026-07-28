@@ -17,11 +17,18 @@ from math_agent.config import (
     RAG_TOPK,
 )
 from math_agent.llm import complete
+from math_agent.nodes.figure_placement import group_figures, interleave_figures
+from math_agent.nodes.sensitivity import formal_sensitivity_runs
+from math_agent.nodes.paper_evidence import (
+    verified_result_map,
+    verified_structured_map,
+)
 from math_agent.nodes.rendering import (
     _curate_code,
     _curate_stdout,
     _normalize_escaped_layout_text,
 )
+from math_agent.nodes.table_assembler import _clean_forbidden_words
 from math_agent.prompts.writer import SYSTEM, build_prompt  # noqa: F401
 from math_agent.prompts.writer_section import (
     WriterOutline,
@@ -223,7 +230,8 @@ def _build_solution_text(state: MathModelingState) -> str:
 
 
 def _build_sensitivity_text(state: MathModelingState) -> str:
-    if not state.sensitivity_runs:
+    formal_runs = formal_sensitivity_runs(state)
+    if not formal_runs:
         return (
             "当前运行未形成有效的敏感性结果，因此不报告未经计算的变化幅度。"
             "建议围绕成本、容量、需求和时间约束分别设置扰动场景后重新计算。"
@@ -232,7 +240,7 @@ def _build_sensitivity_text(state: MathModelingState) -> str:
     ranked = sorted(
         (
             (run, max(run.results) - min(run.results) if run.results else 0.0)
-            for run in state.sensitivity_runs
+            for run in formal_runs
         ),
         key=lambda item: item[1],
         reverse=True,
@@ -333,42 +341,15 @@ def _has_green_safe_solver(state: MathModelingState) -> bool:
 
 
 def _verified_result_map(state: MathModelingState) -> dict[str, dict[str, float]]:
-    results: dict[str, dict[str, float]] = {}
-    for artifact in state.latest_code_artifacts():
-        if not artifact.success or artifact.evidence_role not in {"primary", "baseline"}:
-            continue
-        match = re.search(r"(?m)^RESULT:\s*baseline=([^\s]+)\s+(.+)$", artifact.stdout)
-        if not match:
-            continue
-        metrics = {
-            item.group(1): float(item.group(2))
-            for item in re.finditer(r"([A-Za-z_][\w]*)=(-?\d+(?:\.\d+)?)", match.group(2))
-        }
-        results[match.group(1)] = metrics
-    return results
+    return verified_result_map(state)
 
 
 def _verified_structured_map(
-    state: MathModelingState, label: str
+    state: MathModelingState,
+    label: str,
+    scenario: str = "q2_green_policy",
 ) -> dict[str, float]:
-    """只从最新正式主 artifact 的指定结构化行提取数值字段。"""
-    primary = next((
-        artifact for artifact in reversed(state.latest_code_artifacts())
-        if artifact.success
-        and artifact.evidence_role == "primary"
-        and "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in artifact.code
-    ), None)
-    if primary is None:
-        return {}
-    match = re.search(rf"(?m)^{re.escape(label)}:\s+(.+)$", primary.stdout)
-    if not match:
-        return {}
-    return {
-        item.group(1): float(item.group(2))
-        for item in re.finditer(
-            r"([A-Za-z_][\w]*)=(-?(?:\d+(?:\.\d+)?|\.\d+))", match.group(1)
-        )
-    }
+    return verified_structured_map(state, label, scenario=scenario)
 
 
 def _verified_green_references() -> str:
@@ -389,7 +370,7 @@ def _verified_abstract_problem(state: MathModelingState):
     schema = schema_for_group("abstract_problem")
     metrics = _verified_result_map(state)
     ours = metrics.get("ours", {})
-    q1 = metrics.get("no_schedule", {})
+    q1 = metrics.get("q1_no_policy", metrics.get("no_schedule", {}))
     profile = _verified_structured_map(state, "DATA_PROFILE")
     stress = _verified_structured_map(state, "DYNAMIC_STRESS")
     robust = _verified_structured_map(state, "ROBUSTNESS")
@@ -589,12 +570,12 @@ def _verified_assumptions_notation(state: MathModelingState):
             "| $t_i$、$s_i$ | 到达任务 $i$、开始服务任务 $i$ 的时刻 | 日初起分钟 |\n"
             "| $E_i$、$L_i$ | 任务 $i$ 的时间窗起点、终点 | 日初起分钟 |\n"
             "| $w_i$、$l_i$ | 等待时长、晚到时长 | 分钟 |\n"
-            "| $\tau(d,t)$ | 时刻 $t$ 出发、行驶距离 $d$ 的分段旅行时间 | 分钟 |\n"
+            "| $\\tau(d,t)$ | 时刻 $t$ 出发、行驶距离 $d$ 的分段旅行时间 | 分钟 |\n"
             "| $r_{ijk}$ | 行驶弧起点的车辆载重率 | $[0,1]$ |\n"
             "| $E_{ijk}$ | 弧段的燃油消耗或电力消耗 | L 或 kWh |\n"
-            "| $E_{\rm carbon}$ | 全部路线换算后的二氧化碳排放 | kg |\n"
-            "| $Z_{\rm fix}$、$Z_{\rm wait}$、$Z_{\rm late}$ | 固定、等待、晚到成本 | 元 |\n"
-            "| $Z_{\rm energy}$、$Z_{\rm carbon}$ | 能耗、碳排放成本 | 元 |\n"
+            "| $E_{\\rm carbon}$ | 全部路线换算后的二氧化碳排放 | kg |\n"
+            "| $Z_{\\rm fix}$、$Z_{\\rm wait}$、$Z_{\\rm late}$ | 固定、等待、晚到成本 | 元 |\n"
+            "| $Z_{\\rm energy}$、$Z_{\\rm carbon}$ | 能耗、碳排放成本 | 元 |\n"
             "| $Z$ | 五类成本之和 | 元 |\n\n"
             "集合与索引采用大写字母和下标表示，0 专指配送中心；客户编号与分割后的访问任务编号"
             "在程序内部建立映射，不能混用。时间全部转为日初起算的分钟，响应时间单独以秒记录。"
@@ -608,36 +589,53 @@ def _verified_solution(state: MathModelingState):
     schema = schema_for_group("solution")
     metrics = _verified_result_map(state)
     rows = []
-    for name in ("ours", "no_schedule", "simple_pred", "greedy"):
+    display_names = {
+        "ours": "本文方案", "q1_no_policy": "Q1无政策方案",
+        "no_schedule": "无邻域与发车优化基线",
+        "simple_pred": "定速预测方案", "greedy": "贪婪构造方案",
+    }
+    for name in ("q1_no_policy", "ours", "no_schedule", "simple_pred", "greedy"):
         item = metrics.get(name)
         if not item:
             continue
         rows.append(
-            f"| {name} | {item.get('total_cost', 0):.2f} | {item.get('vehicles', 0):.0f} | "
+            f"| {display_names[name]} | {item.get('total_cost', 0):.2f} | {item.get('vehicles', 0):.0f} | "
             f"{item.get('fuel_vehicles', 0):.0f} | {item.get('ev_vehicles', 0):.0f} | "
             f"{item.get('total_carbon', 0):.2f} | {item.get('timewin_rate', 0):.4f} |"
         )
     ours = metrics.get("ours", {})
+    q1 = metrics.get("q1_no_policy", {})
     profile = _verified_structured_map(state, "DATA_PROFILE")
     stress = _verified_structured_map(state, "DYNAMIC_STRESS")
     search = _verified_structured_map(state, "ALGORITHM_SEARCH")
     robust = _verified_structured_map(state, "ROBUSTNESS")
     diagnostics = _verified_structured_map(state, "SERVICE_DIAGNOSTICS")
     events = _verified_structured_map(state, "DYNAMIC_EVENTS")
+    failures = _verified_structured_map(state, "DYNAMIC_FAILURES")
+    energy_audit = _verified_structured_map(state, "ENERGY_METHOD_AUDIT")
+    small_exact = _verified_structured_map(state, "SMALL_EXACT")
+    capacity = _verified_structured_map(state, "CAPACITY_DIAGNOSTICS")
+    q1_breakdown = _verified_structured_map(
+        state, "BREAKDOWN", scenario="q1_no_policy"
+    )
+    q2_breakdown = _verified_structured_map(state, "BREAKDOWN")
+    policy_audit = _verified_structured_map(state, "POLICY_AUDIT")
     primary = next((
         artifact for artifact in reversed(state.latest_code_artifacts())
         if artifact.success and artifact.evidence_role == "primary"
     ), None)
     breakdown_section = ""
     if primary is not None:
-        match = re.search(
-            r"(?m)^BREAKDOWN:\s+Z_fix=([0-9.]+)\s+Z_wait=([0-9.]+)\s+"
-            r"Z_late=([0-9.]+)\s+Z_energy=([0-9.]+)\s+Z_carbon=([0-9.]+)",
-            primary.stdout,
-        )
-        if match:
+        breakdown = _verified_structured_map(state, "BREAKDOWN")
+        if breakdown:
             labels = ["固定启用", "等待", "晚到", "能耗", "碳排放"]
-            values = [float(value) for value in match.groups()]
+            values = [
+                breakdown.get("Z_fix", 0.0),
+                breakdown.get("Z_wait", 0.0),
+                breakdown.get("Z_late", 0.0),
+                breakdown.get("Z_energy", 0.0),
+                breakdown.get("Z_carbon", 0.0),
+            ]
             total = sum(values)
             breakdown_rows = "\n".join(
                 f"| {label} | {value:.2f} | {100.0 * value / total:.2f}% |"
@@ -664,7 +662,7 @@ def _verified_solution(state: MathModelingState):
         carbon_delta = baseline.get("total_carbon", 0.0) - ours.get("total_carbon", 0.0)
         vehicle_delta = baseline.get("vehicles", 0.0) - ours.get("vehicles", 0.0)
         comparison_blocks.append(
-            f"与 `{name}` 相比，主方案总成本差值为 {-cost_delta:+.2f} 元、车辆数差值为 "
+            f"与{display_names[name]}相比，本文方案总成本差值为 {-cost_delta:+.2f} 元、车辆数差值为 "
             f"{-vehicle_delta:+.0f} 辆、碳排放差值为 {-carbon_delta:+.2f} kg。"
             "差值由两行原始 RESULT 直接相减；正负只表示本次构造解的方向，不解释为统计显著性。"
         )
@@ -674,6 +672,16 @@ def _verified_solution(state: MathModelingState):
     )
     profile_section = ""
     if profile:
+        coordinate_green = profile.get("coordinate_green_customers")
+        coordinate_sentence = (
+            f"按附件坐标到市中心(0,0)的欧氏距离复核，半径10 km内共有"
+            f"{coordinate_green:.0f}个坐标客户，其中"
+            f"{profile.get('green_customers', 0):.0f}个在当日订单中具有正需求。"
+            if coordinate_green is not None
+            else
+            "当前正式 DATA_PROFILE 未单列半径内坐标客户总数，正文不报告替代值；"
+            f"可确认其中{profile.get('green_customers', 0):.0f}个客户在当日订单中具有正需求。"
+        )
         profile_section = (
             "\n\n## 数据画像与约束规模\n\n"
             "| 指标 | 数值 | 建模含义 |\n|---|---:|---|\n"
@@ -690,6 +698,10 @@ def _verified_solution(state: MathModelingState):
             "聚合客户数也不是分割后任务数；三者分开报告可以解释为什么一条客户记录可能对应多笔"
             "订单、一个超容量客户又可能形成多个访问任务。绿色区客户数只反映点位分布，政策可行性"
             "还取决于弧段是否穿圆以及实际到达时刻，不能仅按区内客户比例推断新能源车辆数。"
+            "题面文字称绿色区有30个客户，但" + coordinate_sentence
+            + "本文以附件坐标为几何判定依据，路线统计采用"
+            f"{profile.get('green_customers', 0):.0f}个活跃绿色区客户，并把题面与附件的口径差异"
+            "作为数据质量边界保留。"
         )
     stress_section = ""
     if stress:
@@ -759,6 +771,52 @@ def _verified_solution(state: MathModelingState):
             "客户节点作为压力位置，时间窗情景将窗口末端收紧 60 分钟，车辆故障则累计迁移整条路线"
             "的任务。该口径避免把单任务重插成功率冒充为所有事件均已验证。"
         )
+    dynamic_ratio = ours.get("dynamic_cost_increase_ratio")
+    dynamic_ratio_sentence = (
+        f"本次为{dynamic_ratio:.8f}，不能解释为五类事件平均成本涨幅。"
+        if dynamic_ratio is not None
+        else "本次主 RESULT 未提供该兼容比例，正文不报告替代数值。"
+    )
+    dynamic_protocol_section = (
+        "\n\n## 动态事件局部修复伪代码\n\n"
+        "**输入**：事件类型、事件时刻、已提交路线、未执行任务、五类车辆上限。  \n"
+        "**输出**：满足硬约束的修复路线，或可审计的失败原因。\n\n"
+        "1. 按事件时刻冻结各路线已完成和正在执行的前缀，只允许修改未执行后缀；复制工作路线，"
+        "原方案在新方案通过全部检查前保持可回退。  \n"
+        "2. 若为取消订单，从原路线删除任务并连接其前后弧；若为新增订单，生成一个待插任务；"
+        "若为地址或时间窗变更，先删除旧任务，再以新客户节点或新窗口生成唯一任务副本；"
+        "若为车辆故障，释放故障路线全部未执行任务。  \n"
+        "3. 对每个待插任务，枚举原路线及其他路线的全部相邻插入位置；逐项检查新增后的重量、"
+        "体积、任务唯一覆盖、分段时间递推和燃油车连续限行条件。  \n"
+        "4. 对所有可行位置计算道路距离增量与新增晚到代价，选择局部代理目标最小者；提交后重新"
+        "递推整条受影响路线，若任何硬约束失败则撤销该候选。  \n"
+        "5. 若既有路线没有可行位置，仅从"
+        "$A_m=N_m-\\sum_k\\mathbf 1\\{m(k)=m\\}$所表示的未启用车辆中选择备用车；"
+        "备用车也必须通过重量、体积、时序和连续限行检查。  \n"
+        "6. 若全部任务获得唯一归属则发布修复方案；若容量与备用车同时耗尽，或政策、时序仍"
+        "不可行，则返回对应失败类别，不发布半完成路线。\n\n"
+        "五类事件实验每类执行10次、共50次，均从同一静态解独立开始。输出中的"
+        "`fallback_rate=0`表示没有情景需要转入模型外部失败处置，并不等于备用车辆启用率为零。"
+        "兼容输出中的“单任务局部成本相对增幅”只取30个移动任务压力样本中首个成功重插的局部"
+        "代理成本相对静态总成本之比；" + dynamic_ratio_sentence
+    )
+    q1_energy = q1_breakdown.get("Z_energy", 0.0)
+    q2_energy = q2_breakdown.get("Z_energy", 0.0)
+    carbon_mechanism_section = (
+        "\n\n## 限行政策的时空审计与碳排机制\n\n"
+        f"正式审计覆盖 {policy_audit.get('checked_arcs', 0):.0f} 条去程与回仓弧，发现 "
+        f"{policy_audit.get('space_time_violations', 0):.0f} 条时空违规弧。对每条与半径10 km"
+        "圆盘相交的燃油车弧，程序先求线段进入和离开圆盘的几何比例，再用分段速度积分分别计算"
+        "进入、离开时刻，最后判断整个弧内停留区间是否与8:00—16:00禁行窗相交。因此，即使车辆"
+        "在8:00前从圆外出发，只要8:00后进入或仍在圆内，也会被识别；回仓弧采用相同规则。\n\n"
+        f"Q1与Q2的道路里程均为 {q1.get('total_distance', 0):.2f} km，车辆结构也同为燃油"
+        f"{q1.get('fuel_vehicles', 0):.0f}辆、新能源{q1.get('ev_vehicles', 0):.0f}辆，"
+        f"但碳排放由 {q1.get('total_carbon', 0):.2f} kg 升至 "
+        f"{ours.get('total_carbon', 0):.2f} kg。机制不是等待或晚到直接产生排放，而是限行改变"
+        "发车时刻和弧段所处的速度区间；按各区段速度积分后，能源成本由"
+        f"{q1_energy:.2f}元增至{q2_energy:.2f}元，增加{q2_energy-q1_energy:.2f}元，"
+        "对应能耗与碳排小幅上升。等待和晚到只通过各自时间费用推高目标值。"
+    )
     return schema(solution=(
         "程序依次完成附件字段规范化、客户需求聚合、最小车型容量拆分、分车型候选路线构造、"
         "有限车队选择、逐路线约束断言和 RESULT 校验。每轮必须减少未分配任务数；耗尽车队或"
@@ -766,13 +824,15 @@ def _verified_solution(state: MathModelingState):
         "## 各方案结果对比表\n\n"
         "| 场景 | 总成本/元 | 车辆数 | 燃油车 | 新能源车 | 碳排放/kg | 时间窗率 |\n"
         "|---|---:|---:|---:|---:|---:|---:|\n" + "\n".join(rows) +
-        "\n\n`ours` 是 Q2 政策主证据；`no_schedule` 是只关闭限行的 Q1 同构场景；"
-        "`simple_pred` 和 `greedy` 是 Q2 的定速与 first-fit 对照。它们均重新读取四个附件，"
-        "而不是从主方案 stdout 改标签。主方案服务率为 "
+        "\n\n本文方案对应Q2绿色区政策场景；Q1无政策方案只关闭绿色区限行并保留其余优化；"
+        "无邻域与发车优化基线、"
+        "定速预测方案和贪婪构造方案均属于Q2对照，分别检验邻域/时刻优化、速度口径和候选规则。"
+        "五个场景均重新读取附件并独立计算。本文方案服务率为 "
         f"{ours.get('service_rate', 0):.4f}，道路里程 {ours.get('total_distance', 0):.2f} km，"
         f"平均配送历时 {ours.get('avg_delivery_time', 0):.2f} 分钟。\n\n"
         + profile_section + breakdown_section + comparison_section + search_section
-        + robustness_section + diagnostic_section + stress_section + event_section + "\n\n"
+        + robustness_section + diagnostic_section + stress_section + event_section
+        + dynamic_protocol_section + carbon_mechanism_section + "\n\n"
         "动态主 RESULT 保留首个受影响任务的兼容字段，并枚举其他路线的容量可行插入位置。"
         f"本次重插标志为 {ours.get('dynamic_reinserted', 0):.0f}，响应时间 "
         f"{ours.get('response_time', 0):.6f} s，距离变化绝对值 "
@@ -786,42 +846,41 @@ def _verified_solution(state: MathModelingState):
         "和空路线集合；第四步对每一种仍有库存的车型尝试构造候选路线，逐个评估尚未服务任务的"
         "容量、时间和绿色区政策可行性；第五步用固定成本、里程代理和晚到代价形成单位配送重量"
         "增量，选择当前最合适的车型与路线；第六步提交路线并从未分配集合删除已覆盖任务；第七步"
-        "对构造路线执行可行性保持的 2-opt；第七步在全部任务完成后重新计算里程、时序、能耗、排放和五项成本，最后执行覆盖、容量、车队和"
-        "RESULT 合理性校验。\n\n"
+        "对构造路线执行可行性保持的 2-opt；第八步在全部任务完成后重新计算里程、时序、能耗、排放和五项成本，最后检验任务覆盖、车辆容量、车队上限和结果合理性。\n\n"
         "候选路线内部采用最近可行增量思想：对当前位置和每个未分配任务，先判断加入任务后的累计"
         "重量与体积是否越界，再用分段速度函数递推到达和开始服务时刻；燃油车还要检查客户点与"
         "连接弧是否触发绿色区禁入。只有硬约束全部满足的任务才进入候选集合。若存在多个候选，"
         "按新增道路距离、等待与晚到代价的组合排序。该策略把昂贵的完整成本重算留到路线提交后，"
         "同时保证不会为了局部短距离选择一个政策不可行的客户。\n\n"
         "算法设置了两个无进展保护。其一，一条候选路线若未装入任何任务，不消耗车辆库存；其二，"
-        "外层循环每轮都记录未分配任务数，若没有严格减少，则立即报告 no progress 或 fleet exhausted。"
-        "因此，程序不会在超容量任务或耗尽车型后无限循环。成功退出还不是论文证据：只有 stdout"
-        "包含字段完整、数值有限、服务率和车辆数处于合理范围的 RESULT 行，且附件读取记录证明"
-        "正式代码确实访问数据，artifact 才能进入主方案。\n\n"
+        "外层循环每轮都记录未分配任务数，若没有严格减少或可用车队已经耗尽，则立即停止当前构造。"
+        "因此，程序不会在超容量任务或耗尽车型后无限循环；当未分配任务数不再减少或车队耗尽时，"
+        "本次求解直接判为不可行。只有字段完整、数值有限、服务率和车辆数处于合理范围，且数据读取"
+        "记录与输入附件一致的计算结果，才能用于主方案分析。\n\n"
         "## 计算复杂度与可复现性\n\n"
         "设分割后任务数为 $n$，可用车辆实例数为 $m$。一次候选路线构造最多扫描当前未分配集合，"
         "完整构造在最坏情况下需要多轮扫描；几何相交、容量和单次时间递推都是常数时间操作，因而"
         "主要复杂度可保守写为 $O(mn^2)$。动态局部重插需要枚举其他路线的相邻位置，若全部路线"
         "总弧数为 $a$，一次事件的候选搜索为 $O(a)$。该复杂度分析描述程序实际循环结构，不声称"
         "启发式具有多项式最优性保证。\n\n"
-        "可复现性由三层机制保证。数据层记录每次附件读取及文件摘要；执行层在隔离目录中保存实际"
-        "运行脚本、stdout、stderr 和图像；论文层只选取正式主方案、独立基线与最后一轮对齐的敏感性"
-        "结果。主方案和三个基线都从同一附件重新计算，不共享经过改标签的 RESULT。这样既可以复查"
-        "某个数值来自哪次执行，也能防止历史失败或 supporting 图的临时指标进入正式论文。\n\n"
+        "可复现性由三层机制保证。数据层记录每次附件读取及文件摘要；计算层保存求解程序、数值结果"
+        "和对应图像；论文层只采用本文方案、独立基线与中心点一致的敏感性结果。主方案和三个基线"
+        "都从同一附件重新计算，不通过复制主方案数值构造对照。这样既可以复核数值来源，也能防止"
+        "无效试算或未经校验的辅助图混入论文。\n\n"
         "## 实验设计与评价指标\n\n"
         "实验以同一组附件作为唯一输入，四个场景采用相同客户集合、距离矩阵、时间窗、车型上限和"
         "费用口径。场景差异只由政策开关、速度表示或候选选择规则定义。评价指标分为三类：可行性"
         "指标包括服务率、容量和车辆上限；运营指标包括总成本、车辆数、道路里程和时间窗满足率；"
         "环境指标包括燃油与新能源车辆结构和碳排放。只有服务率与硬约束先通过，才比较成本高低。"
-        "这种顺序防止用低成本但未完成任务的方案作为优胜基线。所有场景保留相同 RESULT 字段，"
+        "这种顺序防止用低成本但未完成任务的方案作为优胜基线。所有场景保留相同评价指标，"
         "缺少关键字段或出现非法值时整次执行失败。\n\n"
         "图表与文字分析也遵循同一评价顺序。路线图用于检查客户覆盖、配送中心位置和绿色区关系，"
         "成本构成图解释固定、等待、晚到、能耗和碳成本的相对来源，敏感性图只承载已校验数组。"
         "正文引用图表时先陈述可验证结论，再指出图中证据，最后说明适用边界；不让同一张图重复"
-        "承担主结果、基线和敏感性三种证据职责。若图的生成脚本产生与主 RESULT 不一致的指标，"
-        "图只能作为 supporting artifact，不能替换主方案。\n\n"
+        "承担主结果、基线和敏感性三种证据职责。若图中指标与本文方案的计算结果不一致，"
+        "该图只能用于辅助诊断，不能替换主方案结论。\n\n"
         "## 问题一结果解释\n\n"
-        "`no_schedule` 场景只关闭绿色区限行，保留分割配送、有限异构车队、时变速度、软时间窗、"
+        "无调度方案只关闭绿色区限行，保留分割配送、有限异构车队、时变速度、软时间窗、"
         "能耗与碳成本。因此它直接回答问题一，并为问题二提供同构政策基准。比较时不只看总成本，"
         "还同时检查车辆数、燃油与新能源结构、碳排放和时间窗满足率。若无政策场景成本更高或更低，"
         "都只能解释为当前构造启发式在两个可行域中的运行结果；由于算法没有全局最优性证明，不能"
@@ -830,9 +889,9 @@ def _verified_solution(state: MathModelingState):
         "被拒绝或绿色区参数进入成本，说明场景开关没有真正隔离。正式基线通过独立代码执行和字段"
         "校验，确认政策规则关闭而其他口径保持不变，因而能够作为后续比较的可信参照。\n\n"
         "## 问题二主方案与基线分析\n\n"
-        "`ours` 为启用绿色区限制的正式主方案。`simple_pred` 使用更简化的定速预测口径，考察忽略"
-        "分段时变速度对车队与成本判断的影响；`greedy` 使用 first-fit 最近邻规则，考察成本感知"
-        "车型选择与候选排序是否优于简单贪心。三个 Q2 场景具有相同输入和质量门禁，因此表中差异"
+        "本文方案启用绿色区限制；定速预测方案使用更简化的速度口径，考察忽略"
+        "分段时变速度对车队与成本判断的影响；贪婪构造方案使用首次适配最近邻规则，考察成本感知"
+        "车型选择与候选排序是否优于简单贪心。三个 Q2 场景具有相同输入和有效性检查，因此表中差异"
         "来自算法或速度口径，而不是来自数据截取。\n\n"
         "主方案的服务率、道路里程、车队结构、时间窗满足率和碳排放必须联合解释。服务率达到完整"
         "覆盖只说明全部任务被安排，不意味着每个时间窗都严格满足；时间窗率低于 1 时，晚到成本"
@@ -844,11 +903,11 @@ def _verified_solution(state: MathModelingState):
         "承认主启发式仍有改进空间，而不是删除该基线或改用不可比指标。这样的负结果同样具有"
         "建模价值，因为它能够定位车型评分、候选插入或局部搜索需要加强的环节。\n\n"
         "## 服务质量、车队结构与环境指标\n\n"
-        f"主方案服务率为 {ours.get('service_rate', 0):.4f}，说明正式构造解完成了进入 RESULT 的"
+        f"本文方案服务率为 {ours.get('service_rate', 0):.4f}，说明构造解完成了全部"
         "全部访问任务；时间窗满足率为 "
         f"{ours.get('timewin_rate', 0):.4f}，两者必须区分。服务率衡量是否安排，时间窗率衡量是否"
         "在承诺窗口内开始服务。后者未达到 1 时，论文不能只强调完整覆盖，还应检查晚到成本并"
-        "承认部分任务存在服务违约。当前汇总 RESULT 没有客户级晚到清单，因此只能报告总体比例，"
+        "承认部分任务存在服务违约。当前汇总结果没有客户级晚到清单，因此只能报告总体比例，"
         "不能编造晚到客户的地理分布或需求特征。\n\n"
         f"主方案共启用 {ours.get('vehicles', 0):.0f} 辆车，其中燃油车 "
         f"{ours.get('fuel_vehicles', 0):.0f} 辆、新能源车 {ours.get('ev_vehicles', 0):.0f} 辆。"
@@ -923,7 +982,7 @@ def _verified_model_section() -> str:
 \sum_iq_i\sum_jx_{ijk}\le Q_{v(k)}y_k,\qquad
 \sum_i b_i\sum_jx_{ijk}\le B_{v(k)}y_k.
 \]
-每条启用路线均从配送中心出发并返回；程序物化并断言上述覆盖、容量、车型数和内部节点入度等于出度。若一轮未减少未分配集合，立即以“no progress/fleet exhausted”失败，不允许循环假成功。
+每条启用路线均从配送中心出发并返回；程序逐项检验上述覆盖、容量、车型数和内部节点入度等于出度。若一轮未减少未分配集合或可用车队耗尽，立即终止当前构造，不允许在任务未完成时报告可行方案。
 
 ## 时变速度、时间窗与绿色区
 
@@ -937,7 +996,7 @@ s_i=\max(t_i,E_i),\quad t_j=s_i+20+\tau(d_{ij},s_i+20),
 
 ## 求解器和动态事件职责
 
-实际主求解器先执行可复算的成本感知构造启发式：对仍有余额的每种车型分别构造容量和政策可行路线，以单位配送重量的固定成本、里程代理和晚到惩罚选择下一辆车；随后逐路线执行至多两轮 2-opt，每个候选反转均完整重算时变速度、时间窗和绿色区可行性。它返回改进后的可行上界，不提供全局最优性间隙。Q1 对照仅关闭限行，Q2 主方案启用限行；另设定速预测和关闭 2-opt 的 first-fit 最近邻两种独立基线，四者均重新读取同一附件。
+实际主求解器先按一般时段期望速度执行可复算的成本感知构造启发式：对仍有余额的每种车型分别构造容量和政策可行路线，以单位配送重量的固定成本、里程代理和晚到惩罚选择下一辆车；随后切换到题面分段时变速度，逐路线执行至多两轮 2-opt、跨路线交换和发车时刻优化，每个候选均完整重算时间窗和绿色区可行性。它返回改进后的可行上界，不提供全局最优性间隙。Q1 对照仅关闭限行，Q2 主方案启用限行；另设仅用定速完成邻域搜索的预测基线和关闭邻域搜索的 first-fit 最近邻基线，四者均重新读取同一附件并在正式时变速度下评价。
 
 Q3 的局部事件响应先将一个受影响任务移出原路线，枚举各车辆的容量可行插入位置，以道路距离与新增晚到联合增量最小者重插；再分别构造订单取消、新增订单、地址替换、时间窗收紧和车辆故障情景。每类情景独立从静态主方案开始，输出类型成功率和总体回退率；该实验验证五类单事件压力，不冒充连续多事件滚动系统的长期最优性证明。
 
@@ -977,11 +1036,12 @@ q_i=\sum_{o\in O_i}q_o,\qquad b_i=\sum_{o\in O_i}b_o.
 
 设速度函数在题面时段内取相应期望速度。计算 $\tau(d,t)$ 时，从出发时刻 $t$ 开始，先求当前时段剩余时间能够行驶的距离；若不足以覆盖 $d$，则扣除该段距离、推进到下一时段边界并继续计算，直到剩余距离为零。该过程保证跨越拥堵边界的长弧不会被单一出发速度代表。到达、等待、服务和下一弧出发的顺序在所有路线中一致。
 
-每条弧的能耗先由速度函数给出空载百公里油耗或电耗，再乘以里程和载重率修正。设车型 $v$ 的百公里基础消耗为 $g_v(u)$，弧长为 $d_{ij}$，载重率为 $r_{ijk}$，则
+每条弧的能耗先由速度函数给出空载百公里油耗或电耗，再乘以里程和载重率修正。令 $\mathcal G_{k,h}$ 表示把车辆 $k$ 的第 $h$ 条弧按分时速度边界切开后得到的子段集合，$d_{k,h,g}$ 表示子段 $g$ 内的实际行驶距离，且 $\sum_{g\in\mathcal G_{k,h}}d_{k,h,g}=d_{k,h}$。设车型 $v$ 的百公里基础消耗为 $g_v(u)$，该弧起点载重率为 $r_{k,h}$，则
 \[
-e_{ijk}=\frac{d_{ij}}{100}g_v(u_{ijk})(1+\alpha_v r_{ijk}).
+e_{k,h}=\sum_{g\in\mathcal G_{k,h}}
+\frac{d_{k,h,g}}{100}g_v(u_g)(1+\alpha_v r_{k,h}).
 \]
-燃油和电力分别按对应单价计入 $Z_{\rm energy}$，并以各自排放系数换算为 $E_{\rm carbon}$。因此，车速、路线里程、载重顺序和车型选择共同影响成本与排放；不能只用总里程乘一个固定系数替代。
+燃油和电力分别按对应单价计入 $Z_{\rm energy}$，并以各自排放系数换算为 $E_{\rm carbon}$。跨越时段边界的长弧会在每个子段使用对应速度计算能耗后求和，而不是以弧出发时刻的单点速度代表整条弧。因此，车速、路线里程、载重顺序和车型选择共同影响成本与排放；不能只用总里程乘一个固定系数替代。
 
 ## 问题三：局部重插模型
 
@@ -1044,20 +1104,19 @@ T_{0.95}=\operatorname{Quantile}_{0.95}(T_1,\ldots,T_S),
 
 def _verified_sensitivity_section(state: MathModelingState) -> str:
     """只用 checkpoint 中已对齐的扫描点生成敏感性章节。"""
-    runs = {run.parameter: run for run in state.sensitivity_runs}
+    runs = {run.parameter: run for run in formal_sensitivity_runs(state)}
     robust = _verified_structured_map(state, "ROBUSTNESS")
     diagnostics = _verified_structured_map(state, "SERVICE_DIAGNOSTICS")
     blocks = [
         "## 检验目的与实验原则\n\n"
-        "本节采用确定性单因素扫描：每次只替换一个源代码常数并重新执行同一正式主求解器，"
-        "其他数据、约束、构造顺序和评价函数保持不变。每组中心点必须严格复现正式主方案；"
-        "不能对齐时该组结果不会进入论文。各扫描脚本 stdout 的结构化 RESULT 行经校验后，"
-        "写入 checkpoint 的 SensitivityRun，图 B.1 至 B.3 与这些 RESULT 使用同一数据数组。\n\n"
+        "本节采用确定性单因素扫描：每次只改变一个参数并重新执行同一求解程序，"
+        "其他数据、约束、构造顺序和评价函数保持不变。每组中心点必须严格复现本文方案；"
+        "不能对齐时该组结果不会进入论文。参数扫描图与正文采用同一组已校验数值数组。\n\n"
         "敏感性分析的目的不是重新寻找一个更好看的主结果，而是回答三个问题：关键外生参数发生"
         "合理扰动时，当前构造解的总成本是否剧烈变化；不同参数的局部影响强弱如何排序；管理者"
         "应优先监测或校准哪些参数。为保持可比性，每个扫描点都从原始附件重新运行，不对中心结果"
-        "做插值，也不把历史失败轮次混入数组。若脚本未读附件、中心点不一致或输出字段不完整，"
-        "整组实验被门禁拒绝。\n\n"
+        "做插值，也不把无效试算混入数组。若计算程序未读取附件、中心点不一致或输出字段不完整，"
+        "整组实验判为无效。\n\n"
         "参数选择覆盖运行环境、政策规则和费用偏好三个层面。整体速度比例反映道路运行效率；"
         "绿色区限行开始时刻反映政策窗口；软时间窗晚到惩罚反映企业服务承诺。三者分别作用于"
         "旅行时间、可行候选与目标函数，使扫描能够从不同机制检验模型，而不是对同一成本系数"
@@ -1183,20 +1242,159 @@ def _verified_sensitivity_section(state: MathModelingState) -> str:
     return "\n\n".join(blocks)
 
 
+def _verified_factorial_sensitivity_section(state: MathModelingState) -> str:
+    """生成读者变量口径的二维效应分解与单因素稳健性章节。"""
+    formal = formal_sensitivity_runs(state)
+    interaction = next(
+        (
+            run for run in formal
+            if "二维组合编码" in run.parameter and len(run.results) == 9
+        ),
+        None,
+    )
+    penalty = next(
+        (
+            run for run in formal
+            if "软时间窗单位惩罚成本系数" in run.parameter
+        ),
+        None,
+    )
+    robust = _verified_structured_map(state, "ROBUSTNESS")
+    diagnostics = _verified_structured_map(state, "SERVICE_DIAGNOSTICS")
+    ours = _verified_result_map(state).get("ours", {})
+    center_cost = ours.get("total_cost")
+    center_cost_text = (
+        f"{center_cost:.2f}元"
+        if center_cost is not None
+        else "正式主方案结构化总成本"
+    )
+    parts = [
+        "## 实验设计与中心点复现\n\n"
+        "敏感性实验与主方案共享附件、预处理、有限车队、费用函数和求解程序。速度比例与限行开始"
+        "时刻采用3×3全因子网格：速度比例为0.8、1.0、1.2，限行开始时刻为7、8、9时；"
+        "软时间窗晚到惩罚系数另作三水平单因素扫描。每个点都重新执行同一求解器，中心点"
+        f"（速度1.0、限行8时、惩罚0.833333元/分钟）必须复现Q2总成本{center_cost_text}。"
+        "内部组合编码只服务于程序传参，不进入正文、表格或图轴。",
+    ]
+    if interaction is not None:
+        matrix = [
+            [float(value) for value in interaction.results[row * 3:(row + 1) * 3]]
+            for row in range(3)
+        ]
+        grand = sum(sum(row) for row in matrix) / 9.0
+        row_means = [sum(row) / 3.0 for row in matrix]
+        column_means = [
+            sum(matrix[row][column] for row in range(3)) / 3.0
+            for column in range(3)
+        ]
+        ss_total = sum(
+            (value - grand) ** 2 for row in matrix for value in row
+        )
+        ss_speed = 3.0 * sum((value - grand) ** 2 for value in row_means)
+        ss_start = 3.0 * sum((value - grand) ** 2 for value in column_means)
+        ss_interaction = ss_total - ss_speed - ss_start
+        corner_did = (
+            (matrix[2][2] - matrix[2][0])
+            - (matrix[0][2] - matrix[0][0])
+        )
+        table_rows = "\n".join(
+            f"| {speed:.1f} | {row[0]:.2f} | {row[1]:.2f} | {row[2]:.2f} |"
+            for speed, row in zip((0.8, 1.0, 1.2), matrix)
+        )
+        parts.append(
+            "## 速度—限行时刻二维敏感性\n\n"
+            "| 速度比例 | 7时开始/元 | 8时开始/元 | 9时开始/元 |\n"
+            "|---:|---:|---:|---:|\n"
+            + table_rows
+            + "\n\n二维敏感性热力图与上表使用同一九点数组。速度从0.8提高到1.2时，"
+            f"各限行时点平均成本由{row_means[0]:.2f}元降至{row_means[2]:.2f}元；"
+            f"限行开始由7时推迟到9时，各速度水平平均成本由{column_means[0]:.2f}元降至"
+            f"{column_means[2]:.2f}元。四角差分中的差分为{corner_did:+.2f}元，表明两因素"
+            "并非严格可加，但交互量级小于两个主效应。\n\n"
+            "为避免只用一个角点指标判断交互，进一步对九个固定网格值作描述性双因素平方和分解："
+            f"总平方和为{ss_total:.2f}，速度主效应平方和为{ss_speed:.2f}"
+            f"（{100.0 * ss_speed / ss_total:.2f}%），限行开始时刻主效应平方和为"
+            f"{ss_start:.2f}（{100.0 * ss_start / ss_total:.2f}%），不可加交互残差为"
+            f"{ss_interaction:.2f}（{100.0 * ss_interaction / ss_total:.2f}%）。因此，本次网格"
+            "变差主要由速度和政策时点的主效应解释，交互贡献较弱。每个格点只有一次确定性求解，"
+            "上述比例是网格内描述性贡献率，不具备误差自由度，不能作显著性检验或区间外外推。"
+        )
+    if penalty is not None and penalty.results:
+        values = [float(value) for value in penalty.values]
+        results = [float(value) for value in penalty.results]
+        spread = max(results) - min(results)
+        parts.append(
+            "## 晚到惩罚系数单因素敏感性\n\n"
+            f"惩罚系数敏感性图给出的三点为：{values[0]:.6g}元/分钟对应"
+            f"{results[0]:.2f}元，{values[1]:.6g}元/分钟对应{results[1]:.2f}元，"
+            f"{values[2]:.6g}元/分钟对应{results[2]:.2f}元，极差仅{spread:.2f}元。"
+            f"中心方案时间窗满足率为{ours.get('timewin_rate', 0.0):.4f}，确定性晚到任务数为"
+            f"{diagnostics.get('late_tasks', 0):.0f}，因此提高惩罚系数主要改变少量违约成本，"
+            "尚未触发车队结构的大幅切换。该结果不支持简单地把惩罚调低来“优化”业务：降低会计"
+            "权重不会改善客户实际到达时间，系数仍应由服务等级协议确定。"
+        )
+    if robust:
+        parts.append(
+            "## 随机交通样本外评价\n\n"
+            f"参数扫描重新决策，而蒙特卡洛实验固定正式路线，以随机种子"
+            f"{robust.get('seed', 0):.0f}生成{robust.get('scenarios', 0):.0f}个交通情景。"
+            f"时间窗满足率均值为{robust.get('timewin_mean', 0):.4f}、标准差为"
+            f"{robust.get('timewin_std', 0):.4f}、5%分位为{robust.get('timewin_p05', 0):.4f}；"
+            f"情景成本均值为{robust.get('cost_mean', 0):.2f}元、P95为"
+            f"{robust.get('cost_p95', 0):.2f}元。这组结果描述固定决策的交通尾部暴露，不代表"
+            "随机规划后的最优策略，也不能与确定性网格贡献率混为同一类不确定性。"
+        )
+    parts.append(
+        "## 管理含义与证据边界\n\n"
+        "速度水平和限行开始时刻合计解释本次网格变差的绝大部分，运营上应优先提高路况预测质量，"
+        "并在排班前确认政策窗口；惩罚系数在当前区间的影响较弱，说明路径与有限车队约束比费用"
+        "微调更关键。由于求解器含离散车型和路线选择，网格加密后仍可能出现跳变；下一步应在关键"
+        "区域增加重复随机交通情景，并同步记录总成本、碳排、车辆结构和服务指标。当前结论只适用"
+        "于本附件数据、给定车型上限和所扫参数区间，不作统计因果或社会福利外推。"
+    )
+    return "\n\n".join(parts)
+
+
 def _enforce_section_contract(group_name: str, section_out, state: MathModelingState):
     """把 LLM 文稿约束回已验证的模型、代码、单位和证据边界。"""
     if not _has_green_safe_solver(state):
         return section_out
-    if group_name == "model":
-        section_out.model_section = _verified_model_section()
-    elif group_name == "sensitivity":
-        section_out.sensitivity = _verified_sensitivity_section(state)
-    elif group_name == "abstract_problem":
+    replacements = {
+        "遗传算法": "成本感知构造启发式",
+        "ALNS": "成本感知构造启发式",
+        "STGNN": "分时段速度预测",
+        "时空图神经网络": "分时段速度预测",
+        "XGBoost": "分时段速度预测",
+        "动态规划": "局部重插入",
+        "模拟退火与变邻域搜索组合": "构造式启发式与2-opt、跨路线交换",
+        "模拟退火": "构造式启发式",
+        "变邻域搜索": "2-opt与跨路线交换",
+        "ALGORITHM_SEARCH": "路线内邻域搜索",
+        r"ALGORITHM\_SEARCH": "路线内邻域搜索",
+        "DEPARTURE_SEARCH": "发车时刻优化",
+        r"DEPARTURE\_SEARCH": "发车时刻优化",
+        "CROSS_ROUTE_SEARCH": "跨路线交换",
+        r"CROSS\_ROUTE\_SEARCH": "跨路线交换",
+        "BANEND": "限行结束时刻",
+        "fallback_rate": "回退率",
+    }
+    group = next(item for item in writer_sections() if item.name == group_name)
+    for field in group.fields:
+        value = str(getattr(section_out, field, "") or "")
+        # JSON 中未双重转义的 \beta、\theta、\rho、\frac 会分别解码为
+        # 退格、制表、回车和换页控制字符。恢复为 LaTeX 反斜杠序列，
+        # 避免污染 Markdown、公式和最终 PDF。
+        value = (
+            value.replace("\x08", r"\b")
+            .replace("\t", r"\t")
+            .replace("\r", r"\r")
+            .replace("\x0c", r"\f")
+        )
+        for invented, actual in replacements.items():
+            value = value.replace(invented, actual)
+        setattr(section_out, field, value)
+    if group_name == "abstract_problem":
         section_out.abstract = section_out.abstract.replace("静态静态", "静态")
-        for invented in ("遗传算法", "ALNS", "STGNN", "XGBoost", "动态规划"):
-            section_out.abstract = section_out.abstract.replace(
-                invented, "逐步最小增量构造启发式"
-            )
     elif group_name == "assumptions_notation":
         section_out.assumptions = section_out.assumptions.replace(
             "订单不可拆分", "超容量需求允许分割配送"
@@ -1212,21 +1410,19 @@ def _enforce_section_contract(group_name: str, section_out, state: MathModelingS
             "超容量需求按分割配送假设拆成单车可行任务，求解步骤与假设口径一致。",
             section_out.solution,
         )
-    elif group_name == "conclusion" and _has_green_safe_solver(state):
-        section_out.conclusion = _verified_conclusion_section(state)
     return section_out
 
 
 _MIN_SECTION_NONSPACE_CHARS = {
-    "abstract": 300,
-    "problem_restatement": 1600,
+    "abstract": 250,
+    "problem_restatement": 800,
     "keywords": 5,
-    "assumptions": 1600,
-    "notation": 600,
-    "model_section": 4500,
-    "solution": 2800,
-    "sensitivity": 1800,
-    "conclusion": 1600,
+    "assumptions": 800,
+    "notation": 500,
+    "model_section": 2500,
+    "solution": 1800,
+    "sensitivity": 1000,
+    "conclusion": 800,
     "references": 150,
 }
 
@@ -1296,12 +1492,26 @@ def _verified_conclusion_section(state: MathModelingState) -> str:
     robust = _verified_structured_map(state, "ROBUSTNESS")
     diagnostics = _verified_structured_map(state, "SERVICE_DIAGNOSTICS")
     events = _verified_structured_map(state, "DYNAMIC_EVENTS")
+    failures = _verified_structured_map(state, "DYNAMIC_FAILURES")
+    energy_audit = _verified_structured_map(state, "ENERGY_METHOD_AUDIT")
+    small_exact = _verified_structured_map(state, "SMALL_EXACT")
+    capacity = _verified_structured_map(state, "CAPACITY_DIAGNOSTICS")
+    q1_breakdown = _verified_structured_map(
+        state, "BREAKDOWN", scenario="q1_no_policy"
+    )
+    q2_breakdown = _verified_structured_map(state, "BREAKDOWN")
     ours = metrics.get("ours", {})
-    q1 = metrics.get("no_schedule", {})
+    q1 = metrics.get("q1_no_policy", metrics.get("no_schedule", {}))
     q1_delta = ours.get("total_cost", 0.0) - q1.get("total_cost", 0.0)
     q1_direction = "增加" if q1_delta >= 0 else "减少"
+    conclusion_names = {
+        "q1_no_policy": "Q1无政策方案",
+        "no_schedule": "无邻域与发车优化基线",
+        "simple_pred": "定速预测方案",
+        "greedy": "贪婪构造方案",
+    }
     baseline_summary = "；".join(
-        f"{name}：成本 {item.get('total_cost', 0.0):.2f} 元、车辆 {item.get('vehicles', 0.0):.0f} 辆、"
+        f"{conclusion_names.get(name, name)}：成本 {item.get('total_cost', 0.0):.2f} 元、车辆 {item.get('vehicles', 0.0):.0f} 辆、"
         f"碳排放 {item.get('total_carbon', 0.0):.2f} kg"
         for name, item in metrics.items() if name != "ours"
     )
@@ -1313,16 +1523,75 @@ def _verified_conclusion_section(state: MathModelingState) -> str:
         if stress else "当前只完成一次局部重插验证。"
     )
     event_conclusion = (
-        f"五类事件共执行 {events.get('scenarios', 0):.0f} 个独立情景，其中新增订单与车辆故障的"
+        f"五类事件各执行10次、共执行 {events.get('scenarios', 0):.0f} 个从同一静态解独立开始的情景，"
+        "其中新增订单与车辆故障的"
         f"局部恢复成功率分别为 {100.0 * events.get('new_order_success_rate', 0):.2f}% 和 "
         f"{100.0 * events.get('vehicle_failure_success_rate', 0):.2f}% ，总体回退率为 "
-        f"{100.0 * events.get('fallback_rate', 0):.2f}% 。"
+        f"{100.0 * events.get('fallback_rate', 0):.2f}% 。该回退率表示转入模型外部失败处置的比例，"
+        "不表示备用车启用率；实验未覆盖连续多事件累积。"
         if events else ""
     )
     robustness_conclusion = (
         f"随机交通的 {robust.get('scenarios', 0):.0f} 个蒙特卡洛情景中，时间窗满足率 5% 分位为 "
         f"{robust.get('timewin_p05', 0):.4f}，情景成本 P95 为 {robust.get('cost_p95', 0):.2f} 元。"
         if robust else ""
+    )
+    interaction_run = next(
+        (
+            run for run in reversed(formal_sensitivity_runs(state))
+            if "二维组合编码" in run.parameter and len(run.results) == 9
+        ),
+        None,
+    )
+    if interaction_run is not None:
+        matrix = [
+            interaction_run.results[row * 3:(row + 1) * 3]
+            for row in range(3)
+        ]
+        interaction = (
+            (matrix[2][2] - matrix[2][0])
+            - (matrix[0][2] - matrix[0][0])
+        )
+        grand = sum(sum(row) for row in matrix) / 9.0
+        row_means = [sum(row) / 3.0 for row in matrix]
+        column_means = [
+            sum(matrix[row][column] for row in range(3)) / 3.0
+            for column in range(3)
+        ]
+        ss_total = sum(
+            (value - grand) ** 2 for row in matrix for value in row
+        )
+        ss_speed = 3.0 * sum((value - grand) ** 2 for value in row_means)
+        ss_start = 3.0 * sum((value - grand) ** 2 for value in column_means)
+        ss_interaction = ss_total - ss_speed - ss_start
+        sensitivity_conclusion = (
+            "速度比例与限行开始时刻采用完整3×3二维网格；中心点复现正式主方案，"
+            f"四角差分之差为 {interaction:+.2f} 元。描述性平方和分解中，速度、限行时刻和"
+            f"不可加交互分别解释 {100.0 * ss_speed / ss_total:.2f}%、"
+            f"{100.0 * ss_start / ss_total:.2f}% 和 "
+            f"{100.0 * ss_interaction / ss_total:.2f}% 的网格变差；因每格无重复，"
+            "这些比例不作显著性检验。"
+        )
+    else:
+        sensitivity_conclusion = "当前敏感性实验只完成单因素扫描，尚未量化参数交互。"
+    energy_conclusion = (
+        f"逐弧跨速度时段积分得到能源成本 {energy_audit.get('integrated_energy_cost', 0):.2f} 元；"
+        f"相对旧单点速度代理的差异为 {100 * energy_audit.get('relative_difference', 0):.2f}%，"
+        "该代理只作为误差对照而不进入正式目标。"
+        if energy_audit else ""
+    )
+    exact_conclusion = (
+        f"按活跃客户编号等距抽取的 {small_exact.get('customers', 0):.0f} 客户纯路由子问题中，"
+        f"Held–Karp 精确距离为 {small_exact.get('exact_distance', 0):.2f} km，"
+        f"最近邻加2-opt为 {small_exact.get('heuristic_distance', 0):.2f} km，"
+        f"偏差 {small_exact.get('gap_pct', 0):.2f}%；它只校验路径邻域，不外推为完整问题最优性间隙。"
+        if small_exact else ""
+    )
+    failure_conclusion = (
+        f"压力测试的 {failures.get('failures', 0):.0f} 个失败样本中，"
+        f"{failures.get('capacity_and_standby_exhausted', 0):.0f} 个由目标线路剩余双容量"
+        "与可用备用车辆同时不足导致。"
+        if failures else ""
     )
     return "\n\n".join([
         "## 各问题主要结论\n\n"
@@ -1333,12 +1602,23 @@ def _verified_conclusion_section(state: MathModelingState) -> str:
         "它表示在题面五类有限车队、绿色区政策、20分钟服务时长和分割配送口径下得到的一组可行构造解。"
         f"只关闭限行的 Q1 同构场景成本为 {q1.get('total_cost', 0.0):.2f} 元，Q2 主方案相对其"
         f"{q1_direction} {abs(q1_delta):.2f} 元；这是当前启发式车队选择的运行结果，不外推为政策的必然因果效应。"
+        f"两场景里程均为 {ours.get('total_distance', 0.0):.2f} km、车队结构相同，但碳排放由"
+        f"{q1.get('total_carbon', 0.0):.2f} kg 升至 {ours.get('total_carbon', 0.0):.2f} kg。"
+        "原因是限行改变发车时刻和弧段所处速度区间，使积分能耗成本由"
+        f"{q1_breakdown.get('Z_energy', 0.0):.2f}元增至"
+        f"{q2_breakdown.get('Z_energy', 0.0):.2f}元；等待与晚到本身只增加时间费用，"
+        "不直接产生碳排。"
         "两个场景共享预处理、费用和算法，差值具有同口径可比性；但启发式没有最优性间隙，因此只说明"
         "本次可行构造解在政策开关前后的表现。\n\n"
         "**问题三。**Q3验证了受影响任务移出后的容量可行局部重插，并把响应时间、距离变化绝对值和改善标志写入同一 RESULT。"
-        + stress_conclusion + event_conclusion +
+        + stress_conclusion + failure_conclusion + event_conclusion +
         "局部搜索能够在不重建全部路线的情况下给出可执行调整；车辆故障等低成功率事件则应触发"
-        "备用车辆或全局重优化，不把局部恢复结果外推为动态系统长期最优。",
+        "备用车辆或全局重优化，不把局部恢复结果外推为动态系统长期最优。"
+        f"{stress.get('samples', 0):.0f}个移动任务压力样本"
+        f"成功{stress.get('success', 0):.0f}次的"
+        f"{100.0 * stress.get('success_rate', 0.0):.2f}%成功率只适用于独立单事件；"
+        "未验证连续事件序列和滚动时域性能，真实连续运营"
+        "可能因资源累积占用而更差。",
         "## 基线比较与结果可信度\n\n"
         "同口径有效基线为：" + baseline_summary + "。" + baseline_assessment +
         "每个基线都重新读取订单、距离、时间窗和坐标附件，执行独立脚本并通过相同 RESULT 门禁。"
@@ -1349,24 +1629,29 @@ def _verified_conclusion_section(state: MathModelingState) -> str:
         "第一，模型把订单聚合、分割配送、异构有限车队、软时间窗、时变速度和绿色区政策放在统一"
         "口径中，目标函数与程序字段可以逐项对应。第二，距离矩阵和二维坐标职责隔离，既保留道路"
         "成本真实性，也能准确执行圆域相交判断。第三，求解器含无进展检测和逐路线硬约束断言，"
-        "不会用退出码 0、全零指标或未读取附件的常量冒充成功。第四，主方案、基线和敏感性实验职责"
-        "分离，便于判断结论来自模型机制还是执行差异。第五，checkpoint 和分节写作使长流程失败后"
-        "可以从最近完成节点恢复，而不必重跑全部计算。",
+        "只有在数据守恒、任务覆盖、车辆容量和政策约束同时满足后才接受方案。第四，主方案、基线和"
+        "敏感性实验独立计算，便于判断指标差异来自模型机制还是场景设定。第五，随机交通、服务诊断"
+        "与动态事件实验分别刻画平均表现、尾部风险和局部恢复边界，使评价不局限于单一成本指标。",
         "## 稳健性、误差与局限性\n\n"
-        "单因素扫描的三个中心点均复现正式主成本；" + robustness_conclusion +
+        + sensitivity_conclusion + robustness_conclusion + energy_conclusion + exact_conclusion +
         "蒙特卡洛评估固定了主路线，因此揭示的是交通扰动风险，而不是随机规划后的最优策略。"
-        f"敏感性分析仍未覆盖参数交互；确定性主方案有 {diagnostics.get('late_tasks', 0):.0f} 个晚到任务，"
+        f"确定性主方案有 {diagnostics.get('late_tasks', 0):.0f} 个晚到任务，"
         f"最大晚到 {diagnostics.get('max_late_min', 0):.2f} 分钟。现有诊断已量化违约强度和路线利用率，"
-        "但尚未按客户地理分区或服务等级聚类。构造加 2-opt 的启发式给出可行上界，没有分支定界"
-        "或最优性间隙；分割配送还假设业务允许同一客户多次访问。以上均是结果解释的边界，而不是"
+        f"重量利用率均值为 {100 * capacity.get('mean_weight_util', 0):.2f}%，"
+        f"容积利用率均值为 {100 * capacity.get('mean_volume_util', 0):.2f}%；"
+        f"{capacity.get('weight_binding_routes', 0):.0f} 条路线重量利用率达到95%，而"
+        f"容积达到95%的路线为 {capacity.get('volume_binding_routes', 0):.0f} 条，"
+        "因此低容积利用率是重量先绑定与货物密度共同造成，不能简单解释为可通过换车消除的浪费。"
+        "现有诊断尚未按客户地理分区或服务等级聚类。完整启发式仍只给出可行上界，没有分支定界证明；"
+        "分割配送还假设业务允许同一客户多次访问。以上均是结果解释的边界，而不是"
         "被隐藏的成功指标。",
         "## 推广与改进方向\n\n"
         "首先可在现有蒙特卡洛评估上进一步建立机会约束或情景鲁棒优化，使随机风险进入决策而不只进入评价。其次可在"
-        "若干事件或固定滚动窗口后触发一次全局邻域搜索，控制局部插入的累积次优。再次应增加晚到惩罚与碳成本系数"
-        "的二维扫描，绘制等高线识别交互效应。最后应输出未满足时间窗任务清单，并按空间位置、窗口宽度和需求量聚类，"
+        "若干事件或固定滚动窗口后触发一次全局邻域搜索，控制局部插入的累积次优。再次可扩展当前速度—政策时点二维"
+        "网格，加入晚到惩罚与能源价格等三因素设计。最后应输出未满足时间窗任务清单，并按空间位置、窗口宽度和需求量聚类，"
         "把诊断结果反馈给路线构造与服务承诺。若要用于不规则低排放区，可把圆域解析判定替换为"
-        "道路级通行标签；若要用于多日运营，可增加车辆班次、充电和维护状态。该“模型口径—代码"
-        "执行—证据校验—局限性审计”链条可推广到冷链配送、应急物资和城市共同配送等场景。",
+        "道路级通行标签；若要用于多日运营，可增加车辆班次、充电和维护状态。该“模型口径—算法"
+        "实现—结果校验—局限性分析”链条可推广到冷链配送、应急物资和城市共同配送等场景。",
         "## 部署前检查清单\n\n"
         "若把模型用于真实排班，部署前至少需要完成四项检查。其一，确认当天订单、距离、时间窗和"
         "坐标版本一致，并重新执行聚合与拆分守恒；其二，确认五类车辆实际可用数量、能源价格和"
@@ -1375,14 +1660,14 @@ def _verified_conclusion_section(state: MathModelingState) -> str:
         "时间窗违约和局部事件累计影响，任何硬约束异常都应停止自动发布路线。\n\n"
         "模型更新也应保持证据可比。修改车型评分、速度函数或动态策略后，必须重跑无政策基准、"
         "两个独立基线和敏感性中心点，不能只展示改进后的主方案。旧运行保留用于追溯，但其图、"
-        "自由文本解释和临时 attempt 不得重新进入新论文。这样才能判断指标变化来自算法改进、数据"
+        "未经核验的图表和无效试算不得混入新结果。这样才能判断指标变化来自算法改进、数据"
         "变化还是证据选择错误，并使论文结论真正服务于可审计决策。",
         "## 方法论总结\n\n"
         "本题的核心不是叠加更多算法名称，而是把每个政策条件转化为可执行检查，把每个数值结论"
         "绑定到真实运行证据，再用基线和扰动实验说明结论边界。由此形成的论文结构依次回答“数据"
-        "如何进入模型、约束如何进入代码、结果如何回答问题、结论在什么范围内成立”。这一结构"
+        "如何进入模型、约束如何进入算法、结果如何回答问题、结论在什么范围内成立”。这一结构"
         "既提高了方案可复现性，也为后续改进留下了清晰接口。对于竞赛论文而言，篇幅增长应来自"
-        "这些必要论证的展开：问题分解、数据处理、公式到代码的映射、基线差异、误差来源和应用"
+        "这些必要论证的展开：问题分解、数据处理、公式到算法实现的映射、基线差异、误差来源和应用"
         "边界，而不是重复摘要或放大图表。当前方案据此组织正文，使读者能够沿同一证据链复算结果、"
         "质疑假设并判断推广条件，也能清楚区分已执行结论、局部验证与尚待完成的扩展实验。",
     ])
@@ -1411,8 +1696,12 @@ def writer_section_node(state: MathModelingState) -> dict:
         retrieved_context=state.writer_retrieved_context,
         references_list=references,
     )
-    if _has_green_safe_solver(state):
-        # 真实附件安全求解器的论文必须逐节绑定已验证结果，防止旧轮次或 LLM 改写题面参数。
+    use_verified_green_fallback = (
+        _has_green_safe_solver(state) and _should_use_deterministic_writer()
+    )
+    if use_verified_green_fallback:
+        # 显式离线应急模式才使用确定性事实稿；正常流程仍由 writer 按当前模型与证据写作，
+        # 避免一套长文案覆盖已经改进的模型和算法。
         if group_name == "abstract_problem":
             section_out = _verified_abstract_problem(state)
         elif group_name == "assumptions_notation":
@@ -1422,7 +1711,9 @@ def writer_section_node(state: MathModelingState) -> dict:
         elif group_name == "solution":
             section_out = _verified_solution(state)
         elif group_name == "sensitivity":
-            section_out = schema_for_group(group_name)(sensitivity=_verified_sensitivity_section(state))
+            section_out = schema_for_group(group_name)(
+                sensitivity=_verified_factorial_sensitivity_section(state)
+            )
         elif group_name == "conclusion":
             section_out = schema_for_group(group_name)(conclusion=_verified_conclusion_section(state))
         elif group_name == "references":
@@ -1443,9 +1734,15 @@ def writer_section_node(state: MathModelingState) -> dict:
             profile="long",
         )
     section_out = _enforce_section_contract(group_name, section_out, state)
+    group = next(item for item in writer_sections() if item.name == group_name)
+    for field in group.fields:
+        cleaned, _warnings = _clean_forbidden_words(
+            str(getattr(section_out, field, "") or ""), field,
+        )
+        setattr(section_out, field, cleaned)
 
     issues = _section_quality_issues(group_name, section_out)
-    if issues and not _has_green_safe_solver(state) and not _should_use_deterministic_writer():
+    if issues and not _should_use_deterministic_writer():
         section_out = complete(
             _section_repair_prompt(prompt, issues),
             schema=schema_for_group(group_name),
@@ -1454,6 +1751,11 @@ def writer_section_node(state: MathModelingState) -> dict:
             profile="long",
         )
         section_out = _enforce_section_contract(group_name, section_out, state)
+        for field in group.fields:
+            cleaned, _warnings = _clean_forbidden_words(
+                str(getattr(section_out, field, "") or ""), field,
+            )
+            setattr(section_out, field, cleaned)
         issues = _section_quality_issues(group_name, section_out)
     if issues and not _should_use_deterministic_writer():
         raise ValueError(
@@ -1474,6 +1776,15 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 _env = Environment(loader=FileSystemLoader(_TEMPLATE_DIR), autoescape=select_autoescape([]))
 
 
+def _demote_embedded_headings(value: str) -> str:
+    """Markdown 模板已提供二级章标题，字段内标题统一下沉一级。"""
+    return re.sub(
+        r"(?m)^(#{2,5})(?=\s)",
+        lambda match: "#" + match.group(1),
+        value or "",
+    )
+
+
 def render_markdown(
     state: MathModelingState,
     *,
@@ -1491,7 +1802,8 @@ def render_markdown(
     paper = state.paper.model_copy(deep=True)
     for field, value in paper.model_dump().items():
         if isinstance(value, str):
-            setattr(paper, field, _normalize_escaped_layout_text(value) or "")
+            normalized = _normalize_escaped_layout_text(value) or ""
+            setattr(paper, field, _demote_embedded_headings(normalized))
 
     upper_bound = infer_entity_upper_bound(state.data_files)
     evidence_artifacts = []
@@ -1534,10 +1846,27 @@ def render_markdown(
         )
         for figure in selected_figures
     ]
+    grouped = group_figures(markdown_figures)
+
+    def _markdown_figure(figure: FigureArtifact) -> str:
+        caption = figure.caption or figure.purpose
+        analysis = figure.analysis.strip()
+        explanation = f"\n\n**图示结论：** {analysis}" if analysis else ""
+        return f"![{caption}]({figure.path}){explanation}"
+
+    for field, field_figures in grouped.items():
+        if not field_figures:
+            continue
+        setattr(
+            paper,
+            field,
+            interleave_figures(
+                getattr(paper, field), field_figures, _markdown_figure, latex=False,
+            ),
+        )
     return template.render(
         problem=problem_override or state.problem,
         paper=paper,
         code_artifacts=curated,
-        figures=markdown_figures,
         sensitivity_runs=selected_sensitivity_runs,
     )

@@ -53,11 +53,23 @@ MAX_CODE_RETRIES = int(os.getenv("MATH_AGENT_MAX_CODE_RETRIES", "2"))
 MAX_BLUEPRINT_ITERATIONS = 2   # blueprint critic 允许的评估次数（首次 + 一次 retry）
 MAX_CODE_VERIFY_ITERATIONS = int(os.getenv("MATH_AGENT_MAX_CODE_VERIFY_ITERATIONS", "3"))
 
-# LLM / embedding 调用的单次 HTTP 超时（秒）。
-# 防止本地 router 半挂连接导致 httpx 无限阻塞：超时被 classify_exception
-# 归为 LLMTransportError，自动纳入 llm_retry 现有 tenacity 指数退避重试
-# （5 次 2/4/8/16/32s + jitter），最坏 ~5min 后抛 LLMError 干净退出，
-# 而不是无限僵死。env 可调以适配更大的生成预算。
+
+def _quality_score(name: str, default: str) -> float:
+    """读取 0--10 质量阈值；非法配置回退到显式默认值。"""
+    try:
+        return max(0.0, min(10.0, float(os.getenv(name, default))))
+    except ValueError:
+        return float(default)
+
+
+# 竞赛稿默认采用“优秀论文候选”门槛，而不是“勉强可读”门槛。
+# 各阈值保留环境变量入口，便于研究性试跑显式降低标准。
+MIN_MODEL_CRITIC_SCORE = _quality_score("MATH_AGENT_MIN_MODEL_CRITIC_SCORE", "8")
+MIN_MODEL_CODE_SCORE = _quality_score("MATH_AGENT_MIN_MODEL_CODE_SCORE", "8")
+MIN_PAPER_CRITIC_SCORE = _quality_score("MATH_AGENT_MIN_PAPER_CRITIC_SCORE", "9")
+
+# 旧版统一超时仅用于环境变量兼容；现行 completion 使用 llm.py 中按
+# standard / code / long / vision 区分的单次时限与总 deadline。
 LLM_TIMEOUT = float(os.getenv("MATH_AGENT_LLM_TIMEOUT", "300"))
 EMBED_TIMEOUT = float(os.getenv("MATH_AGENT_EMBED_TIMEOUT", "60"))
 

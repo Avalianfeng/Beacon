@@ -4,9 +4,11 @@
 \usepackage{graphicx}
 \usepackage{geometry}
 \usepackage{tabularx}       % latex.py _md_table_to_latex 生成 tabularx 环境
+\usepackage{longtable}      % 超过一页的长表自动分页并重复表头
 \usepackage{booktabs}       % \toprule / \midrule / \bottomrule
 \usepackage{array}
 \usepackage{float}          % 提供 [H]：钉死图片位置，避免最后一张图独占一空页
+\usepackage[section]{placeins} % 图表不跨越其所支撑的正文大节
 \usepackage{listings}       % 附录代码块 \begin{lstlisting}
 \lstset{
   basicstyle=\ttfamily\scriptsize,
@@ -17,6 +19,7 @@
   showstringspaces=false
 }
 \geometry{margin=2.5cm}
+\setlength{\emergencystretch}{2em}
 \setCJKmainfont{SimSun}            % 系统无 SimSun 时编译失败回退到 Markdown
 \renewcommand{\abstractname}{摘要}
 \renewcommand{\figurename}{图}
@@ -47,20 +50,6 @@
 \section{模型的求解与实验}
 {{ paper.solution }}
 
-{% if figures %}
-\subsection{关键图表}
-{% for fig in figures %}
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.90\linewidth]{ {{- fig.path -}} }
-\caption{ {{- fig.caption | default(fig.purpose) -}} }
-\end{figure}
-
-{{ fig.analysis }}
-
-{% endfor %}
-{% endif %}
-
 \section{敏感性分析}
 {{ paper.sensitivity }}
 
@@ -80,16 +69,18 @@
 
 {% if code_artifacts %}
 \appendix
-\section{关键算法代码}
+\section{ {{- appendix_title -}} }
 {% for art in code_artifacts %}
 {% if art.success %}
 \subsection{ {{- art.purpose -}} }
+{% if art.curated_code %}
 \begin{lstlisting}[language=Python]
 {{ art.curated_code }}
 \end{lstlisting}
+{% endif %}
 
 {% if art.curated_stdout %}
-\subsubsection*{关键输出摘要}
+\subsubsection*{主要计算结果}
 \begin{lstlisting}[basicstyle=\ttfamily\scriptsize,breaklines=true,breakatwhitespace=false,columns=fullflexible]
 {{ art.curated_stdout }}
 \end{lstlisting}

@@ -304,6 +304,7 @@ Just choose `xelatex', no `pdflatex' or `latex' and so on.}
    \bottomrule[1.38pt]
   \end{tabularx}
   \makenametitle
+  \fi
   }
 
 \def\makenametitle{

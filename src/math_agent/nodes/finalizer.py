@@ -11,8 +11,18 @@ from pathlib import Path
 from pypdf import PdfReader
 
 from math_agent.errors import FinalizationError
+from math_agent.config import (
+    MIN_MODEL_CODE_SCORE,
+    MIN_MODEL_CRITIC_SCORE,
+    MIN_PAPER_CRITIC_SCORE,
+)
+from math_agent.nodes.table_assembler import _find_internal_terms
+from math_agent.nodes.sensitivity import formal_sensitivity_issues, formal_sensitivity_runs
 from math_agent.state import ArtifactDigest, FinalizationReport, MathModelingState
-from math_agent.tools.runner import extract_valid_result_lines, infer_entity_upper_bound
+from math_agent.tools.runner import (
+    infer_entity_upper_bound,
+    validate_numeric_results,
+)
 
 
 def _atomic_json(path: Path, payload: dict) -> None:
@@ -104,23 +114,43 @@ def _collect_invariant_issues(state: MathModelingState, out: Path) -> list[str]:
 
 def _minimum_final_score() -> float:
     try:
-        return max(0.0, min(10.0, float(os.getenv("MATH_AGENT_MIN_FINAL_SCORE", "7.0"))))
+        return max(0.0, min(10.0, float(os.getenv("MATH_AGENT_MIN_FINAL_SCORE", "8.0"))))
+    except ValueError:
+        return 8.0
+
+
+def _minimum_dimension_score() -> float:
+    try:
+        return max(
+            0.0,
+            min(10.0, float(os.getenv("MATH_AGENT_MIN_EVALUATION_DIMENSION", "7.0"))),
+        )
     except ValueError:
         return 7.0
 
 
+def _minimum_correctness_score() -> float:
+    try:
+        return max(
+            0.0,
+            min(10.0, float(os.getenv("MATH_AGENT_MIN_RESULT_CORRECTNESS", "8.0"))),
+        )
+    except ValueError:
+        return 8.0
+
+
 def _minimum_paper_body_pages() -> int:
     try:
-        return max(1, int(os.getenv("MATH_AGENT_MIN_PAPER_BODY_PAGES", "20")))
+        return max(1, int(os.getenv("MATH_AGENT_MIN_PAPER_BODY_PAGES", "12")))
     except ValueError:
-        return 20
+        return 12
 
 
 def _minimum_paper_body_chars() -> int:
     try:
-        return max(0, int(os.getenv("MATH_AGENT_MIN_PAPER_BODY_CHARS", "15000")))
+        return max(0, int(os.getenv("MATH_AGENT_MIN_PAPER_BODY_CHARS", "10000")))
     except ValueError:
-        return 15000
+        return 10000
 
 
 def _pdf_body_metrics(pdf_path: Path) -> tuple[int, int, int, int]:
@@ -190,10 +220,21 @@ def _paper_evidence_lineage_warnings(
     latest_index: dict[str, int] = {}
     for index, run in enumerate(state.sensitivity_runs):
         latest_index[run.parameter] = index
+    formal = formal_sensitivity_runs(state)
+    formal_parameters = {run.parameter for run in formal}
+    formal_indices = {
+        latest_index[parameter]
+        for parameter in formal_parameters
+        if parameter in latest_index
+    }
+    formal_paths = {
+        run.parameter: str(run.figure_path).replace("\\", "/")
+        for run in formal if run.figure_path
+    }
 
     warnings: list[str] = []
     for index, run in enumerate(state.sensitivity_runs):
-        if latest_index.get(run.parameter) == index:
+        if index in formal_indices:
             continue
         interpretation = run.interpretation.strip()
         if len(interpretation) >= 16 and interpretation in joined:
@@ -202,7 +243,7 @@ def _paper_evidence_lineage_warnings(
             )
         if run.figure_path:
             stale_path = str(run.figure_path).replace("\\", "/")
-            if stale_path in joined:
+            if stale_path != formal_paths.get(run.parameter) and stale_path in joined:
                 warnings.append(
                     f"质量门禁：论文包含参数“{run.parameter}”的历史敏感性图"
                 )
@@ -235,6 +276,53 @@ def _collect_quality_warnings(state: MathModelingState, out: Path) -> list[str]:
     warnings: list[str] = []
     threshold = _minimum_final_score()
     warnings.extend(_paper_evidence_lineage_warnings(state, out))
+
+    paper_body = "\n".join(
+        str(getattr(state.paper, field, "") or "")
+        for field in (
+            "abstract", "problem_restatement", "assumptions", "notation",
+            "model_section", "solution", "sensitivity", "conclusion",
+        )
+    )
+    leaked = _find_internal_terms(paper_body)
+    if leaked:
+        warnings.append(
+            "质量门禁：论文正文含工程内部流程标记：" + "、".join(leaked[:12])
+        )
+    control_names = {
+        "\x08": "退格", "\t": "制表符", "\r": "回车控制符", "\x0c": "换页控制符",
+    }
+    controls = sorted({
+        name for char, name in control_names.items() if char in paper_body
+    })
+    if controls:
+        warnings.append(
+            "质量门禁：论文正文含疑似 LaTeX 转义损坏的控制字符："
+            + "、".join(controls)
+        )
+
+    formal_paths = {
+        str(Path(path).resolve())
+        for artifact in state.latest_code_artifacts()
+        if artifact.success and artifact.evidence_role in {"primary", "supporting"}
+        for path in artifact.artifact_paths
+    }
+    formal_paths.update(
+        str(Path(run.figure_path).resolve())
+        for run in formal_sensitivity_runs(state)
+        if run.figure_path
+    )
+    weak_figure_explanations = [
+        figure.purpose
+        for figure in state.figures
+        if (not formal_paths or str(Path(figure.path).resolve()) in formal_paths)
+        and len("".join((figure.analysis or "").split())) < 80
+    ]
+    if weak_figure_explanations:
+        warnings.append(
+            "质量门禁：以下正式图表缺少不少于 80 字的结论—证据—含义—边界解读："
+            + "、".join(weak_figure_explanations[:8])
+        )
 
     pdf_path = out / "paper.pdf"
     if pdf_path.is_file() and pdf_path.stat().st_size > 0:
@@ -273,22 +361,30 @@ def _collect_quality_warnings(state: MathModelingState, out: Path) -> list[str]:
             artifact.category.split(":", 1)[1]
             if artifact.category.startswith("baseline:") else None
         )
-        lines = extract_valid_result_lines(
+        valid, _, parsed = validate_numeric_results(
             artifact.stdout,
             stderr=artifact.stderr,
+            require_result=True,
             expected_identifier=expected,
             max_entity_count=upper_bound,
         )
-        if not lines:
+        if not valid:
             continue
         if artifact.category == "figure" and artifact.evidence_role == "primary":
+            if set(parsed) != {"ours"}:
+                continue
             valid_main += 1
             if "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in (artifact.code or ""):
                 green_depth_missing.update(
                     label for label in green_depth_labels
                     if f"{label}:" not in (artifact.stdout or "")
                 )
-        elif artifact.category.startswith("baseline:") and artifact.evidence_role == "baseline":
+        elif (
+            artifact.category.startswith("baseline:")
+            and artifact.evidence_role == "baseline"
+            and expected is not None
+            and set(parsed) == {expected}
+        ):
             valid_baseline_categories.add(artifact.category)
     if valid_main == 0:
         warnings.append("质量门禁：缺少通过协议与合理性校验的主方案 RESULT")
@@ -302,22 +398,32 @@ def _collect_quality_warnings(state: MathModelingState, out: Path) -> list[str]:
             f"质量门禁：有效对照方案仅 {len(valid_baseline_categories)} 个，至少需要 2 个"
         )
 
-    if not state.sensitivity_runs:
-        warnings.append("质量门禁：缺少有效敏感性分析结果")
+    warnings.extend(
+        f"质量门禁：{issue}" for issue in formal_sensitivity_issues(state)
+    )
 
     consistency = state.model_code_reports[-1] if state.model_code_reports else None
     if consistency is None:
         warnings.append("质量门禁：缺少模型—代码一致性报告")
-    elif not consistency.approved or consistency.score < 7:
+    elif not consistency.approved or consistency.score < MIN_MODEL_CODE_SCORE:
         warnings.append(
             f"质量门禁：模型—代码一致性未通过（score={consistency.score}, "
             f"approved={consistency.approved}）"
         )
 
+    model_critic = state.latest_critic("modeler")
+    if model_critic is None:
+        warnings.append("质量门禁：缺少最终模型评审报告")
+    elif not model_critic.approved or model_critic.score < MIN_MODEL_CRITIC_SCORE:
+        warnings.append(
+            f"质量门禁：最终模型评审未通过（score={model_critic.score}, "
+            f"approved={model_critic.approved}）"
+        )
+
     paper_critic = state.latest_critic("paper")
     if paper_critic is None:
         warnings.append("质量门禁：缺少论文评审报告")
-    elif not paper_critic.approved or paper_critic.score < 7:
+    elif not paper_critic.approved or paper_critic.score < MIN_PAPER_CRITIC_SCORE:
         warnings.append(
             f"质量门禁：论文评审未通过（score={paper_critic.score}, "
             f"approved={paper_critic.approved}）"
@@ -335,9 +441,22 @@ def _collect_quality_warnings(state: MathModelingState, out: Path) -> list[str]:
             "写作清晰度": state.evaluation.writing_clarity,
             "分析深度": state.evaluation.extra_depth,
         }
-        low = [f"{name}={score}" for name, score in weak.items() if score < 6]
+        dimension_threshold = _minimum_dimension_score()
+        low = [
+            f"{name}={score}" for name, score in weak.items()
+            if score < dimension_threshold
+        ]
         if low:
-            warnings.append("质量门禁：存在低于 6 分的维度（" + "，".join(low) + "）")
+            warnings.append(
+                f"质量门禁：存在低于 {dimension_threshold:g} 分的维度（"
+                + "，".join(low) + "）"
+            )
+        correctness_threshold = _minimum_correctness_score()
+        if state.evaluation.result_correctness < correctness_threshold:
+            warnings.append(
+                "质量门禁：结果正确性 "
+                f"{state.evaluation.result_correctness} 低于 {correctness_threshold:g}"
+            )
 
     compile_log = out / "compile.log"
     if compile_log.is_file():

@@ -6,8 +6,11 @@ from math_agent.state import (
 )
 from math_agent.nodes.latex_node import (
     latex_node,
+    _formal_figures,
     _refresh_verified_cost_figure,
+    _sensitivity_figure_analysis,
     _verified_comparison_figure,
+    _green_publication_stdout,
 )
 
 
@@ -95,6 +98,8 @@ def test_green_solver_uses_problem_specific_title_in_tex_and_markdown(mocker, wo
     markdown = (workdir / "paper.md").read_text(encoding="utf-8")
     title = "多约束异构车队绿色配送与动态局部重调度"
     assert title in tex and markdown.startswith(f"# {title}")
+    assert r"\section{计算证据摘要}" in tex
+    assert r"\begin{lstlisting}[language=Python]" not in tex
 
 
 def test_verified_comparison_figure_is_derived_from_result_lines(workdir):
@@ -120,6 +125,45 @@ def test_verified_comparison_figure_is_derived_from_result_lines(workdir):
     assert (workdir / "baseline_comparison.png").stat().st_size > 10_000
 
 
+def test_green_comparison_figure_uses_q1_and_q2_primary_scenarios(workdir):
+    state = _state(workdir)
+    state.code_artifacts = [CodeArtifact(
+        purpose="主方案",
+        code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+        stdout=(
+            "SCENARIO_Q1: baseline=no_policy total_cost=91 total_carbon=11 "
+            "timewin_rate=.93 vehicles=3 service_rate=1\n"
+            "RESULT: baseline=ours total_cost=92 total_carbon=10 "
+            "timewin_rate=.90 vehicles=3 service_rate=1\n"
+        ),
+        success=True,
+        evidence_role="primary",
+    )]
+
+    figure = _verified_comparison_figure(state, workdir)
+
+    assert figure is not None
+    assert figure.path.endswith("policy_scenario_comparison.png")
+    assert "问题一与问题二" in figure.purpose
+    assert (workdir / "policy_scenario_comparison.png").stat().st_size > 10_000
+
+
+def test_green_publication_stdout_localizes_internal_labels():
+    value = (
+        "RESULT: baseline=ours total_cost=92 vehicles=3 service_rate=1 total_carbon=10\n"
+        "CROSS_ROUTE_SEARCH: initial_score=10 final_score=8 improvement=2 "
+        "swaps=1 evaluated_moves=20\n"
+        "SCENARIO_END: q2_green_policy\n"
+    )
+
+    curated = _green_publication_stdout(value)
+
+    assert "Cross Route Search" not in curated
+    assert "Scenario End" not in curated
+    assert "跨路线交换" in curated
+    assert "交换次数" in curated
+
+
 def test_latex_node_figure_caption_truncated(mocker, workdir):
     """figure caption 截到完整句且不超过 55 字，避免半个数字结尾。"""
     mocker.patch(
@@ -137,6 +181,53 @@ def test_latex_node_figure_caption_truncated(mocker, workdir):
     m = re.search(r"\\caption\{([^}]+)\}", tex)
     assert m and len(m.group(1)) <= 56
     assert m.group(1) == "这是完整的第一句。"
+
+
+def test_latex_node_interleaves_figures_near_semantic_section_anchors(mocker, workdir):
+    mocker.patch(
+        "math_agent.nodes.latex_node.compile_latex",
+        return_value=type("R", (), {"success": True, "pdf_path": "", "log": ""})(),
+    )
+    state = _state(workdir)
+    state.paper.problem_restatement = "## 数据预处理与总体路线\n数据正文。\n\n## 难点\n难点正文。"
+    state.paper.solution = (
+        "## 求解算法与执行流程\n算法正文。\n\n"
+        "## 随机交通蒙特卡洛稳健性\n稳健性正文。"
+    )
+    state.figures = [
+        FigureArtifact(
+            path="data_profile.png", purpose="附件数据画像", caption="数据画像",
+            analysis="结论上，需求与时间窗存在差异。图中分布支持容量拆分和车型选择，但不直接证明方案最优。" * 2,
+        ),
+        FigureArtifact(
+            path="robustness_diagnostics.png", purpose="随机交通稳健性", caption="随机稳健性",
+            analysis="结论上，交通扰动产生尾部风险。图中分位线支持预留缓冲，但不代表随机规划已经求解。" * 2,
+        ),
+    ]
+
+    latex_node(state)
+
+    tex = (workdir / "paper.tex").read_text(encoding="utf-8")
+    markdown = (workdir / "paper.md").read_text(encoding="utf-8")
+    assert "关键图表" not in tex
+    assert tex.index("data_profile.png") < tex.index(r"\section{模型假设}")
+    assert tex.index("robustness_diagnostics.png") > tex.index("随机交通蒙特卡洛稳健性")
+    assert tex.count(r"\textbf{图示结论：}") == 2
+    assert tex.count(r"\begin{minipage}{0.92\linewidth}") == 2
+    assert "## 附录 B. 图表" not in markdown
+    assert markdown.index("data_profile.png") < markdown.index("## 2. 模型假设")
+    assert markdown.index("robustness_diagnostics.png") > markdown.index("随机交通蒙特卡洛稳健性")
+
+
+def test_sensitivity_figure_analysis_states_conclusion_evidence_and_boundary():
+    analysis = _sensitivity_figure_analysis(SensitivityRun(
+        parameter="速度比例", values=[0.8, 1.0, 1.2], metric="总成本",
+        results=[110.0, 100.0, 108.0],
+    ))
+
+    assert "非单调" in analysis
+    assert "最低值 100.00" in analysis
+    assert "连续响应拟合" in analysis
 
 
 def test_refresh_verified_cost_figure_accepts_cost_pie_filename(workdir):
@@ -241,6 +332,33 @@ def test_latex_node_excludes_baseline_and_supporting_code(mocker, workdir):
     assert "SUPPORTING_SENTINEL" not in tex and "SUPPORTING_SENTINEL" not in markdown
 
 
+def test_formal_figures_excludes_green_supporting_and_algorithm_flow(workdir):
+    state = _state(workdir)
+    main_path = str(workdir / "data_profile.png")
+    flow_path = str(workdir / "algorithm_flow.png")
+    supporting_path = str(workdir / "supporting.png")
+    state.code_artifacts = [
+        CodeArtifact(
+            purpose="main", code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+            success=True, evidence_role="primary",
+            artifact_paths=[main_path, flow_path],
+        ),
+        CodeArtifact(
+            purpose="support", code="", success=True, evidence_role="supporting",
+            artifact_paths=[supporting_path],
+        ),
+    ]
+    state.figures = [
+        FigureArtifact(path=main_path, purpose="data"),
+        FigureArtifact(path=flow_path, purpose="flow"),
+        FigureArtifact(path=supporting_path, purpose="support"),
+    ]
+
+    figures = _formal_figures(state, [])
+
+    assert [figure.path for figure in figures] == [main_path]
+
+
 def test_latex_node_uses_only_latest_sensitivity_evidence(mocker, workdir):
     mocker.patch(
         "math_agent.nodes.latex_node.compile_latex",
@@ -283,6 +401,38 @@ def test_latex_node_uses_only_latest_sensitivity_evidence(mocker, workdir):
     assert "STALE_ANALYSIS" not in markdown
 
 
+def test_latex_node_excludes_parameters_retired_from_current_sensitivity_plan(mocker, workdir):
+    mocker.patch(
+        "math_agent.nodes.latex_node.compile_latex",
+        return_value=type("R", (), {"success": True, "pdf_path": "", "log": ""})(),
+    )
+    state = _state(workdir)
+    retired = workdir / "retired.png"
+    formal = workdir / "formal.png"
+    retired.write_bytes(b"old")
+    formal.write_bytes(b"new")
+    state.sensitivity_runs = [
+        SensitivityRun(
+            parameter="retired_speed", values=[.8, 1, 1.2], metric="cost",
+            results=[3, 2, 1], interpretation="RETIRED_PARAMETER",
+            figure_path=str(retired),
+        ),
+        SensitivityRun(
+            parameter="interaction", values=[1, 2, 3], metric="cost",
+            results=[4, 3, 2], interpretation="FORMAL_PARAMETER",
+            figure_path=str(formal),
+        ),
+    ]
+    state.sensitivity_formal_parameters = ["interaction"]
+
+    latex_node(state)
+
+    tex = (workdir / "paper.tex").read_text(encoding="utf-8")
+    assert "formal.png" in tex
+    assert "retired.png" not in tex
+    assert "RETIRED_PARAMETER" not in tex
+
+
 def test_gmcm_references_are_rendered_as_bibitems(mocker, workdir):
     mocker.patch(
         "math_agent.nodes.latex_node.compile_latex",
@@ -297,6 +447,22 @@ def test_gmcm_references_are_rendered_as_bibitems(mocker, workdir):
     assert r"\bibitem{ref2} Author B. Title B." in tex
     assert "\\schoolname{None}" not in tex
     assert r"\schoolname{XX大学}" in tex
+
+
+def test_default_references_are_rendered_as_numbered_list(mocker, workdir):
+    mocker.patch(
+        "math_agent.nodes.latex_node.compile_latex",
+        return_value=type("R", (), {"success": True, "pdf_path": "", "log": ""})(),
+    )
+    state = _state(workdir)
+    state.paper.references = "[1] Author A. Title A. [2] Author B. Title B."
+
+    latex_node(state)
+
+    tex = (workdir / "paper.tex").read_text(encoding="utf-8")
+    assert r"\renewcommand{\labelenumi}{[\arabic{enumi}]}" in tex
+    assert r"\item Author A. Title A." in tex
+    assert r"\item Author B. Title B." in tex
 
 
 def test_gmcm_metadata_is_latex_escaped(mocker, workdir):

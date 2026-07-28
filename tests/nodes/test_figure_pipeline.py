@@ -128,6 +128,44 @@ def test_collect_pngs_rejects_supporting_figure_with_stale_primary_metrics():
     assert [path for path, _, _ in _collect_pngs(state)] == ["main.png"]
 
 
+def test_collect_pngs_excludes_supporting_figure_even_when_total_matches():
+    from math_agent.nodes.figure_pipeline import _collect_pngs
+    state = MathModelingState(problem="p", code_artifacts=[
+        CodeArtifact(
+            purpose="untrusted detail", code="", success=True, batch=3,
+            evidence_role="supporting", artifact_paths=["supporting.png"],
+            stdout="RESULT: baseline=ours total_cost=100 vehicles=10",
+        ),
+        CodeArtifact(
+            purpose="main", code="", success=True, batch=3,
+            evidence_role="primary", artifact_paths=["main.png"],
+            stdout="RESULT: baseline=ours total_cost=100 vehicles=10",
+        ),
+    ])
+
+    assert [path for path, _, _ in _collect_pngs(state)] == ["main.png"]
+
+
+def test_collect_pngs_uses_filename_specific_green_figure_purpose():
+    from math_agent.nodes.figure_pipeline import _collect_pngs
+    state = MathModelingState(problem="p", code_artifacts=[
+        CodeArtifact(
+            purpose="需求时序图", code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+            success=True, evidence_role="primary",
+            artifact_paths=["robustness_diagnostics.png"],
+            stdout=(
+                "RESULT: baseline=ours total_cost=100 vehicles=10\n"
+                "ROBUSTNESS: scenarios=200 seed=2026 cost_p95=120"
+            ),
+        ),
+    ])
+
+    items = _collect_pngs(state)
+
+    assert items[0][1] == "随机交通蒙特卡洛稳健性诊断图"
+    assert "ROBUSTNESS: scenarios=200" in items[0][2]
+
+
 def test_pipeline_uses_figure_model_for_critic_and_analyst(mocker, workdir):
     """critic 用 figure_critic 模型，analyst 用 figure_analyst 模型，二者均来自 FIGURE_MODEL。"""
     from math_agent.config import MODEL_ROUTING

@@ -16,6 +16,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel
 
 from math_agent.state import CriticIssue, MathModelingState
+from math_agent.nodes.sensitivity import formal_sensitivity_runs
 from math_agent.tools.runner import extract_valid_result_lines, infer_entity_upper_bound
 
 
@@ -165,8 +166,10 @@ _MAX_WRITER_VARIABLES = 20
 _MAX_WRITER_DERIVATIONS = 6
 _MAX_WRITER_CODE_ARTIFACTS = 3
 _DEPTH_EVIDENCE_LABELS = (
-    "BREAKDOWN", "DATA_PROFILE", "DYNAMIC_STRESS", "ALGORITHM_SEARCH",
-    "ROBUSTNESS", "SERVICE_DIAGNOSTICS", "DYNAMIC_EVENTS",
+    "SCENARIO_BEGIN", "SCENARIO_Q1", "RESULT", "BREAKDOWN", "DATA_PROFILE", "DYNAMIC_STRESS",
+    "DYNAMIC_FAILURES", "ENERGY_METHOD_AUDIT", "SMALL_EXACT", "CAPACITY_DIAGNOSTICS",
+    "ALGORITHM_SEARCH", "DEPARTURE_SEARCH", "CROSS_ROUTE_SEARCH",
+    "ROBUSTNESS", "SERVICE_DIAGNOSTICS", "DYNAMIC_EVENTS", "SCENARIO_END",
 )
 
 
@@ -239,7 +242,7 @@ def _compact_code_artifacts(state: MathModelingState):
         compact.append(a.model_copy(update={
             "purpose": _compact_text(a.purpose, 120),
             "code": _compact_text(a.code, code_limit),
-            "stdout": _compact_text("\n".join(evidence_lines), 4000),
+            "stdout": _compact_text("\n".join(evidence_lines), 8000),
             "stderr": "",
             "artifact_paths": a.artifact_paths[:3],
         }))
@@ -269,11 +272,11 @@ def _extract_available_numbers(state: MathModelingState) -> str:
             lines.append(f"  [{a.purpose}] {line}")
         for line in _depth_evidence_lines(a):
             lines.append(f"  [{a.purpose}] {line}")
-    for r in state.sensitivity_runs:
+    for r in formal_sensitivity_runs(state):
         lines.append(f"  [sensitivity] {r.parameter}={r.values} → {r.metric}={r.results}")
     if not lines:
         return ""
-    return "\n".join(lines[:30])  # 上限 30 行，控 prompt 长度
+    return "\n".join(lines[:40])  # 完整保留 Q1/Q2 场景块，再控制基线数量
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +320,7 @@ def build_section_prompt(
         "assumptions": state.assumptions,
         "model_versions": compact_models,
         "code_artifacts": compact_artifacts,
-        "sensitivity_runs": state.sensitivity_runs,
+        "sensitivity_runs": formal_sensitivity_runs(state),
         "figures": state.figures,
         "prior_critic": prior_critic if prior_critic is not None else state.latest_critic("paper"),
         "problem_domains": state.problem_domains,  # Plan D：analyst 输出
@@ -374,6 +377,21 @@ def build_section_prompt(
     numbers = view["available_numbers"]
     if numbers:
         rendered = rendered + "\n\n---\n## 可引用的数值清单（只能用以下数值，不得使用其他数值）\n" + numbers
+        if "SCENARIO_Q1:" in numbers and "RESULT: baseline=ours" in numbers:
+            rendered += (
+                "\n\n## 场景身份硬约束\n"
+                "- 问题1（无政策）只能引用 `SCENARIO_Q1: baseline=no_policy` 行及紧随其后的"
+                " Q1 `BREAKDOWN`。\n"
+                "- 问题2（8:00—16:00 绿色区限行）只能引用"
+                " `RESULT: baseline=ours` 及 Q2 `BREAKDOWN`。\n"
+                "- 政策成本和碳排放的绝对/相对增量必须由上述两行现场计算并展示计算式，"
+                "不得凭记忆填写。\n"
+                "- 摘要、模型、结果、结论必须保持上述身份一致；不得把 Q2 主方案数值复制为 Q1，"
+                "不得把 `baseline:no_schedule` 构造初解当作问题1答案；它关闭路线内搜索、"
+                "跨路线交换和发车时刻优化，只用于量化算法改进幅度。\n"
+                "- `ALGORITHM_SEARCH`、`DEPARTURE_SEARCH`、`CROSS_ROUTE_SEARCH` 是证据标签；"
+                "正文应改写为“路线内邻域搜索”“发车时刻优化”“跨路线交换”，不直接暴露标签。\n"
+            )
     if retrieved_context:
         rendered = rendered + "\n\n" + retrieved_context
     return rendered

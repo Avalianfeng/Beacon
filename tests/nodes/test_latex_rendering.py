@@ -75,12 +75,37 @@ def test_curate_code_truncates_long():
     assert "截取前 80 行" in out
 
 
+def test_curate_code_removes_internal_marker_and_local_absolute_data_path():
+    code = (
+        "# BEACON_GREEN_LOGISTICS_SAFE_SOLVER\n"
+        "DATA_DIR = Path(r'C:\\private\\run\\data')\n"
+        "print('ok')"
+    )
+    out = _curate_code(code)
+    assert "BEACON" not in out
+    assert r"C:\private" not in out
+    assert 'DATA_DIR = Path("./data")' in out
+
+
 # ---- _curate_stdout ----
 
 def test_curate_stdout_extracts_result_lines():
     stdout = "step 1\nstep 2\nRESULT: score=0.95\nmore output\nlast line"
     out = _curate_stdout(stdout)
-    assert "RESULT: score=0.95" in out
+    assert "方案结果：score=0.95" in out
+    assert "RESULT:" not in out
+
+
+def test_curate_stdout_translates_green_logistics_protocol_labels():
+    stdout = (
+        "RESULT: baseline=ours total_cost=100 vehicles=2\n"
+        "ALGORITHM_SEARCH: initial_score=120 final_score=100 improvement_rate=.1667\n"
+    )
+    out = _curate_stdout(stdout)
+    assert "方案=本文方案" in out
+    assert "总成本=100" in out
+    assert "局部搜索：初始目标=120" in out
+    assert "ALGORITHM_SEARCH" not in out
 
 
 def test_curate_stdout_empty_returns_empty():
@@ -95,9 +120,11 @@ def test_default_paper_tex_template_declares_tabularx_and_booktabs():
            / "src" / "math_agent" / "templates" / "paper.tex.j2")
     src = tpl.read_text(encoding="utf-8")
     assert r"\usepackage{tabularx}" in src
+    assert r"\usepackage{longtable}" in src
     assert r"\usepackage{booktabs}" in src
     assert r"\usepackage{float}" in src
-    assert r"\begin{figure}[H]" in src
+    assert r"\usepackage[section]{placeins}" in src
+    assert r"\begin{figure}[H]" not in src
 
 
 def test_tex_templates_break_long_code_lines():
@@ -108,3 +135,15 @@ def test_tex_templates_break_long_code_lines():
         assert r"breaklines=true" in src
         assert r"breakatwhitespace=false" in src
         assert r"columns=fullflexible" in src
+
+
+def test_gmcm_title_preface_conditional_is_closed():
+    template_dir = (Path(__file__).resolve().parent.parent.parent
+                    / "src" / "math_agent" / "templates")
+    src = (template_dir / "gmcmthesis.cls").read_text(encoding="utf-8")
+    title_block = src.split(r"\def\ge@maketitle", 1)[1].split(
+        r"\def\makenametitle", 1
+    )[0]
+
+    assert r"\if@gmcm@preface" in title_block
+    assert r"\fi" in title_block

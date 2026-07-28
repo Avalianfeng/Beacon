@@ -20,7 +20,7 @@ from math_agent.tools.runner import (
 # 注意：(?i) 不能在 lookbehind 内，用 re.IGNORECASE flag 代替。
 _CJK = r"\u4e00-\u9fff"
 _FORBIDDEN_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"papercritic", re.IGNORECASE), "[内部评审]"),
+    (re.compile(r"papercritic", re.IGNORECASE), "论文评审"),
     # Claim/Evidence/Reasoning：前面或后面有中文字符才替换（CER 框架泄露场景）
     # 注意：CJK 和 ASCII 之间无 \b（Python \w 含 unicode），用 lookaround CJK 代替
     (re.compile(rf"(?<=[{_CJK}])claim", re.IGNORECASE), "结论"),
@@ -41,7 +41,64 @@ _FORBIDDEN_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"李华"), "队员A"),
     (re.compile(r"张三"), "队员A"),
     (re.compile(r"王五"), "队员B"),
+    # 工程执行协议和 Agent 内部状态不得进入竞赛论文正文。先处理组合词，
+    # 再处理单个英文标记，避免留下“辅助结果文件”一类中英混排。
+    (re.compile(r"(?<![A-Za-z0-9_])supporting\s+artifacts?(?![A-Za-z0-9_])", re.IGNORECASE), "辅助图表"),
+    (re.compile(r"(?<![A-Za-z0-9_])primary\s+artifacts?(?![A-Za-z0-9_])", re.IGNORECASE), "主方案结果文件"),
+    (re.compile(r"(?<![A-Za-z0-9_])RESULT\s+gate(?![A-Za-z0-9_])", re.IGNORECASE), "计算结果有效性检查"),
+    (re.compile(r"(?<![A-Za-z0-9_])RESULT(?![A-Za-z0-9_])", re.IGNORECASE), "计算结果"),
+    (re.compile(r"(?<![A-Za-z0-9_])BREAKDOWN(?![A-Za-z0-9_])", re.IGNORECASE), "成本分解"),
+    (re.compile(r"(?<![A-Za-z0-9_])DATA_PROFILE(?![A-Za-z0-9_])", re.IGNORECASE), "数据画像"),
+    (re.compile(r"(?<![A-Za-z0-9_])DYNAMIC_STRESS(?![A-Za-z0-9_])", re.IGNORECASE), "动态压力测试"),
+    (re.compile(r"(?<![A-Za-z0-9_])ALGORITHM_SEARCH(?![A-Za-z0-9_])", re.IGNORECASE), "局部搜索实验"),
+    (re.compile(r"(?<![A-Za-z0-9_])ROBUSTNESS(?![A-Za-z0-9_])", re.IGNORECASE), "随机稳健性实验"),
+    (re.compile(r"(?<![A-Za-z0-9_])SERVICE_DIAGNOSTICS(?![A-Za-z0-9_])", re.IGNORECASE), "服务诊断"),
+    (re.compile(r"(?<![A-Za-z0-9_])DYNAMIC_EVENTS(?![A-Za-z0-9_])", re.IGNORECASE), "动态事件实验"),
+    (re.compile(r"(?<![A-Za-z0-9_])runtime_ms(?![A-Za-z0-9_])", re.IGNORECASE), "计算耗时（毫秒）"),
+    (re.compile(r"(?<![A-Za-z0-9_])checkpoint(?![A-Za-z0-9_])", re.IGNORECASE), "阶段性计算记录"),
+    (re.compile(r"(?<![A-Za-z0-9_])stdout(?![A-Za-z0-9_])", re.IGNORECASE), "原始数值输出"),
+    (re.compile(r"(?<![A-Za-z0-9_])stderr(?![A-Za-z0-9_])", re.IGNORECASE), "错误信息"),
+    (re.compile(r"(?<![A-Za-z0-9_])artifacts?(?![A-Za-z0-9_])", re.IGNORECASE), "结果文件"),
+    (re.compile(r"(?<![A-Za-z0-9_])attempts?(?![A-Za-z0-9_])", re.IGNORECASE), "试算轮次"),
+    (re.compile(r"(?<![A-Za-z0-9_])writer(?![A-Za-z0-9_])", re.IGNORECASE), "论文生成过程"),
+    (re.compile(r"(?<![A-Za-z0-9_])runner(?![A-Za-z0-9_])", re.IGNORECASE), "求解程序"),
+    (re.compile(r"(?<![A-Za-z0-9_])supervisor(?![A-Za-z0-9_])", re.IGNORECASE), "任务调度程序"),
+    (re.compile(r"(?<![A-Za-z0-9_])finalizer(?![A-Za-z0-9_])", re.IGNORECASE), "结果汇总程序"),
+    (re.compile(r"(?<![A-Za-z0-9_])pipeline(?![A-Za-z0-9_])", re.IGNORECASE), "计算流程"),
+    (re.compile(r"(?<![A-Za-z0-9_])SensitivityRun(?![A-Za-z0-9_])", re.IGNORECASE), "敏感性实验记录"),
+    (re.compile(r"(?<![A-Za-z0-9_])CodeArtifact(?![A-Za-z0-9_])", re.IGNORECASE), "计算结果记录"),
+    (re.compile(r"(?<![A-Za-z0-9_])no_schedule(?![A-Za-z0-9_])", re.IGNORECASE), "无调度方案"),
+    (re.compile(r"(?<![A-Za-z0-9_])simple_pred(?![A-Za-z0-9_])", re.IGNORECASE), "定速预测方案"),
+    (re.compile(r"(?<![A-Za-z0-9_])greedy(?![A-Za-z0-9_])", re.IGNORECASE), "贪婪构造方案"),
+    (re.compile(r"(?<![A-Za-z0-9_])ours(?![A-Za-z0-9_])", re.IGNORECASE), "本文方案"),
+    (re.compile(r"正式主方案"), "本文方案"),
+    (re.compile(r"正式主成本"), "本文方案成本"),
+    (re.compile(r"正式主求解器"), "本文求解程序"),
+    (re.compile(r"正式路线"), "本文方案路线"),
+    (re.compile(r"正式代码"), "求解程序"),
+    (re.compile(r"安全求解器"), "求解程序"),
+    (re.compile(r"数据血缘"), "数据来源可追溯性"),
+    (re.compile(r"附件读取审计"), "数据读取校验"),
+    (re.compile(r"历史失败轮次"), "无效试算"),
+    (re.compile(r"扫描脚本"), "参数扫描程序"),
+    (re.compile(r"执行脚本"), "独立计算程序"),
+    (re.compile(r"脚本"), "计算程序"),
+    (re.compile(r"门禁"), "有效性检查"),
 ]
+
+
+_INTERNAL_TERM_PATTERNS = tuple(
+    pattern for pattern, _replacement in _FORBIDDEN_PATTERNS
+    if pattern.pattern not in {r"回应\s*[:：]", "回应", "超时", "占位", "李华", "张三", "王五"}
+)
+
+
+def _find_internal_terms(text: str) -> list[str]:
+    """返回正文中仍可见的内部流程标记，供评审与终检使用。"""
+    found: list[str] = []
+    for pattern in _INTERNAL_TERM_PATTERNS:
+        found.extend(match.group(0) for match in pattern.finditer(text or ""))
+    return list(dict.fromkeys(found))
 
 
 def _clean_forbidden_words(text: str, section: str) -> tuple[str, list[str]]:
@@ -134,19 +191,26 @@ def _generate_sensitivity_table(runs: list) -> str:
     for run in runs:
         latest[run.parameter] = run
     for r in latest.values():
-        vals = (
-            f"[{float(r.values[0]):.6g}, {float(r.values[-1]):.6g}]"
-            if r.values else "—"
-        )
+        is_interaction = "二维组合编码" in r.parameter and len(r.values) == 9
+        if is_interaction:
+            parameter = "速度比例与限行开始时刻（3×3全因子）"
+            vals = "速度0.8–1.2；开始时刻7–9时"
+        else:
+            parameter = r.parameter
+            vals = (
+                f"[{float(r.values[0]):.6g}, {float(r.values[-1]):.6g}]"
+                if r.values else "—"
+            )
         res = f"[{min(r.results):.4g}, {max(r.results):.4g}]" if r.results else "—"
         rating = _sensitivity_rating(r.results)
-        lines.append(f"| {r.parameter} | {vals} | {r.metric} | {res} | {rating} |")
+        lines.append(f"| {parameter} | {vals} | {r.metric} | {res} | {rating} |")
     return "\n".join(lines)
 
 
 # baseline category → 中文显示名
 _BASELINE_NAMES = {
-    "no_schedule": "无调度",
+    "q1_no_policy": "Q1无政策方案",
+    "no_schedule": "无邻域与发车优化",
     "simple_pred": "定速预测",
     "greedy": "贪婪构造",
     "ours": "本文方案",
@@ -183,6 +247,20 @@ def _generate_comparison_table(artifacts: list, max_entity_count: int | None = N
         )
         if not valid:
             continue
+        if a.evidence_role == "primary":
+            q1_match = re.search(
+                r"(?m)^SCENARIO_Q1:\s*baseline=no_policy\s+(.+)$",
+                a.stdout,
+            )
+            if q1_match:
+                q1_metrics = {
+                    item.group(1): item.group(2)
+                    for item in re.finditer(
+                        r"([A-Za-z_][\w]*)=(-?\d+(?:\.\d+)?)",
+                        q1_match.group(1),
+                    )
+                }
+                results = {"q1_no_policy": q1_metrics, **results}
         if not results:
             continue
         for identifier, metrics in results.items():
@@ -240,6 +318,7 @@ def _inject_table(
 
 
 from math_agent.state import MathModelingState, PaperSections
+from math_agent.nodes.sensitivity import formal_sensitivity_runs
 
 
 # 要清洗的 section 字段名。
@@ -274,7 +353,7 @@ def table_assembler_node(state: MathModelingState) -> dict:
         var_table = _generate_variable_table(final_model.variables)
         paper.notation = _inject_table(paper.notation, "模型变量表", var_table)
 
-    sens_table = _generate_sensitivity_table(state.sensitivity_runs)
+    sens_table = _generate_sensitivity_table(formal_sensitivity_runs(state))
     paper.sensitivity = _inject_table(paper.sensitivity, "敏感性结果汇总表", sens_table)
 
     # 对比表（从 baseline artifacts 提取）

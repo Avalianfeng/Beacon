@@ -245,7 +245,17 @@ def test_writer_paper_critic_loop_isolated(mocker):
                             {"retry": "writer", "advance": END})
     compiled = g.compile()
 
-    final = compiled.invoke({"problem": "p"})
+    final = compiled.invoke({
+        "problem": "p",
+        "critic_reports": [
+            CriticReport(
+                target="modeler", stage="final", score=8, approved=True,
+            ),
+        ],
+        "model_code_reports": [
+            ModelCodeConsistencyReport(score=8, approved=True),
+        ],
+    })
     assert final["writer_iteration"] == 2
     assert final["paper"].abstract.startswith("v2")
     paper_critics = [r for r in final["critic_reports"] if r.target == "paper"]

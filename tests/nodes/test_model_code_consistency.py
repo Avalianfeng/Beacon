@@ -145,3 +145,98 @@ def test_verified_green_contract_corrects_prompt_hallucinations_without_llm(mock
     assert report.score == 8
     assert any("400元/辆" in item for item in report.implemented_objectives)
     assert any("60/50/50/10/15" in item for item in report.implemented_constraints)
+
+
+def _v5_contract_state(*, policy_violations=0, include_dynamic=True):
+    state = MathModelingState(problem="城市绿色物流")
+    state.model_versions.append(ModelVersion(
+        stage="final",
+        description="连续弧段时空限行与动态滚动恢复",
+        notes="BEACON_SAFE_SOLVER_CONTRACT_V5",
+    ))
+    code = """
+# BEACON_GREEN_LOGISTICS_SAFE_SOLVER
+POLICY_ENABLED = True
+u = {}
+v_load = {}
+w = {}
+p_late = {}
+def green_segment_interval(a, b): ...
+def policy_forbids(kind, previous, customer, departure, arrival): ...
+def leg_energy(kind, leg, departure, load_ratio): ...
+def exact_routing_subproblem(customer_ids): ...
+"""
+    metrics = (
+        "total_cost=92175.42 vehicles=123 service_rate=1 total_carbon=10809.04 "
+        "total_distance=16068.08 fuel_vehicles=98 ev_vehicles=25 timewin_rate=.919 "
+        "avg_cost_per_order=42.4967 avg_vehicle_load_rate=.999502 "
+        "dynamic_cost_increase_ratio=.00540575"
+    )
+    stdout = "\n".join([
+        f"SCENARIO_Q1: baseline=no_policy {metrics}",
+        f"RESULT: baseline=ours {metrics}",
+        "POLICY_AUDIT: checked_arcs=210 "
+        f"space_time_violations={policy_violations} continuous_overlap_check=1",
+        "MODEL_CODE_EVIDENCE: time_varying_final=1 load_rate_interpolation=1 "
+        "materialized_route_variables=1 capacity_weight_volume=1 "
+        "cost_identity_error=0.0000000000",
+        "ENERGY_METHOD_AUDIT: integrated_energy_cost=32394.33 "
+        "point_speed_proxy_cost=32772.68 relative_difference=.011679 "
+        "piecewise_segments=1",
+        "SMALL_EXACT: customers=8 exact_distance=242.418793 "
+        "heuristic_distance=251.276038 gap_pct=3.653695 states=3592 "
+        "routing_only=1",
+        *(
+            ["DYNAMIC_EVENTS: scenarios=50 cancellation_success_rate=1 "
+             "new_order_success_rate=1 address_change_success_rate=1 "
+             "time_window_success_rate=1 vehicle_failure_success_rate=1 fallback_rate=0"]
+            if include_dynamic else []
+        ),
+    ])
+    state.code_artifacts.append(CodeArtifact(
+        purpose="主方案", code=code, stdout=stdout,
+        success=True, category="figure", evidence_role="primary", batch=3,
+    ))
+    for name in ("no_schedule", "simple_pred", "greedy"):
+        state.code_artifacts.append(CodeArtifact(
+            purpose=name, code="print('baseline')",
+            stdout=f"RESULT: baseline={name} total_cost=100 vehicles=1",
+            success=True, category=f"baseline:{name}", evidence_role="baseline", batch=3,
+        ))
+    return state
+
+
+def test_verified_green_v5_contract_audits_full_execution_evidence_without_llm(mocker):
+    spy = mocker.patch("math_agent.nodes.model_code_consistency.complete")
+
+    delta = model_code_consistency_node(_v5_contract_state())
+
+    spy.assert_not_called()
+    report = delta["model_code_reports"][0]
+    assert report.approved is True
+    assert report.score == 9
+    assert "avg_vehicle_load_rate" in report.output_metric_alignment
+    assert any("连续弧段时空禁行" in item for item in report.implemented_constraints)
+
+
+def test_verified_green_v5_contract_rejects_real_policy_violation_without_llm(mocker):
+    spy = mocker.patch("math_agent.nodes.model_code_consistency.complete")
+
+    delta = model_code_consistency_node(_v5_contract_state(policy_violations=1))
+
+    spy.assert_not_called()
+    report = delta["model_code_reports"][0]
+    assert report.approved is False
+    assert report.score == 4
+    assert any("时空限行违规" in item for item in report.issues)
+
+
+def test_verified_green_v5_contract_rejects_missing_dynamic_evidence_without_llm(mocker):
+    spy = mocker.patch("math_agent.nodes.model_code_consistency.complete")
+
+    delta = model_code_consistency_node(_v5_contract_state(include_dynamic=False))
+
+    spy.assert_not_called()
+    report = delta["model_code_reports"][0]
+    assert report.approved is False
+    assert any("动态事件证据" in item for item in report.issues)

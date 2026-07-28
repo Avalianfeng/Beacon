@@ -43,20 +43,10 @@
 ```
 
 {% if a.curated_stdout %}
-**关键输出摘要**：
+**主要计算结果**：
 ```
 {{ a.curated_stdout }}
 ```
 {% endif %}
 {% endif %}
 {% endfor %}
-{% if figures %}
-
-## 附录 B. 图表
-{% for f in figures %}
-### {{ f.purpose }}
-![]({{ f.path }})
-
-{{ f.analysis }}
-{% endfor %}
-{% endif %}

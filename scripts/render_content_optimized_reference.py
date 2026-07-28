@@ -10,7 +10,11 @@ from math_agent.nodes.coder import (
     _safe_solver_model_contract,
     _validated_execution,
 )
-from math_agent.nodes.finalizer import _pdf_body_metrics
+from math_agent.nodes.finalizer import (
+    _minimum_paper_body_chars,
+    _minimum_paper_body_pages,
+    _pdf_body_metrics,
+)
 from math_agent.nodes.latex_node import latex_node
 from math_agent.nodes.model_code_consistency import _verified_green_contract_report
 from math_agent.nodes.sensitivity import (
@@ -59,12 +63,42 @@ SENSITIVITY_RUNS = [
 
 
 FIGURE_TEXT = {
-    "green_delivery_network.png": ("城市绿色物流配送路径", "主方案路径、客户点、配送中心与绿色区的空间关系。"),
-    "data_profile.png": ("附件数据画像", "需求、时间窗与绿色区客户分布均来自本次附件读取。"),
-    "algorithm_flow.png": ("求解与验证流程", "展示构造、2-opt、硬约束审计以及随机和动态实验。"),
-    "dynamic_stress.png": ("动态局部重插压力测试", "展示距离、晚到和响应时间的独立事件样本分布。"),
-    "robustness_diagnostics.png": ("随机交通稳健性", "展示固定路线在蒙特卡洛交通情景下的服务率、晚到和成本分布。"),
-    "service_diagnostics.png": ("服务与线路资源诊断", "展示载重、容积利用率及违约任务晚到强度。"),
+    "green_delivery_network.png": (
+        "城市绿色物流配送路径",
+        "结论上，本文方案完成了配送中心、客户点与绿色区之间的空间覆盖，路线同时穿过中心城区和外围客户群。"
+        "图中不同颜色的连线用于核对客户归属和绿色区相交关系，密集的放射状连接也说明当前构造解仍有进一步合并路线的空间。"
+        "该图用于检验空间结构与政策约束，不单独证明总成本最优。",
+    ),
+    "data_profile.png": (
+        "附件数据画像",
+        "结论上，客户重量和体积需求均存在明显差异，时间窗宽度也并非完全一致，因此同质车辆和统一服务时刻难以刻画实际约束。"
+        "四幅子图分别呈现需求规模、时间窗及绿色区客户的空间分布，为订单聚合、容量拆分和异构车型选择提供依据。"
+        "数据画像只描述样本结构，不能替代后续可行性与成本检验。",
+    ),
+    "algorithm_flow.png": (
+        "模型求解与检验流程",
+        "结论上，算法把数据校验、任务拆分、车队构造、路线改进和模型检验连接为闭环。"
+        "流程图显示，路线内 2-opt 只在有限车队构造之后执行，随后仍需通过容量、时序和绿色区可行性检验，并接受随机交通与动态事件测试。"
+        "因此局部目标改善不是方案发布的充分条件。",
+    ),
+    "dynamic_stress.png": (
+        "动态局部重插压力测试",
+        "结论上，局部重插能够快速处理一部分单事件扰动，但不同样本的距离变化和响应时间存在明显差异。"
+        "图中三组分布分别刻画路线增量、晚到变化和计算耗时，尾部样本提示车辆故障或新增订单可能超出单任务邻域的修复能力。"
+        "该实验是独立事件压力测试，不代表连续多事件系统的长期最优表现。",
+    ),
+    "robustness_diagnostics.png": (
+        "随机交通稳健性",
+        "结论上，固定路线在随机交通下的时间窗率、晚到量和总成本均出现分布扩散，平均表现不能覆盖尾部运营风险。"
+        "三幅直方图及分位参考线共同给出服务、延误和经济指标的波动范围，说明排班时应为不利交通情景预留缓冲。"
+        "这里检验的是既定路线的抗扰动性，并未重新求解随机规划模型。",
+    ),
+    "service_diagnostics.png": (
+        "服务与线路资源诊断",
+        "结论上，路线间载重利用率差异高于容积利用率差异，晚到任务还呈现右侧长尾，服务风险集中在少数困难任务。"
+        "图中三组分布把车辆资源使用与违约强度放在同一视角下，可据此识别需要重新分组或预留时窗缓冲的线路。"
+        "诊断结果用于定位瓶颈，不能由总体服务率直接替代。",
+    ),
 }
 
 
@@ -197,10 +231,17 @@ def build(source_state: Path, data_dir: Path, out: Path) -> None:
     if latex_delta.get("errors"):
         raise RuntimeError("；".join(latex_delta["errors"]))
     total_pages, body_pages, nonempty_pages, body_chars = _pdf_body_metrics(out / "paper.pdf")
-    if body_pages < 20 or nonempty_pages != body_pages or body_chars < 15000:
+    minimum_pages = _minimum_paper_body_pages()
+    minimum_chars = _minimum_paper_body_chars()
+    if (
+        body_pages < minimum_pages
+        or nonempty_pages != body_pages
+        or body_chars < minimum_chars
+    ):
         raise RuntimeError(
             "论文篇幅门禁失败："
-            f"total={total_pages}, body={body_pages}, nonempty={nonempty_pages}, chars={body_chars}"
+            f"total={total_pages}, body={body_pages}, nonempty={nonempty_pages}, "
+            f"chars={body_chars}, minimum_pages={minimum_pages}, minimum_chars={minimum_chars}"
         )
     (out / "final_state.json").write_text(state.model_dump_json(indent=2), encoding="utf-8")
     print(main_result.stdout, end="")

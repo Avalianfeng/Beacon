@@ -34,10 +34,22 @@ _STEP_LABELS = {
 _STEP_GUIDANCE = {
     "motivation": "为什么选择这个模型族？与题目结构的对应关系是什么？相比朴素模型有何优势？",
     "math_statement": "给出模型族的严格数学形式化（含下标、求和、条件），用 LaTeX。",
-    "param_estimation": "参数如何估计？MLE / 矩估计 / 贝叶斯？给出目标函数或估计方程。",
-    "constraints": "从模型性质（定常性 / 可解性 / 稳定性）推导出参数约束条件。",
-    "transformation": "等价变换：是否能化为 Markov 形式 / 状态空间 / 标准型？给出变换式。",
-    "solution": "如何求解？解析解 / 数值方法 / 滤波递推？给出求解公式或算法步骤。",
+    "param_estimation": (
+        "逐项区分题面给定、由附件计算和确实需要估计的参数。题面已给参数直接引用，"
+        "不得另造经验值；若无需统计估计，应明确写“无需估计”并给出数据预处理公式。"
+    ),
+    "constraints": (
+        "推导容量、守恒、时间递推、资源库存和政策可行性条件。若采用启发式判定，"
+        "给出可执行谓词或伪代码，不得用不完整的大 M/SOS2 公式冒充精确线性化。"
+    ),
+    "transformation": (
+        "给出与实际求解器一致的计算表示，如客户需求任务化、路线序列递推、"
+        "增量成本或邻域操作；只有确有必要时才引入 Markov/状态空间，不能强行套用。"
+    ),
+    "solution": (
+        "给出与最终实现一致的算法步骤、停止条件、复杂度和可行性复检；"
+        "启发式只能称为可行/改进解，不得虚称全局最优或未实际使用的商业求解器。"
+    ),
 }
 
 
@@ -60,6 +72,8 @@ def build_derivation_prompt(model: ModelVersion, step_kind: str,
         f"# 模型\n{model.description}\n\n方程：{'; '.join(model.equations)}\n\n"
         f"# 已完成推导步骤\n{prev}\n\n"
         f"# 当前步骤：{label}\n{guidance}\n\n"
+        f"当前步骤只能解释或推导上方模型，不能引入模型方程/变量表中不存在的新符号、"
+        f"新数据或另一套求解方法；若发现模型本身缺项，应在 result 中明确指出而不是自行编造。\n\n"
         f"请输出 JSON：{{\"title\": str, \"motivation\": str, \"statement\": str, \"result\": str}}。"
         f"title 用简短中文标签，statement 含 inline LaTeX，result 给出推导结论。"
     )
@@ -75,7 +89,9 @@ def build_consistency_prompt(model: ModelVersion,
     return (
         f"# 模型\n{model.description}\n\n方程：{'; '.join(model.equations)}\n\n"
         f"# 完整推导链\n{chain}\n\n"
-        f"请审查上述推导链的逻辑连贯性：步骤间是否有矛盾？假设是否一致？结论是否由前提推出？\n"
+        f"请审查上述推导链的逻辑连贯性：步骤间是否有矛盾？假设是否一致？结论是否由前提推出？"
+        f"是否另造题面参数、变量或求解器？是否把启发式虚称为精确最优？"
+        f"所有线性化/递推/可行性谓词是否完整且与主模型一致？\n"
         f"请输出 JSON：{{\"coherent\": bool, \"issues\": [str, ...]}}。"
         f"coherent=true 表示逻辑连贯；issues 列出发现的问题（为空则 coherent=true）。"
     )

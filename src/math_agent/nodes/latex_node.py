@@ -8,10 +8,11 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from math_agent.nodes.latex_transform import (
     _prepare_section, _prepare_inline_text, _prepare_title, _gmcm_bibliography,
 )
+from math_agent.nodes.figure_placement import group_figures, interleave_figures
 from math_agent.nodes.rendering import (
     _curate_code, _curate_stdout, _latex_path, _truncate_caption, _latex_plain_text,
 )
-from math_agent.nodes.sensitivity import _render_verified_figure
+from math_agent.nodes.sensitivity import _render_verified_figure, formal_sensitivity_runs
 from math_agent.nodes.writer import render_markdown, _has_green_safe_solver
 from math_agent.state import FigureArtifact, MathModelingState, PaperSections, SensitivityRun
 from math_agent.tools.latex_compile import compile_latex
@@ -23,10 +24,7 @@ _env = Environment(loader=FileSystemLoader(_TEMPLATE_DIR), autoescape=select_aut
 
 def _latest_sensitivity_runs(state: MathModelingState) -> list[SensitivityRun]:
     """Select the newest formal run per parameter from append-only history."""
-    latest: dict[str, SensitivityRun] = {}
-    for run in state.sensitivity_runs:
-        latest[run.parameter] = run
-    return list(latest.values())
+    return formal_sensitivity_runs(state)
 
 
 def _formal_figures(
@@ -36,7 +34,7 @@ def _formal_figures(
     artifact_paths = {
         str(Path(path).resolve())
         for artifact in state.latest_code_artifacts()
-        if artifact.success and artifact.evidence_role in {"primary", "supporting"}
+        if artifact.success and artifact.evidence_role == "primary"
         for path in artifact.artifact_paths
     }
     sensitivity_history_paths = {
@@ -48,6 +46,8 @@ def _formal_figures(
     for figure in state.figures:
         path = str(Path(figure.path).resolve())
         if path in sensitivity_history_paths:
+            continue
+        if _has_green_safe_solver(state) and Path(path).stem.casefold() == "algorithm_flow":
             continue
         if not artifact_paths or path in artifact_paths:
             by_path[path] = figure
@@ -64,10 +64,56 @@ def _formal_figures(
         figures.append(FigureArtifact(
             path=run.figure_path,
             purpose=f"敏感性分析：{run.parameter}",
-            caption=f"{run.parameter}的单因素敏感性结果",
-            analysis="",
+            caption=(
+                "速度比例与限行开始时刻的3×3二维敏感性"
+                if "二维组合编码" in run.parameter
+                else f"{run.parameter}的单因素敏感性结果"
+            ),
+            analysis=_sensitivity_figure_analysis(run),
         ))
     return figures
+
+
+def _sensitivity_figure_analysis(run: SensitivityRun) -> str:
+    """只由扫描数组生成可复核图解，不引入图外数值。"""
+    if not run.values or not run.results or len(run.values) != len(run.results):
+        return "该图用于核对参数扰动与评价指标的对应关系；由于扫描数组不完整，本文不据此判断变化方向。"
+    if "二维组合编码" in run.parameter and len(run.results) == 9:
+        matrix = [
+            run.results[row * 3:(row + 1) * 3]
+            for row in range(3)
+        ]
+        interaction = (
+            (matrix[2][2] - matrix[2][0])
+            - (matrix[0][2] - matrix[0][0])
+        )
+        return (
+            "图的三行直接对应速度比例0.8、1.0、1.2，三列对应限行开始7、8、9时；"
+            "程序内部编码不作为读图横纵轴。中心格（1.0，8时）复现正式主方案。"
+            f"四角差分之差为 {interaction:+.2f} 元，说明限行时点的成本影响会随速度水平改变；"
+            "该结论限于本次3×3离散网格，不作区间外外推。"
+        )
+    pairs = [(float(value), float(result)) for value, result in zip(run.values, run.results)]
+    differences = [pairs[index + 1][1] - pairs[index][1] for index in range(len(pairs) - 1)]
+    if differences and all(delta >= 0 for delta in differences):
+        trend = "随参数增大总体不下降"
+    elif differences and all(delta <= 0 for delta in differences):
+        trend = "随参数增大总体不升高"
+    else:
+        trend = "在扫描区间内呈非单调变化"
+    minimum = min(pairs, key=lambda item: item[1])
+    maximum = max(pairs, key=lambda item: item[1])
+    center = pairs[len(pairs) // 2]
+    metric_name = {
+        "total_cost": "总成本", "cost": "总成本", "total_carbon": "碳排放",
+        "service_rate": "服务率", "timewin_rate": "时间窗满足率",
+    }.get(run.metric, run.metric)
+    return (
+        f"结论上，{run.parameter}对{metric_name}{trend}。图中最低值 {minimum[1]:.2f} "
+        f"出现在参数 {minimum[0]:.6g}，最高值 {maximum[1]:.2f} 出现在参数 "
+        f"{maximum[0]:.6g}，中心点为 {center[1]:.2f}。这些离散点支持局部方向判断，"
+        "但不能替代连续响应拟合或参数交互检验。"
+    )
 
 
 def _refresh_verified_cost_figure(state: MathModelingState, figures: list[FigureArtifact]) -> None:
@@ -134,6 +180,82 @@ def _verified_comparison_figure(
     import numpy as np
 
     upper_bound = infer_entity_upper_bound(state.data_files)
+    primary = next((
+        artifact for artifact in reversed(state.latest_code_artifacts())
+        if artifact.success
+        and artifact.evidence_role == "primary"
+        and "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in artifact.code
+    ), None)
+
+    # 绿色物流题的正文核心比较是 Q1 无政策与 Q2 限行政策。两行来自同一主
+    # artifact、同一数据和同一成本口径，比把实现控制组误写成独立算法更有解释力。
+    if primary is not None:
+        q1_match = re.search(
+            r"(?m)^SCENARIO_Q1:\s*baseline=no_policy\s+(.+)$",
+            primary.stdout,
+        )
+        q2_match = re.search(
+            r"(?m)^RESULT:\s*baseline=ours\s+(.+)$",
+            primary.stdout,
+        )
+        if q1_match and q2_match:
+            scenario_rows = []
+            for label, match in (("Q1 无政策", q1_match), ("Q2 限行政策", q2_match)):
+                values = {
+                    item.group(1): float(item.group(2))
+                    for item in re.finditer(
+                        r"([A-Za-z_][\w]*)=(-?\d+(?:\.\d+)?)",
+                        match.group(1),
+                    )
+                }
+                scenario_rows.append((label, values))
+            if all(
+                row.get("total_cost", 0.0) > 0
+                and row.get("total_carbon", 0.0) > 0
+                for _, row in scenario_rows
+            ):
+                labels = [label for label, _ in scenario_rows]
+                costs = [row["total_cost"] for _, row in scenario_rows]
+                carbons = [row["total_carbon"] for _, row in scenario_rows]
+                timewins = [100.0 * row.get("timewin_rate", 0.0) for _, row in scenario_rows]
+                colors = ["#4C78A8", "#E45756"]
+                plt.rcParams["font.sans-serif"] = [
+                    "Microsoft YaHei", "SimHei", "DejaVu Sans",
+                ]
+                plt.rcParams["axes.unicode_minus"] = False
+                fig, axes = plt.subplots(1, 3, figsize=(12, 4.2), dpi=180)
+                for ax, values, title, ylabel, fmt in (
+                    (axes[0], costs, "总成本", "元", "{:.0f}"),
+                    (axes[1], carbons, "碳排放", "kg CO2", "{:.0f}"),
+                    (axes[2], timewins, "时间窗满足率", "%", "{:.1f}"),
+                ):
+                    bars = ax.bar(labels, values, color=colors, width=0.62)
+                    ax.set_title(title)
+                    ax.set_ylabel(ylabel)
+                    ax.grid(axis="y", alpha=0.2)
+                    for bar, value in zip(bars, values):
+                        ax.text(
+                            bar.get_x() + bar.get_width() / 2,
+                            bar.get_height(),
+                            fmt.format(value),
+                            ha="center", va="bottom", fontsize=9,
+                        )
+                fig.suptitle("绿色区限行政策前后的同口径方案比较", fontsize=15)
+                fig.tight_layout()
+                target = workdir / "policy_scenario_comparison.png"
+                fig.savefig(target, dpi=240, bbox_inches="tight", facecolor="white")
+                plt.close(fig)
+                return FigureArtifact(
+                    path=str(target),
+                    purpose="问题一与问题二的政策情景比较",
+                    caption="无政策与绿色区限行政策下的成本、碳排放和时间窗满足率",
+                    analysis=(
+                        "两组指标由同一正式主程序分别关闭和开启绿色区限行后重新求解得到。"
+                        "图中差值描述本次启发式可行解在政策开关前后的变化，不代表政策的"
+                        "统计因果效应，也不构成全局最优性证明。"
+                    ),
+                )
+
     rows: list[tuple[str, dict[str, float]]] = []
     for artifact in state.latest_code_artifacts():
         if not artifact.success or artifact.evidence_role not in {"primary", "baseline"}:
@@ -201,9 +323,52 @@ def _verified_comparison_figure(
         caption="主方案与三类同口径基线的成本、碳排放和时间窗率比较",
         analysis=(
             "总成本和碳排放采用主方案归一化指数，时间窗率保留百分比。"
-            "图中数值全部由通过门禁的正式 RESULT 行计算；指数只用于消除量纲差异，"
-            "不能替代原始结果表，也不构成统计显著性检验。"
+            "比较结果表明，不同方案在经济、环境和服务指标上的优劣并不完全一致，"
+            "因此不能只凭单一成本柱高判断综合表现。指数只用于消除量纲差异，"
+            "应与原始结果表联合阅读，也不构成统计显著性检验。"
         ),
+    )
+
+
+def _numbered_references(value: str) -> str:
+    """把同一行或多行的 ``[n]`` 文献整理为紧凑编号列表。"""
+    import re
+
+    matches = list(re.finditer(r"(?<!\w)\[(\d+)\]\s*", value or ""))
+    if not matches:
+        return value
+    items: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(value)
+        content = value[match.end():end].strip()
+        if content:
+            items.append(content)
+    if not items:
+        return value
+    body = "\n".join(f"\\item {item}" for item in items)
+    return (
+        "\\begin{enumerate}\n"
+        "\\renewcommand{\\labelenumi}{[\\arabic{enumi}]}\n"
+        "\\setlength{\\itemsep}{0.15em}\n"
+        "\\setlength{\\parsep}{0pt}\n"
+        f"{body}\n"
+        "\\end{enumerate}"
+    )
+
+
+def _green_publication_stdout(value: str) -> str:
+    """把绿色物流结构化证据整理为论文附录中的中文摘要。"""
+    curated = _curate_stdout(value)
+    replacements = {
+        "Cross Route Search": "跨路线交换",
+        "evaluated moves": "已评估候选",
+        "swaps": "交换次数",
+    }
+    for source, target in replacements.items():
+        curated = curated.replace(source, target)
+    return "\n".join(
+        line for line in curated.splitlines()
+        if line.strip() and not line.strip().casefold().startswith("scenario end")
     )
 
 
@@ -247,6 +412,39 @@ def latex_node(state: MathModelingState) -> dict:
         k: _prepare_section(v) if isinstance(v, str) else v
         for k, v in state.paper.model_dump().items()
     })
+    grouped_figures = group_figures(safe_figures)
+    figure_number = 0
+
+    def _latex_figure(figure: FigureArtifact) -> str:
+        nonlocal figure_number
+        figure_number += 1
+        analysis = figure.analysis.strip() or (
+            f"该图呈现{figure.purpose}。图中信息用于辅助核对对应模型与计算结果；"
+            "在缺少进一步数值分解时，不据此扩展新的定量结论。"
+        )
+        return (
+            "\\begin{figure}[!htbp]\n"
+            "\\centering\n"
+            f"\\includegraphics[width=0.75\\linewidth]{{{figure.path}}}\n"
+            f"\\caption{{{figure.caption or figure.purpose}}}\n"
+            f"\\label{{fig:{figure_number}}}\n"
+            "\\begin{minipage}{0.92\\linewidth}\n"
+            "\\small\n"
+            f"\\noindent\\textbf{{图示结论：}}{analysis}\n"
+            "\\end{minipage}\n"
+            "\\end{figure}\n\n"
+        )
+
+    for field, field_figures in grouped_figures.items():
+        if not field_figures:
+            continue
+        setattr(
+            safe_paper,
+            field,
+            interleave_figures(
+                getattr(safe_paper, field), field_figures, _latex_figure, latex=True,
+            ),
+        )
     safe_sens = [
         SensitivityRun(
             parameter=_latex_plain_text(r.parameter) or "",
@@ -276,6 +474,8 @@ def latex_node(state: MathModelingState) -> dict:
     tmpl_name = "gmcm.tex.j2" if use_gmcm else "paper.tex.j2"
     if use_gmcm:
         safe_paper.references = _gmcm_bibliography(safe_paper.references)
+    else:
+        safe_paper.references = _numbered_references(safe_paper.references)
 
     upper_bound = infer_entity_upper_bound(state.data_files)
     primary_artifacts = [
@@ -296,12 +496,25 @@ def latex_node(state: MathModelingState) -> dict:
         # 标题保留数学段，并完整转义纯文本字符。
         problem=_prepare_title(title_line),
         paper=safe_paper, figures=safe_figures, sensitivity_runs=safe_sens,
+        appendix_title=(
+            "计算证据摘要" if _has_green_safe_solver(state) else "关键算法代码"
+        ),
         code_artifacts=[
             {
-                "purpose": _prepare_inline_text(a.purpose), "code": a.code, "stdout": a.stdout,
+                "purpose": _prepare_inline_text(
+                    "主方案结构化运行结果"
+                    if _has_green_safe_solver(state) else a.purpose
+                ),
+                "code": a.code, "stdout": a.stdout,
                 "success": a.success, "artifact_paths": a.artifact_paths,
-                "curated_code": _curate_code(a.code, max_lines=55),
-                "curated_stdout": _curate_stdout(a.stdout),
+                "curated_code": (
+                    "" if _has_green_safe_solver(state)
+                    else _curate_code(a.code, max_lines=55)
+                ),
+                "curated_stdout": (
+                    _green_publication_stdout(a.stdout)
+                    if _has_green_safe_solver(state) else _curate_stdout(a.stdout)
+                ),
             }
             for a in primary_artifacts
         ],

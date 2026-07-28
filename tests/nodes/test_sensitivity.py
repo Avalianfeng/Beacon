@@ -295,6 +295,87 @@ def test_sensitivity_interpret_node_falls_back_for_missing_entries(mocker, workd
     assert "参数 beta" in delta["sensitivity_runs"][1].interpretation
 
 
+def test_interaction_sensitivity_renders_heatmap_and_reports_difference_in_differences(workdir):
+    from math_agent.nodes.sensitivity import (
+        _interaction_interpretation,
+        _render_verified_figure,
+    )
+
+    run = SensitivityRun(
+        parameter="速度比例×限行开始时刻二维组合编码",
+        values=[8007, 8008, 8009, 10007, 10008, 10009, 12007, 12008, 12009],
+        metric="Z",
+        results=[100, 98, 97, 96, 95, 94, 93, 91, 90],
+    )
+
+    interpretation = _interaction_interpretation(run)
+    path = _render_verified_figure(run, workdir)
+
+    assert "四角差分之差" in interpretation
+    assert "3×3" in interpretation
+    assert Path(path).exists()
+    assert Path(path).stat().st_size > 1000
+
+
+def test_green_formal_sensitivity_requires_nine_points_and_exact_center():
+    from math_agent.nodes.sensitivity import formal_sensitivity_issues
+    from math_agent.state import CodeArtifact
+
+    state = MathModelingState(problem="A题：城市绿色物流配送调度")
+    state.code_artifacts.append(CodeArtifact(
+        purpose="main",
+        code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+        success=True,
+        evidence_role="primary",
+        stdout="RESULT: baseline=ours total_cost=100 service_rate=1",
+    ))
+    run = SensitivityRun(
+        parameter="速度比例×限行开始时刻二维组合编码",
+        values=[8007, 8008, 8009, 10007, 10008, 10009, 12007, 12008, 12009],
+        metric="Z",
+        results=[110, 108, 106, 104, 100, 96, 98, 94, 90],
+    )
+    state.sensitivity_runs = [run]
+    state.sensitivity_formal_parameters = [run.parameter]
+
+    assert formal_sensitivity_issues(state) == []
+
+    state.sensitivity_runs = [run.model_copy(update={
+        "values": run.values[:2],
+        "results": run.results[:2],
+    })]
+    assert any("9 个网格点" in issue for issue in formal_sensitivity_issues(state))
+
+    state.sensitivity_runs = [run.model_copy(update={
+        "values": list(reversed(run.values)),
+    })]
+    assert any("固定顺序编码" in issue for issue in formal_sensitivity_issues(state))
+
+    state.sensitivity_runs = [run.model_copy(update={
+        "results": [110, 108, 106, 104, 101, 96, 98, 94, 90],
+    })]
+    assert any("基准点口径不一致" in issue for issue in formal_sensitivity_issues(state))
+
+
+def test_canonical_replay_decodes_two_factor_grid_parameter():
+    from math_agent.nodes.sensitivity import _build_canonical_replay_code
+
+    plan = SensitivityPlan(runs=[{
+        "parameter": "速度比例×限行开始时刻二维组合编码",
+        "values": [8007, 10008, 12009],
+        "metric": "Z",
+    }])
+    code = _build_canonical_replay_code(
+        plan,
+        "SPEED_SCALE = 1.0\nBAN_START = 480.0\n"
+        "print('RESULT: baseline=ours total_cost=1')\n",
+    )
+
+    compile(code, "<interaction-replay>", "exec")
+    assert "speed_scale = (encoded // 1000) / 10.0" in code
+    assert "restriction_hour = encoded % 1000" in code
+
+
 def test_sensitivity_code_prompt_includes_data_paths():
     from math_agent.state import DataFileInfo
     from math_agent.prompts.sensitivity import build_code_prompt

@@ -312,6 +312,9 @@ class MathModelingState(BaseModel):
     code_artifacts: Annotated[list[CodeArtifact], add] = Field(default_factory=list)
     critic_reports: Annotated[list[CriticReport], add] = Field(default_factory=list)
     sensitivity_runs: Annotated[list[SensitivityRun], add] = Field(default_factory=list)
+    # 当前正式敏感性计划的参数顺序（覆盖语义）。sensitivity_runs 为追加历史，
+    # 下游只应选这里声明的参数各自最新一轮，避免旧计划的独有参数重新进入论文。
+    sensitivity_formal_parameters: list[str] = Field(default_factory=list)
     figures: Annotated[list[FigureArtifact], add] = Field(default_factory=list)
     # 模型-代码一致性报告（追加语义；一致性节点每次 retry 追加一份）
     model_code_reports: Annotated[list[ModelCodeConsistencyReport], add] = Field(default_factory=list)

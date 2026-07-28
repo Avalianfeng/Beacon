@@ -70,9 +70,15 @@ def _ready_state(workdir) -> MathModelingState:
         results=[75, 80, 86],
     )]
     state.model_code_reports = [ModelCodeConsistencyReport(score=8, approved=True)]
-    state.critic_reports = [CriticReport(
-        target="paper", score=8, approved=True, issues=[], suggestions=[],
-    )]
+    state.critic_reports = [
+        CriticReport(
+            target="modeler", stage="final", score=8, approved=True,
+            issues=[], suggestions=[],
+        ),
+        CriticReport(
+            target="paper", score=9, approved=True, issues=[], suggestions=[],
+        ),
+    ]
     (workdir / "paper.md").write_text("# paper\n", encoding="utf-8")
     (workdir / "paper.tex").write_text("\\documentclass{article}", encoding="utf-8")
     pdf = fitz.open()
@@ -208,6 +214,18 @@ def test_finalizer_surfaces_all_quality_gate_failures(workdir):
     assert "结果正确性=2" in joined
 
 
+def test_finalizer_rejects_baseline_with_mixed_result_roles(workdir):
+    state = _ready_state(workdir)
+    state.code_artifacts[1].stdout += (
+        "\nRESULT: baseline=ours total_cost=1 service_rate=1 vehicles=1"
+    )
+
+    report = finalizer_node(state)["finalization"]
+
+    assert report.status == "degraded"
+    assert any("有效对照方案仅 1 个" in warning for warning in report.warnings)
+
+
 def test_finalizer_marks_severe_latex_overflow_degraded(workdir):
     state = _ready_state(workdir)
     (workdir / "compile.log").write_text(
@@ -232,7 +250,7 @@ def test_finalizer_marks_short_competition_paper_body_degraded(workdir):
     report = finalizer_node(state)["finalization"]
 
     assert report.status == "degraded"
-    assert any("正文页数 8" in warning and "至少需要 20 页" in warning
+    assert any("正文页数 8" in warning and "至少需要 12 页" in warning
                for warning in report.warnings)
 
 
@@ -288,3 +306,26 @@ def test_finalizer_rejects_stale_sensitivity_history_in_paper(workdir):
     assert report.status == "degraded"
     assert any("历史敏感性解释" in warning for warning in report.warnings)
     assert any("历史敏感性图" in warning for warning in report.warnings)
+
+
+def test_finalizer_does_not_flag_same_deterministic_path_reused_by_latest_run(workdir):
+    state = _ready_state(workdir)
+    shared_figure = workdir / "same-parameter.png"
+    state.sensitivity_runs = [
+        SensitivityRun(
+            parameter="penalty", values=[.5, 1, 1.5], metric="cost",
+            results=[90, 100, 110], interpretation="旧解释但图路径被原子覆盖。",
+            figure_path=str(shared_figure),
+        ),
+        SensitivityRun(
+            parameter="penalty", values=[.5, 1, 1.5], metric="cost",
+            results=[95, 100, 105], interpretation="当前解释。",
+            figure_path=str(shared_figure),
+        ),
+    ]
+    state.sensitivity_formal_parameters = ["penalty"]
+    (workdir / "paper.md").write_text(str(shared_figure), encoding="utf-8")
+
+    report = finalizer_node(state)["finalization"]
+
+    assert not any("历史敏感性图" in warning for warning in report.warnings)

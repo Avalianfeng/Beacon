@@ -52,10 +52,10 @@ def test_after_paper_critic_retries_when_below_threshold_and_iter_left():
     assert after_paper_critic(s) == "retry"
 
 
-def test_after_paper_critic_advances_when_iter_cap_hit():
+def test_after_paper_critic_stops_when_iter_cap_hit():
     from math_agent.config import MAX_WRITER_ITERATIONS
     s = _state_with_paper_critic(score=4, approved=False, writer_iter=MAX_WRITER_ITERATIONS)
-    assert after_paper_critic(s) == "advance"
+    assert after_paper_critic(s) == "stop"
 
 
 def test_after_paper_critic_retries_when_no_critic():
@@ -130,7 +130,7 @@ def test_consistency_retries_when_approved_but_low_score():
     assert after_model_code_consistency(s) == "retry_coder"
 
 
-def test_consistency_advances_with_warning_at_cap():
+def test_consistency_stops_at_cap():
     from math_agent.config import MAX_CODE_VERIFY_ITERATIONS
     from math_agent.state import CodeArtifact
     s = _state_with_consistency_report(approved=False, score=4, iteration=MAX_CODE_VERIFY_ITERATIONS)
@@ -138,7 +138,7 @@ def test_consistency_advances_with_warning_at_cap():
         purpose="primary", code="print(1)", success=True,
         evidence_role="primary", batch=1,
     ))
-    assert after_model_code_consistency(s) == "advance_with_warning"
+    assert after_model_code_consistency(s) == "stop"
 
 
 def test_consistency_never_advances_without_primary_even_at_cap():

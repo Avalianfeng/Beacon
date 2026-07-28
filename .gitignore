@@ -33,6 +33,7 @@ corpus/papers/
 .superpowers/
 .zcode/
 tmp/
+tmp-tectonic-*/
 nul
 *preview_diff*
 *.log

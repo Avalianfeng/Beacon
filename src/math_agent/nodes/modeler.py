@@ -4,7 +4,6 @@ from math_agent.llm import complete
 from math_agent.config import (
     MODEL_ROUTING, RAG_ENABLED, RAG_DB_PATH, RAG_EMBEDDING_MODEL,
     RAG_EMBEDDING_DIM, RAG_TOPK, RAG_CTX_MAX_CHARS_MODELER,
-    MAX_MODEL_ITERATIONS,
 )
 from math_agent.prompts.modeler import SYSTEM, build_prompt
 from math_agent.prompts.modeler_derivation import (
@@ -15,6 +14,15 @@ from math_agent.rag.retrieve import search, format_snippets
 from math_agent.state import MathModelingState, ModelVersion, DerivationStep
 
 logger = logging.getLogger(__name__)
+
+_STAGE_MAX_TOKENS = {
+    "basic": 2600,
+    "improved": 3800,
+    # 目标赛题的 final JSON 含 20+ 方程、三问映射和图表任务；5000 token
+    # 已在真实运行中截断于字符串中部。6000 仍显著低于早期 6400 的超时风险，
+    # 同时给结构化 JSON 留出完整闭合空间。
+    "final": 6000,
+}
 
 
 def _build_model_draft(state: MathModelingState) -> ModelVersion | None:
@@ -39,6 +47,7 @@ def _build_model_draft(state: MathModelingState) -> ModelVersion | None:
         build_prompt(state.problem, state.assumptions, prev_for_stage, state.stage_target,
                      critic_fb, retrieved_context=ctx, blueprint=state.problem_blueprint),
         schema=ModelVersion, system=SYSTEM, model=MODEL_ROUTING["modeler"], profile="long",
+        max_tokens=_STAGE_MAX_TOKENS[state.stage_target],
     )
     out.stage = state.stage_target
     return out
@@ -50,14 +59,9 @@ def modeler_prepare_node(state: MathModelingState) -> dict:
     if out is None:
         return {"errors": ["modeler: missing problem_blueprint"], "modeler_phase": "done"}
 
-    # final 阶段最后一轮达到预算上限时，直接进入 model_critic，避免再花整轮 derivation 成本。
-    if out.stage != "final" or state.iteration + 1 >= MAX_MODEL_ITERATIONS:
-        if out.stage == "final" and state.iteration + 1 >= MAX_MODEL_ITERATIONS:
-            note = "末轮迭代已达到建模预算上限，跳过 derivation 子流程，直接进入最终评审。"
-            out.derivation_notes = (
-                (out.derivation_notes + "；" + note).strip("；")
-                if out.derivation_notes else note
-            )
+    # basic / improved 不运行昂贵的逐步推导；final 的每一轮（包括末轮）都必须完成
+    # 推导与一致性检查。质量不能在预算将尽时反而降低。
+    if out.stage != "final":
         return {
             "model_versions": [out], "iteration": state.iteration + 1,
             "modeler_phase": "done", "modeler_draft": None,
@@ -145,6 +149,7 @@ def modeler_node(state: MathModelingState) -> dict:
     out: ModelVersion = complete(
         prompt, schema=ModelVersion, system=SYSTEM,
         model=MODEL_ROUTING["modeler"], profile="long",
+        max_tokens=_STAGE_MAX_TOKENS[state.stage_target],
     )
     out.stage = state.stage_target
 

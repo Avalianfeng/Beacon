@@ -61,6 +61,20 @@ uv run python scripts/run_real_full_pipeline.py --out runs/real-full --thread re
 同一输出目录具有操作系统级 worker 锁和 supervisor 锁。CLI、Web UI 或两个 Agent
 同时启动同一任务时，只有一个 worker 能修改 checkpoint；`run --force` 的清理也在锁内执行。
 
+### 离线应急模式
+
+常规运行不要设置 `MATH_AGENT_WRITER_DETERMINISTIC` 或 `MATH_AGENT_OFFLINE_REVIEW`。
+只有远程写作或评审不可用、且当前题目已有完整本地证据契约时，才可显式设置：
+
+```powershell
+$env:MATH_AGENT_WRITER_DETERMINISTIC='1'
+$env:MATH_AGENT_OFFLINE_REVIEW='1'
+```
+
+前者使用确定性事实稿；后者只在论文评审或量化评价抛出 `LLMError` 后执行离线证据审查。
+离线审查重新核对上游评分、主方案、独立基线、敏感性和动态边界，不复用历史分数。当前完整
+契约只覆盖城市绿色物流事实稿，其他题目应保持关闭并让远程评审故障显式失败。
+
 ## 9router 与 Beacon 的重试边界
 
 9router 已经负责上游网络重试，Beacon 不再对普通 5xx 叠加五轮重试：
@@ -76,13 +90,14 @@ uv run python scripts/run_real_full_pipeline.py --out runs/real-full --thread re
 建议在 `.env` 中使用新变量，避免旧的 1800 秒统一超时掩盖问题：
 
 ```dotenv
-MATH_AGENT_LLM_ATTEMPT_TIMEOUT=300
-MATH_AGENT_LLM_TOTAL_TIMEOUT=420
-MATH_AGENT_LLM_LONG_ATTEMPT_TIMEOUT=420
-MATH_AGENT_LLM_LONG_TOTAL_TIMEOUT=600
+MATH_AGENT_LLM_ATTEMPT_TIMEOUT=120
+MATH_AGENT_LLM_TOTAL_TIMEOUT=300
+MATH_AGENT_LLM_LONG_ATTEMPT_TIMEOUT=240
+MATH_AGENT_LLM_LONG_TOTAL_TIMEOUT=420
 MATH_AGENT_LLM_VALIDATION_REPAIRS=2
 ```
 
+以上数值与 `.env.example` 的当前建议值一致；实际值以运行环境和 `src/math_agent/llm.py` 为准。
 这些值限制的是单个微步骤；完整流程可以运行数小时，不需要给整个流程设置一个巨大超时。
 
 ## 恢复保护

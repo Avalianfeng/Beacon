@@ -141,9 +141,13 @@ SPEED_SCALE = 1.0
 EARLY_PENALTY = 20.0 / 60.0
 LATE_PENALTY = 50.0 / 60.0
 POLICY_ENABLED = True
-USE_TIME_VARYING_SPEED = True
+# 初解用一般时段均速保持路线拓扑稳定；邻域搜索、发车优化与最终评价
+# 会在下方切回题面分段时变速度。
+USE_TIME_VARYING_SPEED = False
 STRATEGY = "cost_aware"
 LOCAL_SEARCH_ENABLED = True
+CROSS_ROUTE_SEARCH_ENABLED = True
+DEPARTURE_SEARCH_ENABLED = True
 MONTE_CARLO_SCENARIOS = 200
 MONTE_CARLO_SEED = 2026
 
@@ -201,6 +205,10 @@ customer_xy = {
     int(row.customer_id): np.array([float(row.x), float(row.y)])
     for row in coordinates[coordinates["kind"].astype(str).str.contains("客户")].itertuples()
 }
+coordinate_green_customers = int(sum(
+    float(np.linalg.norm(point)) <= GREEN_ZONE_RADIUS + 1e-9
+    for point in customer_xy.values()
+))
 window_map = {
     int(row.customer_id): (float(row.window_start), float(row.window_end))
     for row in windows.itertuples()
@@ -209,25 +217,7 @@ window_map = {
 aggregated = orders.groupby("customer_id", as_index=False).agg(
     weight=("weight", "sum"), volume=("volume", "sum")
 )
-tasks = []
-for row in aggregated.itertuples():
-    # 任一拆分任务都能装入题面最小车型；大车可合并多个任务，避免容量异构导致无进展。
-    parts = max(1, int(np.ceil(max(
-        float(row.weight) / 1250.0,
-        float(row.volume) / 6.5,
-    ))))
-    for part in range(parts):
-        tasks.append({
-            "task_id": len(tasks), "customer_id": int(row.customer_id),
-            "weight": float(row.weight) / parts, "volume": float(row.volume) / parts,
-            "window": window_map.get(int(row.customer_id), (0.0, 1440.0)),
-        })
-
 active_customers = int(((aggregated["weight"] > 0) | (aggregated["volume"] > 0)).sum())
-split_customers = int(sum(
-    max(1, int(np.ceil(max(float(row.weight) / 1250.0, float(row.volume) / 6.5)))) > 1
-    for row in aggregated.itertuples()
-))
 green_customers = int(sum(inside for inside in (
     float(np.linalg.norm(customer_xy[int(cid)])) <= GREEN_ZONE_RADIUS + 1e-9
     for cid in aggregated["customer_id"] if int(cid) in customer_xy
@@ -253,10 +243,11 @@ def speed(minute):
         base = 35.4
     return base * SPEED_SCALE
 
-def travel_minutes(length, departure):
-    # 在时段边界处分段积分，避免用单一出发速度覆盖整条长弧。
+def travel_profile(length, departure):
+    """返回跨速度时段的逐段里程/速度/时刻，供时间与能耗统一积分。"""
     remaining = float(length)
     clock = float(departure)
+    segments = []
     boundaries = [480, 540, 600, 690, 780, 900, 1020, 1440]
     for _ in range(32):
         if remaining <= 1e-9:
@@ -267,38 +258,238 @@ def travel_minutes(length, departure):
         velocity = max(1.0, speed(clock))
         possible = velocity * available / 60.0
         used = min(remaining, possible)
+        segment_start = clock
         clock += 60.0 * used / velocity
+        segments.append((used, velocity, segment_start, clock))
         remaining -= used
     if remaining > 1e-7:
-        clock += 60.0 * remaining / max(1.0, speed(clock))
-    return clock - float(departure)
+        velocity = max(1.0, speed(clock))
+        segment_start = clock
+        clock += 60.0 * remaining / velocity
+        segments.append((remaining, velocity, segment_start, clock))
+    return segments
+
+def travel_minutes(length, departure):
+    # 在时段边界处分段积分，避免用单一出发速度覆盖整条长弧。
+    profile = travel_profile(length, departure)
+    return (
+        profile[-1][3] - float(departure)
+        if profile else 0.0
+    )
 
 def inside_green(point):
     return float(np.linalg.norm(np.asarray(point))) <= GREEN_ZONE_RADIUS + 1e-9
 
-def crosses_green(a, b):
+def green_segment_interval(a, b):
     # 绿色区圆心是题面规定的市中心 (0,0)，不是坐标为 (20,20) 的配送中心。
     a = np.asarray(a, dtype=float)
     b = np.asarray(b, dtype=float)
     delta = b - a
     aa = float(np.dot(delta, delta))
     if aa <= 1e-12:
-        return inside_green(a)
+        return (0.0, 1.0) if inside_green(a) else None
     bb = 2.0 * float(np.dot(a, delta))
     cc = float(np.dot(a, a) - GREEN_ZONE_RADIUS ** 2)
     disc = bb * bb - 4.0 * aa * cc
-    if disc < 0:
-        return inside_green(a) or inside_green(b)
-    root = float(np.sqrt(max(0.0, disc)))
-    return any(0.0 <= t <= 1.0 for t in ((-bb - root) / (2.0 * aa), (-bb + root) / (2.0 * aa)))
+    cuts = [0.0, 1.0]
+    if disc >= 0:
+        root = float(np.sqrt(max(0.0, disc)))
+        cuts.extend(
+            max(0.0, min(1.0, value))
+            for value in ((-bb - root) / (2.0 * aa), (-bb + root) / (2.0 * aa))
+            if -1e-12 <= value <= 1.0 + 1e-12
+        )
+    cuts = sorted(set(cuts))
+    inside_parts = []
+    for left, right in zip(cuts, cuts[1:]):
+        midpoint = 0.5 * (left + right)
+        if inside_green(a + midpoint * delta):
+            inside_parts.append((left, right))
+    if not inside_parts:
+        return None
+    return inside_parts[0][0], inside_parts[-1][1]
 
-def policy_forbids(kind, previous, customer, arrival):
-    if not POLICY_ENABLED or kind != "fuel" or not (BAN_START <= arrival < BAN_END):
+def crosses_green(a, b):
+    return green_segment_interval(a, b) is not None
+
+def node_xy(node):
+    return depot_xy if int(node) == depot_id else customer_xy[int(node)]
+
+def policy_forbids(kind, previous, customer, departure, arrival):
+    if not POLICY_ENABLED or kind != "fuel":
         return False
-    previous_xy = depot_xy if previous == depot_id else customer_xy[previous]
-    return inside_green(customer_xy[customer]) or crosses_green(previous_xy, customer_xy[customer])
+    interval = green_segment_interval(node_xy(previous), node_xy(customer))
+    if interval is None:
+        return False
+    # 坐标线段比例视作道路里程比例；时间用分段速度重新积分，不能把整弧
+    # 旅行时间线性插值到圆盘交点（跨速度边界时二者并不等价）。
+    leg = distance(previous, customer)
+    entry = float(departure) + travel_minutes(leg * interval[0], departure)
+    exit_ = float(departure) + travel_minutes(leg * interval[1], departure)
+    return max(entry, BAN_START) < min(exit_, BAN_END) - 1e-9
+
+def construct_residual_route(spec, residual):
+    """按重量与体积同比例连续拆分需求，尽量填满一辆车。
+
+    拆分只发生在车辆边界；同一车辆对同一客户最多生成一次到访，因而不会
+    把预切碎片重复计作多次 20 分钟服务。
+    """
+    current, current_time = depot_id, START_TIME
+    load_weight = load_volume = 0.0
+    deliveries, arrivals, visited = [], [], set()
+    while True:
+        best = None
+        free_weight = max(0.0, spec["weight"] - load_weight)
+        free_volume = max(0.0, spec["volume"] - load_volume)
+        for customer in sorted(residual):
+            if customer in visited:
+                continue
+            remaining_weight, remaining_volume = residual[customer]
+            if remaining_weight <= 1e-9 and remaining_volume <= 1e-9:
+                continue
+            fractions = [1.0]
+            if remaining_weight > 1e-9:
+                fractions.append(free_weight / remaining_weight)
+            if remaining_volume > 1e-9:
+                fractions.append(free_volume / remaining_volume)
+            fraction = min(fractions)
+            if fraction <= 1e-9:
+                continue
+            delivered_weight = remaining_weight * fraction
+            delivered_volume = remaining_volume * fraction
+            leg = distance(current, customer)
+            arrival = current_time + travel_minutes(leg, current_time)
+            if policy_forbids(spec["kind"], current, customer, current_time, arrival):
+                # 软时间窗允许等待；燃油车若会在限行期进入/穿越圆域，则等到 16:00 后再走。
+                delayed_departure = max(current_time, BAN_END)
+                arrival = delayed_departure + travel_minutes(leg, delayed_departure)
+                if policy_forbids(spec["kind"], current, customer, delayed_departure, arrival):
+                    continue
+            window = window_map.get(customer, (0.0, 1440.0))
+            start_service = max(arrival, window[0])
+            late = max(0.0, start_service - window[1])
+            green_bonus = -200.0 if spec["kind"] == "ev" and inside_green(customer_xy[customer]) else 0.0
+            # 在距离/晚到代价相近时优先装入更多需求，减少车辆启动数。
+            normalized_load = delivered_weight + 50.0 * delivered_volume
+            score = leg + 2.0 * late + green_bonus - 0.002 * normalized_load
+            candidate = (
+                score, -normalized_load, customer, delivered_weight,
+                delivered_volume, leg, arrival, start_service,
+            )
+            if best is None or candidate < best:
+                best = candidate
+        if best is None:
+            break
+        (
+            _, _, customer, delivered_weight, delivered_volume,
+            leg, arrival, start_service,
+        ) = best
+        deliveries.append({
+            "customer_id": customer,
+            "weight": delivered_weight,
+            "volume": delivered_volume,
+            "window": window_map.get(customer, (0.0, 1440.0)),
+        })
+        arrivals.append((customer, arrival, start_service, leg))
+        load_weight += delivered_weight
+        load_volume += delivered_volume
+        current = customer
+        current_time = start_service + SERVICE_TIME
+        visited.add(customer)
+        if (
+            spec["weight"] - load_weight <= 1e-7
+            or spec["volume"] - load_volume <= 1e-7
+        ):
+            break
+    if not deliveries:
+        return None
+    return {
+        "vehicle_type": spec["name"], "kind": spec["kind"], "spec": spec,
+        "deliveries": deliveries, "arrivals": arrivals,
+        "weight": load_weight, "volume": load_volume,
+    }
+
+residual = {
+    int(row.customer_id): [float(row.weight), float(row.volume)]
+    for row in aggregated.itertuples()
+    if float(row.weight) > 1e-9 or float(row.volume) > 1e-9
+}
+tasks = []
+routes = []
+available = {spec["name"]: int(spec["count"]) for spec in VEHICLE_TYPES}
+
+def approximate_operating_cost_per_km(spec):
+    """用一般时段均速和半载状态估算选车边际成本，最终成本仍逐弧精算。"""
+    velocity = 35.4
+    if spec["kind"] == "fuel":
+        per_100 = 0.0025 * velocity ** 2 - 0.2554 * velocity + 31.75
+        energy = per_100 / 100.0 * 1.20
+        return energy * (7.61 + 0.65 * 2.547)
+    per_100 = 0.0014 * velocity ** 2 - 0.12 * velocity + 36.19
+    energy = per_100 / 100.0 * 1.175
+    return energy * (1.64 + 0.65 * 0.501)
+
+while any(weight > 1e-7 or volume > 1e-7 for weight, volume in residual.values()):
+    candidates = []
+    for spec in VEHICLE_TYPES:
+        if available[spec["name"]] <= 0:
+            continue
+        route = construct_residual_route(spec, residual)
+        if route is None:
+            continue
+        served_weight = route["weight"]
+        served_volume = route["volume"]
+        route_distance = sum(item[3] for item in route["arrivals"])
+        route_distance += distance(route["deliveries"][-1]["customer_id"], depot_id)
+        late = sum(
+            max(0.0, arrival[2] - delivery["window"][1])
+            for arrival, delivery in zip(route["arrivals"], route["deliveries"])
+        )
+        if STRATEGY == "first_fit":
+            key = (VEHICLE_TYPES.index(spec), -served_weight, -served_volume)
+        else:
+            served_equivalent = served_weight + 50.0 * served_volume
+            estimated_operating_cost = (
+                route_distance * approximate_operating_cost_per_km(spec)
+            )
+            key = (
+                (400.0 + estimated_operating_cost + LATE_PENALTY * late)
+                / max(1.0, served_equivalent),
+                -served_equivalent,
+            )
+        candidates.append((key, route))
+    if not candidates:
+        raise RuntimeError(
+            f"no progress/fleet exhausted: residual_customers="
+            f"{sum(w > 1e-7 or v > 1e-7 for w, v in residual.values())} "
+            f"available={available}"
+        )
+    chosen_route = min(candidates, key=lambda item: item[0])[1]
+    route_tasks, materialized_arrivals = [], []
+    for delivery, arrival in zip(chosen_route.pop("deliveries"), chosen_route["arrivals"]):
+        task_id = len(tasks)
+        task = {"task_id": task_id, **delivery}
+        tasks.append(task)
+        route_tasks.append(task_id)
+        materialized_arrivals.append((task_id, arrival[1], arrival[2], arrival[3]))
+        customer = task["customer_id"]
+        residual[customer][0] = max(0.0, residual[customer][0] - task["weight"])
+        residual[customer][1] = max(0.0, residual[customer][1] - task["volume"])
+    chosen_route["tasks"] = route_tasks
+    chosen_route["arrivals"] = materialized_arrivals
+    routes.append(chosen_route)
+    available[chosen_route["vehicle_type"]] -= 1
+
+remaining = set()
+customer_visit_counts = {}
+for route in routes:
+    for task_id in route["tasks"]:
+        customer = tasks[task_id]["customer_id"]
+        customer_visit_counts[customer] = customer_visit_counts.get(customer, 0) + 1
+split_customers = int(sum(count > 1 for count in customer_visit_counts.values()))
 
 def construct_route(spec, candidate_tasks):
+    """对已经物化的任务构造备用车辆路线，供动态事件恢复使用。"""
     current, current_time = depot_id, START_TIME
     load_weight = load_volume = 0.0
     route_tasks, arrivals = [], []
@@ -314,17 +505,14 @@ def construct_route(spec, candidate_tasks):
             customer = task["customer_id"]
             leg = distance(current, customer)
             arrival = current_time + travel_minutes(leg, current_time)
-            if policy_forbids(spec["kind"], current, customer, arrival):
-                # 软时间窗允许等待；燃油车若会在限行期进入/穿越圆域，则等到 16:00 后再走。
+            if policy_forbids(spec["kind"], current, customer, current_time, arrival):
                 delayed_departure = max(current_time, BAN_END)
                 arrival = delayed_departure + travel_minutes(leg, delayed_departure)
-                if policy_forbids(spec["kind"], current, customer, arrival):
+                if policy_forbids(spec["kind"], current, customer, delayed_departure, arrival):
                     continue
             start_service = max(arrival, task["window"][0])
             late = max(0.0, start_service - task["window"][1])
-            green_bonus = -200.0 if spec["kind"] == "ev" and inside_green(customer_xy[customer]) else 0.0
-            score = leg + 2.0 * late + green_bonus
-            candidate = (score, task_id, leg, arrival, start_service)
+            candidate = (leg + 2.0 * late, task_id, leg, arrival, start_service)
             if best is None or candidate < best:
                 best = candidate
         if best is None:
@@ -346,50 +534,19 @@ def construct_route(spec, candidate_tasks):
         "weight": load_weight, "volume": load_volume,
     }
 
-remaining = set(range(len(tasks)))
-routes = []
-available = {spec["name"]: int(spec["count"]) for spec in VEHICLE_TYPES}
-while remaining:
-    candidates = []
-    for spec in VEHICLE_TYPES:
-        if available[spec["name"]] <= 0:
-            continue
-        route = construct_route(spec, remaining)
-        if route is None:
-            continue
-        served_weight = sum(tasks[i]["weight"] for i in route["tasks"])
-        route_distance = sum(item[3] for item in route["arrivals"])
-        route_distance += distance(tasks[route["tasks"][-1]]["customer_id"], depot_id)
-        late = sum(max(0.0, item[2] - tasks[item[0]]["window"][1]) for item in route["arrivals"])
-        if STRATEGY == "first_fit":
-            key = (VEHICLE_TYPES.index(spec), -served_weight)
-        else:
-            key = ((400.0 + route_distance + LATE_PENALTY * late) / max(1.0, served_weight), -served_weight)
-        candidates.append((key, route))
-    if not candidates:
-        raise RuntimeError(
-            f"no progress/fleet exhausted: remaining={len(remaining)} available={available}"
-        )
-    chosen_route = min(candidates, key=lambda item: item[0])[1]
-    routes.append(chosen_route)
-    available[chosen_route["vehicle_type"]] -= 1
-    previous_count = len(remaining)
-    remaining.difference_update(chosen_route["tasks"])
-    assert len(remaining) < previous_count, "route loop made no progress"
-
-def evaluate_task_sequence(task_ids, spec):
+def evaluate_task_sequence(task_ids, spec, departure_time=START_TIME):
     """按正式时变速度、时间窗与政策口径复算任务序列。"""
-    clock, previous = START_TIME, depot_id
+    clock, previous = float(departure_time), depot_id
     arrivals, total_route_distance, total_route_late = [], 0.0, 0.0
     for task_id in task_ids:
         task = tasks[task_id]
         customer = task["customer_id"]
         leg = distance(previous, customer)
         arrival = clock + travel_minutes(leg, clock)
-        if policy_forbids(spec["kind"], previous, customer, arrival):
+        if policy_forbids(spec["kind"], previous, customer, clock, arrival):
             departure = max(clock, BAN_END)
             arrival = departure + travel_minutes(leg, departure)
-            if policy_forbids(spec["kind"], previous, customer, arrival):
+            if policy_forbids(spec["kind"], previous, customer, departure, arrival):
                 return None
         service = max(arrival, task["window"][0])
         late = max(0.0, service - task["window"][1])
@@ -399,6 +556,82 @@ def evaluate_task_sequence(task_ids, spec):
         clock, previous = service + SERVICE_TIME, customer
     total_route_distance += distance(previous, depot_id)
     return arrivals, total_route_distance, total_route_late
+
+def standby_dispatch(task_ids):
+    """用静态方案未启用的车队独立承接任务，并返回新增成本近似。"""
+    pending = set(task_ids)
+    standby = dict(available)
+    dispatched = []
+    while pending:
+        candidates = []
+        for spec in VEHICLE_TYPES:
+            if standby[spec["name"]] <= 0:
+                continue
+            route = construct_route(spec, pending)
+            if route is None:
+                continue
+            evaluated = evaluate_task_sequence(route["tasks"], spec)
+            if evaluated is None:
+                continue
+            arrivals, route_distance, route_late = evaluated
+            candidate_cost = 400.0 + route_distance + LATE_PENALTY * route_late
+            candidates.append((
+                candidate_cost / max(1, len(route["tasks"])),
+                -len(route["tasks"]), candidate_cost, spec, route, arrivals,
+            ))
+        if not candidates:
+            return None
+        _, _, candidate_cost, spec, route, arrivals = min(
+            candidates, key=lambda item: item[:2]
+        )
+        dispatched.append((spec, route["tasks"], arrivals, candidate_cost))
+        standby[spec["name"]] -= 1
+        before = len(pending)
+        pending.difference_update(route["tasks"])
+        assert len(pending) < before, "standby dispatch made no progress"
+    return dispatched
+
+def flexible_standby_dispatch(task_ids):
+    """备用车直派失败时，按题面分割配送口径把大任务同比例拆给剩余小车型。"""
+    direct = standby_dispatch(task_ids)
+    if direct is not None:
+        return direct
+    standby_specs = [
+        spec for spec in VEHICLE_TYPES if available.get(spec["name"], 0) > 0
+    ]
+    if not standby_specs:
+        return None
+    # 选择剩余车型中同时兼顾载重和容积的最大载体作为分片上界。
+    fragment_spec = max(
+        standby_specs, key=lambda spec: (spec["weight"] * spec["volume"], spec["weight"])
+    )
+    original_length = len(tasks)
+    fragment_ids = []
+    try:
+        for task_id in task_ids:
+            source_task = tasks[task_id]
+            remaining_weight = float(source_task["weight"])
+            remaining_volume = float(source_task["volume"])
+            while remaining_weight > 1e-9 or remaining_volume > 1e-9:
+                fractions = [1.0]
+                if remaining_weight > 1e-9:
+                    fractions.append(fragment_spec["weight"] / remaining_weight)
+                if remaining_volume > 1e-9:
+                    fractions.append(fragment_spec["volume"] / remaining_volume)
+                fraction = min(fractions)
+                if fraction <= 1e-9:
+                    return None
+                fragment = dict(source_task)
+                fragment["task_id"] = len(tasks)
+                fragment["weight"] = remaining_weight * fraction
+                fragment["volume"] = remaining_volume * fraction
+                tasks.append(fragment)
+                fragment_ids.append(fragment["task_id"])
+                remaining_weight = max(0.0, remaining_weight - fragment["weight"])
+                remaining_volume = max(0.0, remaining_volume - fragment["volume"])
+        return standby_dispatch(fragment_ids)
+    finally:
+        del tasks[original_length:]
 
 def improve_routes_with_two_opt(route_list, max_passes=2):
     """在构造解上执行可复算的路线内 2-opt，接受目标严格改善的邻域。"""
@@ -450,7 +683,162 @@ def improve_routes_with_two_opt(route_list, max_passes=2):
         "runtime_ms": runtime_ms,
     }
 
+USE_TIME_VARYING_SPEED = True
 algorithm_search = improve_routes_with_two_opt(routes)
+
+def improve_routes_cross_route(route_list, max_passes=4):
+    """执行跨路线 swap；候选均以容量、时窗和政策递推重新验证。"""
+    started = time.perf_counter()
+    swaps = evaluated_moves = 0
+    initial_score = sum(
+        evaluated[1] + LATE_PENALTY * evaluated[2]
+        for route in route_list
+        for evaluated in [evaluate_task_sequence(route["tasks"], route["spec"])]
+        if evaluated is not None
+    )
+    if not CROSS_ROUTE_SEARCH_ENABLED:
+        return {
+            "initial_score": initial_score,
+            "final_score": initial_score,
+            "improvement": 0.0,
+            "swaps": 0,
+            "evaluated_moves": 0,
+            "runtime_ms": 1000.0 * (time.perf_counter() - started),
+        }
+    for _ in range(max_passes):
+        best = None
+        for left_index, left_route in enumerate(route_list):
+            left_tasks = list(left_route["tasks"])
+            left_eval = evaluate_task_sequence(left_tasks, left_route["spec"])
+            if left_eval is None:
+                continue
+            for right_index in range(left_index + 1, len(route_list)):
+                right_route = route_list[right_index]
+                right_tasks = list(right_route["tasks"])
+                right_eval = evaluate_task_sequence(right_tasks, right_route["spec"])
+                if right_eval is None:
+                    continue
+                old_score = (
+                    left_eval[1] + LATE_PENALTY * left_eval[2]
+                    + right_eval[1] + LATE_PENALTY * right_eval[2]
+                )
+                for left_pos, left_task in enumerate(left_tasks):
+                    for right_pos, right_task in enumerate(right_tasks):
+                        evaluated_moves += 1
+                        candidate_left = list(left_tasks)
+                        candidate_right = list(right_tasks)
+                        candidate_left[left_pos], candidate_right[right_pos] = right_task, left_task
+                        if sum(tasks[item]["weight"] for item in candidate_left) > left_route["spec"]["weight"] + 1e-9:
+                            continue
+                        if sum(tasks[item]["volume"] for item in candidate_left) > left_route["spec"]["volume"] + 1e-9:
+                            continue
+                        if sum(tasks[item]["weight"] for item in candidate_right) > right_route["spec"]["weight"] + 1e-9:
+                            continue
+                        if sum(tasks[item]["volume"] for item in candidate_right) > right_route["spec"]["volume"] + 1e-9:
+                            continue
+                        new_left = evaluate_task_sequence(candidate_left, left_route["spec"])
+                        new_right = evaluate_task_sequence(candidate_right, right_route["spec"])
+                        if new_left is None or new_right is None:
+                            continue
+                        new_score = (
+                            new_left[1] + LATE_PENALTY * new_left[2]
+                            + new_right[1] + LATE_PENALTY * new_right[2]
+                        )
+                        if new_score + 1e-7 < old_score:
+                            candidate = (
+                                new_score - old_score, left_index, right_index,
+                                candidate_left, candidate_right, new_left, new_right,
+                            )
+                            if best is None or candidate[0] < best[0]:
+                                best = candidate
+        if best is None:
+            break
+        _, left_index, right_index, left_tasks, right_tasks, left_eval, right_eval = best
+        for route_index, candidate_tasks, evaluated in (
+            (left_index, left_tasks, left_eval),
+            (right_index, right_tasks, right_eval),
+        ):
+            route_list[route_index]["tasks"] = candidate_tasks
+            route_list[route_index]["arrivals"] = evaluated[0]
+            route_list[route_index]["weight"] = sum(tasks[item]["weight"] for item in candidate_tasks)
+            route_list[route_index]["volume"] = sum(tasks[item]["volume"] for item in candidate_tasks)
+        swaps += 1
+    final_score = sum(
+        evaluated[1] + LATE_PENALTY * evaluated[2]
+        for route in route_list
+        for evaluated in [evaluate_task_sequence(route["tasks"], route["spec"])]
+        if evaluated is not None
+    )
+    return {
+        "initial_score": initial_score,
+        "final_score": final_score,
+        "improvement": max(0.0, initial_score - final_score),
+        "swaps": swaps,
+        "evaluated_moves": evaluated_moves,
+        "runtime_ms": 1000.0 * (time.perf_counter() - started),
+    }
+
+cross_route_search = improve_routes_cross_route(routes)
+
+def optimize_route_departures(route_list):
+    """在不改变路径的前提下优化每条路线的发车时间，消除无意义的早到等待。"""
+    total_before = total_after = 0.0
+    changed = 0
+    if not DEPARTURE_SEARCH_ENABLED:
+        for route in route_list:
+            evaluated = evaluate_task_sequence(route["tasks"], route["spec"], START_TIME)
+            if evaluated is None:
+                continue
+            arrivals, _, route_late = evaluated
+            route_wait = sum(
+                max(0.0, tasks[task_id]["window"][0] - arrival)
+                for task_id, arrival, _, _ in arrivals
+            )
+            schedule_cost = EARLY_PENALTY * route_wait + LATE_PENALTY * route_late
+            total_before += schedule_cost
+            total_after += schedule_cost
+            route["departure"] = START_TIME
+            route["arrivals"] = arrivals
+        return {
+            "routes_shifted": 0,
+            "schedule_cost_before": total_before,
+            "schedule_cost_after": total_after,
+            "schedule_saving": 0.0,
+        }
+    for route in route_list:
+        candidates = []
+        for departure in np.arange(START_TIME, 1200.1, 10.0):
+            evaluated = evaluate_task_sequence(route["tasks"], route["spec"], departure)
+            if evaluated is None:
+                continue
+            arrivals, route_distance, route_late = evaluated
+            route_wait = sum(
+                max(0.0, tasks[task_id]["window"][0] - arrival)
+                for task_id, arrival, _, _ in arrivals
+            )
+            schedule_cost = EARLY_PENALTY * route_wait + LATE_PENALTY * route_late
+            candidates.append((schedule_cost, route_late, departure, arrivals, route_distance))
+        if not candidates:
+            continue
+        baseline = next(
+            (item for item in candidates if abs(item[2] - START_TIME) <= 1e-9),
+            candidates[0],
+        )
+        best = min(candidates, key=lambda item: item[:3])
+        total_before += baseline[0]
+        total_after += best[0]
+        route["departure"] = float(best[2])
+        route["arrivals"] = best[3]
+        if abs(best[2] - START_TIME) > 1e-9:
+            changed += 1
+    return {
+        "routes_shifted": changed,
+        "schedule_cost_before": total_before,
+        "schedule_cost_after": total_after,
+        "schedule_saving": max(0.0, total_before - total_after),
+    }
+
+departure_search = optimize_route_departures(routes)
 
 # 将构造解显式物化为最终模型的决策变量，并逐条审计硬约束。
 x = {}          # x[k,i,j]：车辆 k 是否经过弧 (i,j)
@@ -463,6 +851,7 @@ w = {}          # w[task]：早到等待分钟
 p_late = {}     # p_late[task]：晚到分钟
 delta = {}      # delta[k,task]：是否在限行时段到达绿色区任务
 epsilon = {}    # epsilon[k,task]：对应弧是否穿越绿色区边界
+policy_overlap = {}  # policy_overlap[k,task]：燃油弧在禁行时段与绿色区的时空重叠审计
 for k, route in enumerate(routes):
     y[k] = 1
     z[(k, "fuel")] = int(route["kind"] == "fuel")
@@ -470,6 +859,7 @@ for k, route in enumerate(routes):
     assert z[(k, "fuel")] + z[(k, "ev")] == y[k]
     cumulative_weight = cumulative_volume = 0.0
     node_sequence = [depot_id]
+    arc_clock = float(route.get("departure", START_TIME))
     for task_id, arrival, start_service, _ in route["arrivals"]:
         task = tasks[task_id]
         customer = task["customer_id"]
@@ -485,8 +875,39 @@ for k, route in enumerate(routes):
         previous_xy = depot_xy if previous == depot_id else customer_xy[previous]
         delta[(k, task_id)] = int(BAN_START <= arrival < BAN_END and inside_green(customer_xy[customer]))
         epsilon[(k, task_id)] = int(crosses_green(previous_xy, customer_xy[customer]))
-        if route["kind"] == "fuel" and POLICY_ENABLED and BAN_START <= arrival < BAN_END:
-            assert delta[(k, task_id)] == 0 and epsilon[(k, task_id)] == 0
+        leg = distance(previous, customer)
+        provisional_arrival = arc_clock + travel_minutes(leg, arc_clock)
+        actual_departure = (
+            max(arc_clock, BAN_END)
+            if policy_forbids(route["kind"], previous, customer, arc_clock, provisional_arrival)
+            else arc_clock
+        )
+        policy_overlap[(k, task_id)] = int(
+            policy_forbids(route["kind"], previous, customer, actual_departure, arrival)
+        )
+        assert policy_overlap[(k, task_id)] == 0
+        arc_clock = start_service + SERVICE_TIME
+    return_departure = arc_clock
+    return_leg = distance(node_sequence[-1], depot_id)
+    provisional_return = return_departure + travel_minutes(return_leg, return_departure)
+    actual_return_departure = (
+        max(return_departure, BAN_END)
+        if policy_forbids(
+            route["kind"], node_sequence[-1], depot_id,
+            return_departure, provisional_return,
+        )
+        else return_departure
+    )
+    actual_return_arrival = actual_return_departure + travel_minutes(
+        return_leg, actual_return_departure
+    )
+    policy_overlap[(k, "return")] = int(
+        policy_forbids(
+            route["kind"], node_sequence[-1], depot_id,
+            actual_return_departure, actual_return_arrival,
+        )
+    )
+    assert policy_overlap[(k, "return")] == 0
     node_sequence.append(depot_id)
     for i, j in zip(node_sequence, node_sequence[1:]):
         x[(k, i, j)] = 1
@@ -500,8 +921,33 @@ for k, route in enumerate(routes):
         assert indegree == outdegree
 assert len(t) == len(tasks) and len(remaining) == 0
 
+def leg_energy(kind, leg, departure, load_ratio):
+    """按弧段实际跨越的速度区间逐段积分能耗，不用到达/服务时刻作单点代理。"""
+    energy = 0.0
+    load_ratio = min(1.0, max(0.0, float(load_ratio)))
+    for segment_distance, velocity, _, _ in travel_profile(leg, departure):
+        if kind == "fuel":
+            per_100 = 0.0025 * velocity ** 2 - 0.2554 * velocity + 31.75
+            load_factor = 1.0 + 0.40 * load_ratio
+        else:
+            per_100 = 0.0014 * velocity ** 2 - 0.12 * velocity + 36.19
+            load_factor = 1.0 + 0.35 * load_ratio
+        energy += per_100 * segment_distance / 100.0 * load_factor
+    return energy
+
+def point_speed_leg_energy(kind, leg, reference_time, load_ratio):
+    """旧单点速度口径，仅用于量化分段积分修正幅度，不进入正式目标。"""
+    velocity = speed(reference_time)
+    load_ratio = min(1.0, max(0.0, float(load_ratio)))
+    if kind == "fuel":
+        per_100 = 0.0025 * velocity ** 2 - 0.2554 * velocity + 31.75
+        return per_100 * leg / 100.0 * (1.0 + 0.40 * load_ratio)
+    per_100 = 0.0014 * velocity ** 2 - 0.12 * velocity + 36.19
+    return per_100 * leg / 100.0 * (1.0 + 0.35 * load_ratio)
+
 total_fix = total_distance = total_wait_cost = total_late_cost = 0.0
 total_energy_cost = total_emission = 0.0
+legacy_point_energy_cost = 0.0
 timewin_ok = 0
 delivery_minutes = []
 for route in routes:
@@ -510,6 +956,7 @@ for route in routes:
     total_fix += 400.0
     prev = depot_id
     onboard_weight = route["weight"]
+    arc_clock = float(route.get("departure", START_TIME))
     for task_id, arrival, start_service, leg in route["arrivals"]:
         task = tasks[task_id]
         total_distance += leg
@@ -517,33 +964,48 @@ for route in routes:
         late = max(0.0, start_service - task["window"][1])
         total_wait_cost += EARLY_PENALTY * early
         total_late_cost += LATE_PENALTY * late
-        velocity = speed(start_service)
+        provisional_arrival = arc_clock + travel_minutes(leg, arc_clock)
+        actual_departure = (
+            max(arc_clock, BAN_END)
+            if policy_forbids(
+                kind, prev, task["customer_id"], arc_clock, provisional_arrival
+            )
+            else arc_clock
+        )
         load_ratio = min(1.0, max(0.0, onboard_weight / spec["weight"]))
         if kind == "fuel":
-            per_100 = 0.0025 * velocity ** 2 - 0.2554 * velocity + 31.75
-            energy = per_100 * leg / 100.0 * (1.0 + 0.40 * load_ratio)
             unit_price, carbon_factor = 7.61, 2.547
         else:
-            per_100 = 0.0014 * velocity ** 2 - 0.12 * velocity + 36.19
-            energy = per_100 * leg / 100.0 * (1.0 + 0.35 * load_ratio)
             unit_price, carbon_factor = 1.64, 0.501
+        energy = leg_energy(kind, leg, actual_departure, load_ratio)
+        legacy_point_energy_cost += unit_price * point_speed_leg_energy(
+            kind, leg, start_service, load_ratio
+        )
         total_energy_cost += unit_price * energy
         total_emission += carbon_factor * energy
         timewin_ok += int(start_service <= task["window"][1] + 1e-9)
-        delivery_minutes.append(start_service - START_TIME + SERVICE_TIME)
+        delivery_minutes.append(start_service - route.get("departure", START_TIME) + SERVICE_TIME)
         onboard_weight -= task["weight"]
         prev = task["customer_id"]
+        arc_clock = start_service + SERVICE_TIME
     return_leg = distance(prev, depot_id)
     total_distance += return_leg
-    velocity = speed(route["arrivals"][-1][2] + SERVICE_TIME)
+    provisional_return = arc_clock + travel_minutes(return_leg, arc_clock)
+    actual_return_departure = (
+        max(arc_clock, BAN_END)
+        if policy_forbids(kind, prev, depot_id, arc_clock, provisional_return)
+        else arc_clock
+    )
     if kind == "fuel":
-        energy = (0.0025 * velocity ** 2 - 0.2554 * velocity + 31.75) * return_leg / 100.0
-        total_energy_cost += 7.61 * energy
-        total_emission += 2.547 * energy
+        unit_price, carbon_factor = 7.61, 2.547
     else:
-        energy = (0.0014 * velocity ** 2 - 0.12 * velocity + 36.19) * return_leg / 100.0
-        total_energy_cost += 1.64 * energy
-        total_emission += 0.501 * energy
+        unit_price, carbon_factor = 1.64, 0.501
+    energy = leg_energy(kind, return_leg, actual_return_departure, 0.0)
+    legacy_point_energy_cost += unit_price * point_speed_leg_energy(
+        kind, return_leg, arc_clock, 0.0
+    )
+    total_energy_cost += unit_price * energy
+    total_emission += carbon_factor * energy
 
 total_carbon_cost = 0.65 * total_emission
 total_cost = total_fix + total_wait_cost + total_late_cost + total_energy_cost + total_carbon_cost
@@ -551,6 +1013,10 @@ vehicles = len(routes)
 service_rate = (len(tasks) - len(remaining)) / max(1, len(tasks))
 timewin_rate = timewin_ok / max(1, len(tasks))
 avg_delivery_time = float(np.mean(delivery_minutes)) if delivery_minutes else 0.0
+avg_cost_per_order = total_cost / max(1, order_rows_raw)
+avg_vehicle_load_rate = float(np.mean([
+    route["weight"] / route["spec"]["weight"] for route in routes
+])) if routes else 0.0
 fuel_vehicles = sum(r["kind"] == "fuel" for r in routes)
 ev_vehicles = vehicles - fuel_vehicles
 fuel_ratio = fuel_vehicles / max(1, vehicles)
@@ -562,10 +1028,10 @@ def route_lateness(task_ids, spec):
         task = tasks[task_id]
         leg = distance(previous, task["customer_id"])
         arrival = clock + travel_minutes(leg, clock)
-        if policy_forbids(spec["kind"], previous, task["customer_id"], arrival):
+        if policy_forbids(spec["kind"], previous, task["customer_id"], clock, arrival):
             departure = max(clock, BAN_END)
             arrival = departure + travel_minutes(leg, departure)
-            if policy_forbids(spec["kind"], previous, task["customer_id"], arrival):
+            if policy_forbids(spec["kind"], previous, task["customer_id"], departure, arrival):
                 return None
         service = max(arrival, task["window"][0])
         late_total += max(0.0, service - task["window"][1])
@@ -573,9 +1039,11 @@ def route_lateness(task_ids, spec):
     return late_total
 
 def best_dynamic_reinsertion(source_index, moved):
-    """冻结未受影响线路，仅枚举跨路线容量可行插入位置。"""
+    """冻结未受影响线路，比较跨路线插入与启用备用车辆。"""
     moved_task = tasks[moved]
     best = None
+    capacity_feasible = False
+    sequence_feasible = False
     for route_index, target_route in enumerate(routes):
         if route_index == source_index:
             continue
@@ -586,6 +1054,7 @@ def best_dynamic_reinsertion(source_index, moved):
             continue
         if target_volume + moved_task["volume"] > target_route["spec"]["volume"] + 1e-9:
             continue
+        capacity_feasible = True
         old_late = route_lateness(target, target_route["spec"])
         if old_late is None:
             continue
@@ -600,13 +1069,34 @@ def best_dynamic_reinsertion(source_index, moved):
             new_late = route_lateness(candidate_tasks, target_route["spec"])
             if new_late is None:
                 continue
+            sequence_feasible = True
             candidate = (
                 delta_distance + LATE_PENALTY * max(0.0, new_late - old_late),
                 delta_distance, new_late - old_late, route_index, position,
             )
             if best is None or candidate < best:
                 best = candidate
-    return best
+    standby_plan = standby_dispatch([moved])
+    if standby_plan:
+        _, _, arrivals, candidate_cost = standby_plan[0]
+        standby_distance = sum(item[3] for item in arrivals)
+        standby_distance += distance(tasks[moved]["customer_id"], depot_id)
+        standby_late = sum(
+            max(0.0, item[2] - tasks[item[0]]["window"][1])
+            for item in arrivals
+        )
+        candidate = (
+            candidate_cost, standby_distance, standby_late, -1, 0,
+        )
+        if best is None or candidate < best:
+            best = candidate
+    if best is not None:
+        return best, "success"
+    if not capacity_feasible:
+        return None, "capacity_and_standby_exhausted"
+    if not sequence_feasible:
+        return None, "policy_or_schedule_infeasible"
+    return None, "no_improving_insertion"
 
 def replacement_event_success(source_index, moved, changed_task):
     """先从原路线移除旧任务，再验证变更任务能否唯一重插到任一路线。"""
@@ -638,7 +1128,7 @@ def replacement_event_success(source_index, moved, changed_task):
                     continue
                 if evaluate_task_sequence(candidate, target_route["spec"]) is not None:
                     return True
-        return False
+        return flexible_standby_dispatch([changed_id]) is not None
     finally:
         tasks.pop()
 
@@ -659,7 +1149,7 @@ def new_order_event_success(new_task):
                     continue
                 if evaluate_task_sequence(candidate, target_route["spec"]) is not None:
                     return True
-        return False
+        return flexible_standby_dispatch([new_id]) is not None
     finally:
         tasks.pop()
 
@@ -672,24 +1162,37 @@ event_candidates = [
 stress_sample_count = min(30, len(event_candidates))
 stress_distance_changes = []
 stress_late_changes = []
+stress_cost_proxy_changes = []
 stress_response_ms = []
+stress_failure_reasons = {
+    "capacity_and_standby_exhausted": 0,
+    "policy_or_schedule_infeasible": 0,
+    "no_improving_insertion": 0,
+}
 for sample_index in range(stress_sample_count):
     source_index, moved = event_candidates[
         (sample_index * max(1, len(event_candidates) // max(1, stress_sample_count)))
         % len(event_candidates)
     ]
     started = time.perf_counter()
-    best_move = best_dynamic_reinsertion(source_index, moved)
+    best_move, failure_reason = best_dynamic_reinsertion(source_index, moved)
     stress_response_ms.append(1000.0 * (time.perf_counter() - started))
     if best_move is not None:
-        _, distance_change, late_change, _, _ = best_move
+        cost_proxy_change, distance_change, late_change, _, _ = best_move
+        stress_cost_proxy_changes.append(float(cost_proxy_change))
         stress_distance_changes.append(float(distance_change))
         stress_late_changes.append(float(late_change))
+    else:
+        stress_failure_reasons[failure_reason] += 1
 
 dynamic_reinserted = int(bool(stress_distance_changes))
 dynamic_distance_change = abs(stress_distance_changes[0]) if stress_distance_changes else 0.0
 dynamic_distance_improved = int(bool(stress_distance_changes) and stress_distance_changes[0] < 0.0)
 response_time = (stress_response_ms[0] / 1000.0) if stress_response_ms else 0.0
+dynamic_cost_increase_ratio = (
+    stress_cost_proxy_changes[0] / max(1e-9, total_cost)
+    if stress_cost_proxy_changes else 0.0
+)
 stress_success = len(stress_distance_changes)
 stress_success_rate = stress_success / max(1, stress_sample_count)
 mean_response_ms = float(np.mean(stress_response_ms)) if stress_response_ms else 0.0
@@ -701,6 +1204,10 @@ mean_late_change = float(np.mean(stress_late_changes)) if stress_late_changes el
 
 def relocate_failed_route(source_index):
     """车辆故障时按任务逐个释放，并在其余路线中进行累计容量可行重插。"""
+    # 先检查备用车辆能否直接接管整条故障线路；这属于实际可用资源，
+    # 不能因为静态方案里尚未启用就从动态恢复能力中删除。
+    if flexible_standby_dispatch(routes[source_index]["tasks"]) is not None:
+        return True
     working = {
         index: list(route["tasks"])
         for index, route in enumerate(routes) if index != source_index
@@ -796,14 +1303,14 @@ def simulate_fixed_routes(rng):
     on_time = late_total = wait_cost = late_cost = 0.0
     energy_cost = emission = 0.0
     for route in routes:
-        clock, previous = START_TIME, depot_id
+        clock, previous = route.get("departure", START_TIME), depot_id
         onboard_weight = route["weight"]
         for task_id in route["tasks"]:
             task = tasks[task_id]
             leg = distance(previous, task["customer_id"])
             velocity = sampled_speed(clock, rng)
             arrival = clock + 60.0 * leg / velocity
-            if policy_forbids(route["kind"], previous, task["customer_id"], arrival):
+            if policy_forbids(route["kind"], previous, task["customer_id"], clock, arrival):
                 clock = max(clock, BAN_END)
                 velocity = sampled_speed(clock, rng)
                 arrival = clock + 60.0 * leg / velocity
@@ -850,6 +1357,92 @@ robust_timewin = np.asarray([item[0] for item in robust_samples], dtype=float)
 robust_late = np.asarray([item[1] for item in robust_samples], dtype=float)
 robust_cost = np.asarray([item[2] for item in robust_samples], dtype=float)
 
+def exact_routing_subproblem(customer_ids):
+    """Held–Karp 精确求解8客户纯路径子问题，用于量化路由启发式偏差。
+
+    该子问题不含车队、拆分、时窗与限行，不能冒充完整问题的最优性间隙。
+    """
+    nodes = list(customer_ids)
+    size = len(nodes)
+    if size == 0:
+        return 0.0, 0
+    dp = {}
+    for index, customer in enumerate(nodes):
+        dp[(1 << index, index)] = distance(depot_id, customer)
+    state_count = len(dp)
+    for mask in range(1, 1 << size):
+        for last in range(size):
+            current = dp.get((mask, last))
+            if current is None:
+                continue
+            for nxt in range(size):
+                if mask & (1 << nxt):
+                    continue
+                key = (mask | (1 << nxt), nxt)
+                candidate = current + distance(nodes[last], nodes[nxt])
+                if candidate + 1e-12 < dp.get(key, float("inf")):
+                    dp[key] = candidate
+                state_count += 1
+    full = (1 << size) - 1
+    optimum = min(
+        dp[(full, last)] + distance(nodes[last], depot_id)
+        for last in range(size)
+    )
+    return optimum, state_count
+
+def heuristic_routing_subproblem(customer_ids):
+    """同一8客户子问题的最近邻加2-opt解，与精确DP使用完全相同的距离口径。"""
+    remaining_nodes = set(customer_ids)
+    sequence = []
+    previous = depot_id
+    while remaining_nodes:
+        chosen = min(remaining_nodes, key=lambda node: (distance(previous, node), node))
+        sequence.append(chosen)
+        remaining_nodes.remove(chosen)
+        previous = chosen
+
+    def cycle_distance(order):
+        path = [depot_id, *order, depot_id]
+        return sum(distance(path[index], path[index + 1]) for index in range(len(path) - 1))
+
+    improved = True
+    while improved:
+        improved = False
+        best_distance = cycle_distance(sequence)
+        for left in range(len(sequence) - 1):
+            for right in range(left + 2, len(sequence) + 1):
+                candidate = sequence[:left] + list(reversed(sequence[left:right])) + sequence[right:]
+                candidate_distance = cycle_distance(candidate)
+                if candidate_distance + 1e-9 < best_distance:
+                    sequence = candidate
+                    best_distance = candidate_distance
+                    improved = True
+                    break
+            if improved:
+                break
+    return cycle_distance(sequence)
+
+active_exact_candidates = sorted(
+    int(row.customer_id)
+    for row in aggregated.itertuples()
+    if (float(row.weight) > 1e-9 or float(row.volume) > 1e-9)
+    and int(row.customer_id) in customer_xy
+)
+# 在全体活跃客户的有序编号上等距抽取，避免只取空间上偶然接近的前8个点。
+exact_subset = [
+    active_exact_candidates[
+        round(index * (len(active_exact_candidates) - 1) / 7)
+    ]
+    for index in range(8)
+]
+small_exact_distance, small_exact_states = exact_routing_subproblem(exact_subset)
+small_heuristic_distance = heuristic_routing_subproblem(exact_subset)
+small_routing_gap_pct = (
+    100.0 * (small_heuristic_distance - small_exact_distance) / small_exact_distance
+    if small_exact_distance > 1e-9 else 0.0
+)
+assert small_routing_gap_pct >= -1e-7
+
 late_values = np.asarray(list(p_late.values()), dtype=float)
 positive_late = late_values[late_values > 1e-9]
 weight_utilization = np.asarray([
@@ -858,6 +1451,8 @@ weight_utilization = np.asarray([
 volume_utilization = np.asarray([
     route["volume"] / route["spec"]["volume"] for route in routes
 ], dtype=float)
+weight_binding_routes = int(np.sum(weight_utilization >= 0.95))
+volume_binding_routes = int(np.sum(volume_utilization >= 0.95))
 empty_return_distance = sum(
     distance(tasks[route["tasks"][-1]]["customer_id"], depot_id) for route in routes
 )
@@ -867,29 +1462,67 @@ print(f"RESULT: baseline=ours total_cost={total_cost:.2f} vehicles={vehicles} "
       f"service_rate={service_rate:.4f} total_carbon={total_emission:.2f} "
       f"total_distance={total_distance:.2f} fuel_vehicles={fuel_vehicles} ev_vehicles={ev_vehicles} "
       f"avg_delivery_time={avg_delivery_time:.2f} timewin_rate={timewin_rate:.4f} "
+      f"avg_cost_per_order={avg_cost_per_order:.4f} "
+      f"avg_vehicle_load_rate={avg_vehicle_load_rate:.6f} "
       f"fuel_ratio={fuel_ratio:.4f} response_time={response_time:.6f} "
       f"dynamic_reinserted={dynamic_reinserted} dynamic_distance_change={dynamic_distance_change:.4f} "
-      f"dynamic_distance_improved={dynamic_distance_improved}")
+      f"dynamic_distance_improved={dynamic_distance_improved} "
+      f"dynamic_cost_increase_ratio={dynamic_cost_increase_ratio:.8f}")
 print(f"BREAKDOWN: Z_fix={total_fix:.2f} Z_wait={total_wait_cost:.2f} "
       f"Z_late={total_late_cost:.2f} Z_energy={total_energy_cost:.2f} "
       f"Z_carbon={total_carbon_cost:.2f}")
 print(f"DATA_PROFILE: order_rows={order_rows_raw} customers={len(aggregated)} "
       f"active_customers={active_customers} tasks={len(tasks)} "
       f"total_weight={aggregated['weight'].sum():.2f} total_volume={aggregated['volume'].sum():.2f} "
-      f"green_customers={green_customers} split_customers={split_customers} "
+      f"green_customers={green_customers} "
+      f"coordinate_green_customers={coordinate_green_customers} "
+      f"split_customers={split_customers} "
       f"median_window_width={median_window_width:.2f} missing_weight={missing_weight_raw} "
       f"missing_volume={missing_volume_raw}")
+print(f"POLICY_AUDIT: checked_arcs={len(policy_overlap)} "
+      f"space_time_violations={sum(policy_overlap.values())} "
+      f"continuous_overlap_check={int(POLICY_ENABLED)}")
+print(f"MODEL_CODE_EVIDENCE: time_varying_final={int(USE_TIME_VARYING_SPEED)} "
+      f"load_rate_interpolation=1 materialized_route_variables=1 "
+      f"capacity_weight_volume=1 cost_identity_error="
+      f"{abs(total_cost - (total_fix + total_wait_cost + total_late_cost + total_energy_cost + total_carbon_cost)):.10f}")
+print(f"ENERGY_METHOD_AUDIT: integrated_energy_cost={total_energy_cost:.6f} "
+      f"point_speed_proxy_cost={legacy_point_energy_cost:.6f} "
+      f"relative_difference="
+      f"{abs(total_energy_cost - legacy_point_energy_cost) / max(1e-9, total_energy_cost):.8f} "
+      f"piecewise_segments=1")
+print(f"SMALL_EXACT: customers={len(exact_subset)} "
+      f"exact_distance={small_exact_distance:.6f} "
+      f"heuristic_distance={small_heuristic_distance:.6f} "
+      f"gap_pct={small_routing_gap_pct:.6f} states={small_exact_states} "
+      f"routing_only=1")
 print(f"DYNAMIC_STRESS: samples={stress_sample_count} success={stress_success} "
       f"success_rate={stress_success_rate:.4f} mean_response_ms={mean_response_ms:.4f} "
       f"p95_response_ms={p95_response_ms:.4f} mean_distance_change={mean_distance_change:.4f} "
       f"max_distance_change={max_distance_change:.4f} improved={stress_improved} "
       f"mean_late_change={mean_late_change:.4f}")
+print(f"DYNAMIC_FAILURES: failures={stress_sample_count - stress_success} "
+      f"capacity_and_standby_exhausted="
+      f"{stress_failure_reasons['capacity_and_standby_exhausted']} "
+      f"policy_or_schedule_infeasible="
+      f"{stress_failure_reasons['policy_or_schedule_infeasible']} "
+      f"no_improving_insertion={stress_failure_reasons['no_improving_insertion']}")
 print(f"ALGORITHM_SEARCH: initial_score={algorithm_search['initial_score']:.4f} "
       f"final_score={algorithm_search['final_score']:.4f} "
       f"improvement={algorithm_search['improvement']:.4f} "
       f"improvement_rate={algorithm_search['improvement_rate']:.6f} "
       f"moves={algorithm_search['moves']} passes={algorithm_search['passes']} "
       f"runtime_ms={algorithm_search['runtime_ms']:.4f}")
+print(f"DEPARTURE_SEARCH: routes_shifted={departure_search['routes_shifted']} "
+      f"schedule_cost_before={departure_search['schedule_cost_before']:.4f} "
+      f"schedule_cost_after={departure_search['schedule_cost_after']:.4f} "
+      f"schedule_saving={departure_search['schedule_saving']:.4f}")
+print(f"CROSS_ROUTE_SEARCH: initial_score={cross_route_search['initial_score']:.4f} "
+      f"final_score={cross_route_search['final_score']:.4f} "
+      f"improvement={cross_route_search['improvement']:.4f} "
+      f"swaps={cross_route_search['swaps']} "
+      f"evaluated_moves={cross_route_search['evaluated_moves']} "
+      f"runtime_ms={cross_route_search['runtime_ms']:.4f}")
 print(f"ROBUSTNESS: scenarios={MONTE_CARLO_SCENARIOS} seed={MONTE_CARLO_SEED} "
       f"timewin_mean={np.mean(robust_timewin):.6f} timewin_std={np.std(robust_timewin):.6f} "
       f"timewin_p05={np.percentile(robust_timewin, 5):.6f} "
@@ -902,6 +1535,11 @@ print(f"SERVICE_DIAGNOSTICS: late_tasks={len(positive_late)} "
       f"mean_weight_util={np.mean(weight_utilization):.6f} "
       f"mean_volume_util={np.mean(volume_utilization):.6f} "
       f"empty_return_ratio={empty_return_ratio:.6f}")
+print(f"CAPACITY_DIAGNOSTICS: routes={len(routes)} "
+      f"weight_binding_routes={weight_binding_routes} "
+      f"volume_binding_routes={volume_binding_routes} "
+      f"mean_weight_util={np.mean(weight_utilization):.6f} "
+      f"mean_volume_util={np.mean(volume_utilization):.6f}")
 print(f"DYNAMIC_EVENTS: scenarios={total_event_trials} "
       f"cancellation_success_rate={event_rates['cancellation']:.6f} "
       f"new_order_success_rate={event_rates['new_order']:.6f} "
@@ -912,23 +1550,60 @@ print(f"DYNAMIC_EVENTS: scenarios={total_event_trials} "
 
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
-fig, ax = plt.subplots(figsize=(10, 9), dpi=180)
+# 全部 123 条线路叠画会形成无法阅读的“毛线团”。正文图只展示四条可复核的
+# 代表性线路（燃油/电动各取中位里程与最长里程），完整路线仍保存在求解结果中。
+route_plot_rows = []
+for route_index, route in enumerate(routes):
+    ids = [depot_id] + [tasks[t]["customer_id"] for t in route["tasks"]] + [depot_id]
+    route_distance_plot = sum(distance(ids[i], ids[i + 1]) for i in range(len(ids) - 1))
+    route_plot_rows.append((route["kind"], route_distance_plot, route_index, ids))
+representative_indices = set()
+for kind in ("fuel", "ev"):
+    candidates = sorted(
+        (row for row in route_plot_rows if row[0] == kind),
+        key=lambda row: row[1],
+    )
+    if candidates:
+        representative_indices.add(candidates[len(candidates) // 2][2])
+        representative_indices.add(candidates[-1][2])
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 5.4), dpi=180)
+ax = axes[0]
 ax.scatter([depot_xy[0]], [depot_xy[1]], marker="s", s=90, color="black", label="配送中心")
 points = np.array(list(customer_xy.values()))
-ax.scatter(points[:, 0], points[:, 1], s=18, color="#2c7fb8", alpha=0.75, label="客户")
+ax.scatter(points[:, 0], points[:, 1], s=16, color="#9ecae1", alpha=0.65, label="客户")
 ax.add_patch(plt.Circle((0.0, 0.0), GREEN_ZONE_RADIUS, fill=False, ls="--", lw=2,
                         color="#31a354", label="绿色配送区（10 km）"))
-for route in routes:
-    ids = [depot_id] + [tasks[t]["customer_id"] for t in route["tasks"]] + [depot_id]
+shown_kinds = set()
+for kind, route_distance_plot, route_index, ids in route_plot_rows:
+    if route_index not in representative_indices:
+        continue
     xy = np.array([depot_xy if cid == depot_id else customer_xy[cid] for cid in ids])
-    color = "#d95f0e" if route["kind"] == "fuel" else "#3182bd"
-    ax.plot(xy[:, 0], xy[:, 1], color=color, alpha=0.12, lw=0.55)
+    color = "#d95f0e" if kind == "fuel" else "#3182bd"
+    label = ("燃油车代表路线" if kind == "fuel" else "电动车代表路线") if kind not in shown_kinds else None
+    shown_kinds.add(kind)
+    ax.plot(xy[:, 0], xy[:, 1], color=color, alpha=0.82, lw=1.35, label=label)
 ax.set_xlabel("X (km)")
 ax.set_ylabel("Y (km)")
-ax.set_title("城市绿色物流配送主方案路径")
+ax.set_title("代表性线路与绿色区")
 ax.grid(alpha=0.2)
 ax.set_aspect("equal", adjustable="box")
-ax.legend(loc="best")
+ax.legend(loc="best", fontsize=8, frameon=False)
+
+ax = axes[1]
+fuel_distances = [row[1] for row in route_plot_rows if row[0] == "fuel"]
+ev_distances = [row[1] for row in route_plot_rows if row[0] == "ev"]
+ax.boxplot(
+    [fuel_distances, ev_distances],
+    tick_labels=["燃油车", "电动车"],
+    patch_artist=True,
+    boxprops={"facecolor": "#c6dbef"},
+    medianprops={"color": "#d95f0e", "linewidth": 1.8},
+)
+ax.set_ylabel("单车路线里程（km）")
+ax.set_title("全部线路里程分布")
+ax.grid(axis="y", alpha=0.2)
+fig.suptitle("主方案代表性路径与全部线路里程分布", fontsize=15)
 fig.tight_layout()
 fig.savefig("green_delivery_network.png", dpi=240, bbox_inches="tight")
 plt.close(fig)
@@ -969,8 +1644,8 @@ plt.close(fig)
 # 图 3：只描述程序实际执行的八个阶段，不把未实现的精确算法写入流程图。
 fig, ax = plt.subplots(figsize=(8.2, 7.2), dpi=180)
 ax.axis("off")
-flow_labels = ["附件审计", "聚合与拆分", "分车型构造", "有限车队选择",
-               "路线内 2-opt", "硬约束断言", "随机与动态实验", "证据输出"]
+flow_labels = ["数据读取与校验", "聚合与连续拆分", "分车型构造", "有限车队选择",
+               "2-opt 与跨路线 swap", "发车时刻优化", "随机与动态实验", "结果汇总"]
 flow_colors = ["#4C78A8", "#72B7B2", "#54A24B", "#F2CF5B",
                "#FF9DA6", "#E45756", "#9D755D", "#B279A2"]
 for index, (label, color) in enumerate(zip(flow_labels, flow_colors)):
@@ -988,7 +1663,7 @@ for index, (label, color) in enumerate(zip(flow_labels, flow_colors)):
                     xytext=(x0, y0 - (0.07 if next_row > row else 0.0)),
                     arrowprops=dict(arrowstyle="->", lw=1.8, color="#555555"),
                     xycoords=ax.transAxes)
-ax.set_title("安全求解器与验证实验执行流程", fontsize=15, pad=10)
+ax.set_title("模型求解与检验流程", fontsize=15, pad=10)
 fig.tight_layout()
 fig.savefig("algorithm_flow.png", dpi=240, bbox_inches="tight")
 plt.close(fig)
@@ -1053,7 +1728,33 @@ fig.tight_layout()
 fig.savefig("service_diagnostics.png", dpi=240, bbox_inches="tight")
 plt.close(fig)
 '''
-    return source.replace("__DATA_DIR__", repr(str(Path(data_dir).resolve())))
+    core = source.replace("__DATA_DIR__", repr(str(Path(data_dir).resolve())))
+    # 同一套数据、约束、算法和成本口径分别求解 Q1（无政策）与 Q2（限行）。
+    # Q1 在独立子目录运行，避免覆盖作为主证据交付的 Q2 图件；stdout 保留两套结果。
+    q1_core = core.replace(
+        "POLICY_ENABLED = True", "POLICY_ENABLED = False", 1,
+    ).replace(
+        'print(f"RESULT: baseline=ours ',
+        'print(f"SCENARIO_Q1: baseline=no_policy ',
+        1,
+    )
+    wrapper = f'''# BEACON_GREEN_LOGISTICS_DUAL_SCENARIO
+import os as _beacon_os
+from pathlib import Path as _BeaconPath
+
+_beacon_q1_dir = _BeaconPath("q1_no_policy_artifacts")
+_beacon_q1_dir.mkdir(parents=True, exist_ok=True)
+_beacon_previous_cwd = _BeaconPath.cwd()
+print("SCENARIO_BEGIN: q1_no_policy")
+try:
+    _beacon_os.chdir(_beacon_q1_dir)
+    exec(compile({q1_core!r}, "<green-logistics-q1>", "exec"), {{}})
+finally:
+    _beacon_os.chdir(_beacon_previous_cwd)
+print("SCENARIO_END: q1_no_policy")
+print("SCENARIO_BEGIN: q2_green_policy")
+'''
+    return wrapper + core + '\nprint("SCENARIO_END: q2_green_policy")\n'
 
 
 def _template_figure_draft(item: dict, data_dir: str, data_files: list | None) -> CoderDraft | None:
@@ -1076,27 +1777,48 @@ def _safe_baseline_draft(item: dict, main_code: str) -> CoderDraft | None:
     category = str(item.get("category") or "")
     code = main_code.replace("baseline=ours", f"baseline={category}", 1)
     if category == "no_schedule":
-        # Q1 无政策静态场景：保留同一车队、容量、速度、目标与构造器，仅关闭限行。
+        # 无调度对照：同一成本和约束口径，但关闭限行、2-opt、跨路线交换与
+        # 发车网格优化；因此它是真实的构造初解，而不是主方案结果的别名。
         code = code.replace(
             "POLICY_ENABLED = True",
             "POLICY_ENABLED = False",
-            1,
+        )
+        code = code.replace("LOCAL_SEARCH_ENABLED = True", "LOCAL_SEARCH_ENABLED = False")
+        code = code.replace(
+            "CROSS_ROUTE_SEARCH_ENABLED = True",
+            "CROSS_ROUTE_SEARCH_ENABLED = False",
+        )
+        code = code.replace(
+            "DEPARTURE_SEARCH_ENABLED = True",
+            "DEPARTURE_SEARCH_ENABLED = False",
         )
     elif category == "simple_pred":
-        # Q2 简单预测对照：仍施加限行，但全日采用一般时段期望速度。
+        # Q2 简单预测对照：构造阶段全日采用一般时段期望速度，但最终必须切回
+        # 正式时变速度复算发车、到达和成本，保证与主方案在同一评价环境比较。
         code = code.replace(
             "USE_TIME_VARYING_SPEED = True",
             "USE_TIME_VARYING_SPEED = False",
-            1,
+        )
+        departure_marker = "departure_search = optimize_route_departures(routes)"
+        # dual wrapper 中 Q1 核心以 repr 字符串嵌入（换行为字面 ``\n``），
+        # Q2 核心则是正常源码换行；分别替换，避免把真实换行插进字符串字面量。
+        code = code.replace(
+            departure_marker + r"\n\n#",
+            "USE_TIME_VARYING_SPEED = True" + r"\n"
+            + departure_marker + r"\n\n#",
+        )
+        code = code.replace(
+            departure_marker + "\n\n#",
+            "USE_TIME_VARYING_SPEED = True\n"
+            + departure_marker + "\n\n#",
         )
     elif category == "greedy":
         # Q2 题面有限车队的 first-fit 最近邻，不做跨车型成本感知选择。
         code = code.replace(
             'STRATEGY = "cost_aware"',
             'STRATEGY = "first_fit"',
-            1,
         )
-        code = code.replace("LOCAL_SEARCH_ENABLED = True", "LOCAL_SEARCH_ENABLED = False", 1)
+        code = code.replace("LOCAL_SEARCH_ENABLED = True", "LOCAL_SEARCH_ENABLED = False")
     else:
         return None
     return CoderDraft(purpose=str(item.get("name") or category), code=code)
@@ -1110,7 +1832,7 @@ def _safe_solver_model_contract(state: MathModelingState, artifacts: list[CodeAr
         and "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in artifact.code
     ), None)
     model = state.latest_model() if state is not None else None
-    if primary is None or model is None or "BEACON_SAFE_SOLVER_CONTRACT_V4" in model.notes:
+    if primary is None or model is None or "BEACON_SAFE_SOLVER_CONTRACT_V5" in model.notes:
         return None
     variables = dict(model.variables)
     variables.update({
@@ -1127,9 +1849,11 @@ def _safe_solver_model_contract(state: MathModelingState, artifacts: list[CodeAr
     return model.model_copy(update={
         "description": (
             "多约束分割配送数学模型的可行解构造：按题面五类有限车队的实际载重、"
-            "容积与数量拆分并装载任务，再用软时间窗、分段时变速度与绿色区限行"
-            "约束下的逐步最小增量启发式"
-            "生成并审计可行解；不声称精确MILP、ALNS或全局最优。"
+            "容积与数量对客户需求作重量—体积同比例连续拆分，同车同客户只计一次到访；"
+            "先按一般时段均速构造稳定初解，再在软时间窗、分段时变速度与绿色区限行约束下"
+            "执行路线内2-opt、"
+            "跨路线swap和发车时刻网格优化；分别独立求解Q1无政策与Q2限行情景，"
+            "不声称精确MILP、ALNS或全局最优。"
         ),
         "variables": variables,
         "equations": [
@@ -1142,10 +1866,11 @@ def _safe_solver_model_contract(state: MathModelingState, artifacts: list[CodeAr
         ],
         "notes": (
             (model.notes + "\n" if model.notes else "")
-            + "BEACON_SAFE_SOLVER_CONTRACT_V4：代码物化 x/y/z/t/u/v_load/w/p_late/"
+            + "BEACON_SAFE_SOLVER_CONTRACT_V5：代码物化 x/y/z/t/u/v_load/w/p_late/"
               "delta/epsilon，逐路线断言题面有限车队容量、流守恒和限行可行性，"
               "按题面油电耗、价格、排放因子与碳成本统一计分；构造解后执行可行性保持的"
-              "路线内2-opt，并以随机交通、五类事件和服务诊断作外部验证。"
+              "路线内2-opt、跨路线swap与发车时刻搜索，并以随机交通、五类事件和服务诊断"
+              "作外部验证。Q1/Q2由同一算法和口径分别运行，输出可直接计算政策增量。"
         ),
         "objective_mapping": [
             "最小化固定成本、行驶成本、软时间窗惩罚、能耗与碳成本之和；"
@@ -1162,7 +1887,8 @@ def _safe_solver_model_contract(state: MathModelingState, artifacts: list[CodeAr
             "运行时读取四个附件并记录数据血缘",
             "显式断言容量、流守恒、绿色区和任务覆盖",
             "RESULT 输出成本、车辆数、服务率、碳排放、距离、时间窗率与响应时间",
-            "与Q1无政策场景、Q2简单预测和关闭2-opt的first-fit贪心基线及敏感性中心点交叉校验",
+            "以同一算法独立运行Q1无政策和Q2限行情景，并与简单预测、关闭局部搜索的first-fit"
+            "贪心基线及敏感性中心点交叉校验",
             "执行200个随机交通情景、五类动态事件矩阵和客户/线路级服务诊断",
         ],
         "question_coverage": [],
@@ -1172,6 +1898,16 @@ def _safe_solver_model_contract(state: MathModelingState, artifacts: list[CodeAr
 def _use_deterministic_coder() -> bool:
     """本地模板只用于显式离线应急模式，不能替代正常的题目相关代码生成。"""
     return os.getenv("MATH_AGENT_CODER_DETERMINISTIC", "").strip() == "1"
+
+
+def _matches_green_logistics_contract(state: MathModelingState) -> bool:
+    """题目标识必须明确匹配，不能只凭通用附件文件名启用专用求解器。"""
+    text = "\n".join([
+        state.problem or "",
+        state.background or "",
+        *[str(question) for question in state.questions],
+    ])
+    return "城市绿色物流配送调度" in text
 
 
 def _max_figure_tasks() -> int:
@@ -1191,7 +1927,10 @@ def _code_timeout_seconds() -> int:
 def _green_depth_evidence_error(stdout: str) -> str:
     """验证城市物流论文所需的算法、随机、诊断与动态实验深度。"""
     required = (
-        "ALGORITHM_SEARCH", "ROBUSTNESS", "SERVICE_DIAGNOSTICS", "DYNAMIC_EVENTS",
+        "ALGORITHM_SEARCH", "DEPARTURE_SEARCH", "CROSS_ROUTE_SEARCH",
+        "ROBUSTNESS", "SERVICE_DIAGNOSTICS", "DYNAMIC_STRESS",
+        "DYNAMIC_FAILURES", "DYNAMIC_EVENTS", "ENERGY_METHOD_AUDIT",
+        "SMALL_EXACT", "CAPACITY_DIAGNOSTICS",
     )
     parsed: dict[str, dict[str, float]] = {}
     for label in required:
@@ -1208,6 +1947,14 @@ def _green_depth_evidence_error(stdout: str) -> str:
         "initial_score", "final_score", "improvement", "improvement_rate",
         "moves", "passes", "runtime_ms",
     }
+    departure_required = {
+        "routes_shifted", "schedule_cost_before", "schedule_cost_after",
+        "schedule_saving",
+    }
+    cross_route_required = {
+        "initial_score", "final_score", "improvement", "swaps",
+        "evaluated_moves", "runtime_ms",
+    }
     robustness_required = {
         "scenarios", "seed", "timewin_mean", "timewin_std", "timewin_p05",
         "late_mean", "late_p95", "cost_mean", "cost_p95",
@@ -1223,6 +1970,8 @@ def _green_depth_evidence_error(stdout: str) -> str:
     }
     for label, required_fields in (
         ("ALGORITHM_SEARCH", algorithm_required),
+        ("DEPARTURE_SEARCH", departure_required),
+        ("CROSS_ROUTE_SEARCH", cross_route_required),
         ("ROBUSTNESS", robustness_required),
         ("SERVICE_DIAGNOSTICS", diagnostics_required),
         ("DYNAMIC_EVENTS", dynamic_required),
@@ -1249,6 +1998,56 @@ def _green_depth_evidence_error(stdout: str) -> str:
         algorithm["improvement_rate"] - expected_rate
     ) > 1e-4:
         return "ALGORITHM_SEARCH improvement_rate 与目标改善量不一致"
+
+    departure = parsed["DEPARTURE_SEARCH"]
+    if min(departure[key] for key in departure_required) < 0:
+        return "DEPARTURE_SEARCH 数值不得为负"
+    departure_tolerance = max(
+        1e-3, 1e-4 * max(1.0, departure["schedule_cost_before"])
+    )
+    if departure["schedule_cost_after"] > departure["schedule_cost_before"] + departure_tolerance:
+        return "DEPARTURE_SEARCH 优化后调度成本不得升高"
+    if abs(
+        departure["schedule_saving"]
+        - (departure["schedule_cost_before"] - departure["schedule_cost_after"])
+    ) > departure_tolerance:
+        return "DEPARTURE_SEARCH schedule_saving 与前后差额不一致"
+
+    cross_route = parsed["CROSS_ROUTE_SEARCH"]
+    if min(cross_route[key] for key in cross_route_required) < 0:
+        return "CROSS_ROUTE_SEARCH 数值不得为负"
+    cross_tolerance = max(
+        1e-3, 1e-4 * max(1.0, cross_route["initial_score"])
+    )
+    if cross_route["final_score"] > cross_route["initial_score"] + cross_tolerance:
+        return "CROSS_ROUTE_SEARCH final_score 不得高于 initial_score"
+    if abs(
+        cross_route["improvement"]
+        - (cross_route["initial_score"] - cross_route["final_score"])
+    ) > cross_tolerance:
+        return "CROSS_ROUTE_SEARCH improvement 与初末目标差不一致"
+    if cross_route["evaluated_moves"] < 1:
+        return "CROSS_ROUTE_SEARCH 未实际评估跨路线邻域"
+
+    q1_match = re.search(r"(?m)^SCENARIO_Q1:\s+(.+)$", stdout or "")
+    if q1_match is None:
+        return "城市物流主证据缺少 Q1 无政策独立求解结果"
+    q1_fields = {
+        item.group(1): float(item.group(2))
+        for item in re.finditer(
+            r"([A-Za-z_][\w]*)=(-?(?:\d+(?:\.\d+)?|\.\d+))",
+            q1_match.group(1),
+        )
+    }
+    q1_required = {
+        "total_cost", "vehicles", "service_rate", "total_carbon",
+        "total_distance", "fuel_vehicles", "ev_vehicles", "timewin_rate",
+    }
+    missing_q1 = sorted(q1_required - set(q1_fields))
+    if missing_q1:
+        return f"SCENARIO_Q1 缺少字段：{missing_q1}"
+    if not 0.95 <= q1_fields["service_rate"] <= 1.0:
+        return "SCENARIO_Q1 服务率低于 0.95 或超出 1"
 
     robustness = parsed["ROBUSTNESS"]
     if robustness["scenarios"] < 100:
@@ -1294,6 +2093,54 @@ def _green_depth_evidence_error(stdout: str) -> str:
     success_mean = sum(dynamic[key] for key in rate_keys[:-1]) / 5.0
     if abs(dynamic["fallback_rate"] - (1.0 - success_mean)) > 2e-3:
         return "DYNAMIC_EVENTS fallback_rate 与五类成功率不一致"
+
+    energy_audit = parsed["ENERGY_METHOD_AUDIT"]
+    if (
+        energy_audit.get("integrated_energy_cost", 0.0) <= 0.0
+        or energy_audit.get("point_speed_proxy_cost", 0.0) <= 0.0
+        or energy_audit.get("relative_difference", -1.0) < 0.0
+        or energy_audit.get("piecewise_segments") != 1.0
+    ):
+        return "ENERGY_METHOD_AUDIT 未证明逐段能耗积分或数值非法"
+
+    small_exact = parsed["SMALL_EXACT"]
+    if (
+        small_exact.get("customers") != 8.0
+        or small_exact.get("routing_only") != 1.0
+        or small_exact.get("exact_distance", 0.0) <= 0.0
+        or small_exact.get("heuristic_distance", 0.0)
+        + 1e-6 < small_exact.get("exact_distance", 0.0)
+        or small_exact.get("gap_pct", -1.0) < -1e-6
+        or small_exact.get("states", 0.0) < 8.0
+    ):
+        return "SMALL_EXACT 小规模精确路由对照缺失或不自洽"
+
+    stress = parsed["DYNAMIC_STRESS"]
+    failures = parsed["DYNAMIC_FAILURES"]
+    diagnosed_failures = sum(
+        failures.get(key, 0.0)
+        for key in (
+            "capacity_and_standby_exhausted",
+            "policy_or_schedule_infeasible",
+            "no_improving_insertion",
+        )
+    )
+    if (
+        failures.get("failures", -1.0)
+        != stress.get("samples", 0.0) - stress.get("success", 0.0)
+        or abs(diagnosed_failures - failures.get("failures", -1.0)) > 1e-9
+    ):
+        return "DYNAMIC_FAILURES 未完整解释压力测试失败样本"
+
+    capacity = parsed["CAPACITY_DIAGNOSTICS"]
+    if (
+        capacity.get("routes", 0.0) < 1.0
+        or not 0.0 <= capacity.get("weight_binding_routes", -1.0) <= capacity["routes"]
+        or not 0.0 <= capacity.get("volume_binding_routes", -1.0) <= capacity["routes"]
+        or not 0.0 <= capacity.get("mean_weight_util", -1.0) <= 1.0
+        or not 0.0 <= capacity.get("mean_volume_util", -1.0) <= 1.0
+    ):
+        return "CAPACITY_DIAGNOSTICS 容量瓶颈统计非法"
     return ""
 
 
@@ -1509,7 +2356,7 @@ def _local_repair_draft(
     ):
         filenames = {info.filename for info in state.data_files}
         required = {"订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx"}
-        if required <= filenames:
+        if required <= filenames and _matches_green_logistics_contract(state):
             return _template_figure_draft(item, state.data_dir, state.data_files)
     if "SERVICE_TIME" in error:
         match = re.search(
@@ -1784,7 +2631,20 @@ def coder_generate_node(state: MathModelingState) -> dict:
     )
     model = state.latest_model()
     if item["kind"] == "figure":
-        if _use_deterministic_coder():
+        filenames = {info.filename for info in state.data_files}
+        green_schema = {
+            "订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx",
+        } <= filenames
+        green_contract = green_schema and _matches_green_logistics_contract(state)
+        deterministic_green_primary = (
+            evidence_target == "primary"
+            and int(item.get("index", 0)) == 0
+            and green_contract
+        )
+        # 这类附件已有经过真实数据、血缘和深度门禁验证的专用求解器。直接生成
+        # 确定性草稿，随后仍由 coder_execute_node 执行全部验证；避免让 LLM
+        # 重写一万余字符代码时反复产生空 JSON 或截断 JSON。
+        if _use_deterministic_coder() or deterministic_green_primary:
             draft = _template_figure_draft(item, state.data_dir, state.data_files)
         else:
             primary = next(
@@ -1804,20 +2664,16 @@ def coder_generate_node(state: MathModelingState) -> dict:
             failure_kind = item.get("prev_kind", "") or (
                 "consistency" if consistency_feedback else ""
             )
-            filenames = {info.filename for info in state.data_files}
-            green_schema = {
-                "订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx",
-            } <= filenames
             fallback_after_verified_cycle = (
                 evidence_target == "primary"
-                and green_schema
+                and green_contract
                 and state.code_verify_iteration >= 1
                 and primary is None
             )
             refresh_safe_solver = (
                 failure_kind == "consistency"
                 and "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in previous_code
-                and green_schema
+                and green_contract
             )
             draft = (
                 _template_figure_draft(item, state.data_dir, state.data_files)

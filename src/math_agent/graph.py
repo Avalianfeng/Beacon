@@ -121,7 +121,7 @@ def build_graph(
     g.add_conditional_edges(
         "model_critic",
         after_model_critic,
-        {"retry": "modeler", "advance": "advance_stage", "to_coder": "coder"},
+        {"retry": "modeler", "advance": "advance_stage", "to_coder": "coder", "stop": END},
     )
     g.add_edge("advance_stage", "modeler")
     # coder -> model_code_consistency -> (retry coder / advance / advance_with_warning) -> sensitivity
@@ -140,7 +140,7 @@ def build_graph(
     g.add_conditional_edges(
         "model_code_consistency",
         after_model_code_consistency,
-        {"retry_coder": "coder", "advance": "sensitivity", "advance_with_warning": "sensitivity"},
+        {"retry_coder": "coder", "advance": "sensitivity", "stop": END},
     )
     g.add_conditional_edges(
         "sensitivity", after_sensitivity_work,
