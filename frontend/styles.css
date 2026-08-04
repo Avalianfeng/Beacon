@@ -853,7 +853,7 @@ input[type="range"] {
 
 .attachment-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 9px;
   padding: 9px 11px;
   border: 1px solid var(--line);
@@ -862,17 +862,51 @@ input[type="range"] {
   font-size: 0.8rem;
 }
 
+.attachment-item.warn {
+  border-color: rgba(180, 120, 20, 0.35);
+  background: rgba(245, 185, 66, 0.1);
+}
+
+.attachment-item.ok {
+  border-color: rgba(35, 135, 93, 0.2);
+  background: rgba(35, 135, 93, 0.06);
+}
+
+.attachment-item.working {
+  border-color: rgba(36, 72, 120, 0.28);
+  background: rgba(36, 72, 120, 0.06);
+}
+
+.attachment-item .att-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
 .attachment-item .att-name {
   color: var(--ink);
   font-weight: 650;
 }
 
 .attachment-item .att-meta {
-  flex: 1;
   overflow: hidden;
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.attachment-item .att-path-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.attachment-item .att-path {
+  font-size: 0.72rem;
+  word-break: break-all;
+  color: var(--ink);
 }
 
 .attachment-item .att-remove {
@@ -883,6 +917,16 @@ input[type="range"] {
   border-radius: 7px;
   background: var(--rose-soft);
   font-size: 0.75rem;
+}
+
+.attachment-item .att-remove:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.attachment-zone.busy {
+  opacity: 0.72;
+  pointer-events: none;
 }
 
 .control-row {

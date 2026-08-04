@@ -134,12 +134,46 @@ test("POST /api/upload 题面 Markdown 返回 parseQuality 与 parsedMdPath", as
   const data = await response.json();
   assert.equal(data.filename, "problem.md");
   assert.ok(data.text.includes("最小化运输成本"));
+  // 题面 text 必须是全文，不能被 summary 截断拖累
+  assert.equal(data.text.includes("# 赛题"), true);
   assert.ok(data.parseQuality);
   assert.equal(data.parseQuality.method, "direct");
   assert.equal(data.parseQuality.ok, true);
   assert.ok(data.parsedMdPath);
   assert.match(data.parsedMdPath, /problem_parsed\.md$/);
   // UI 需要绝对路径，便于用户在资源管理器中打开
+  assert.ok(
+    data.parsedMdPath.includes(":") || data.parsedMdPath.startsWith("/") || data.parsedMdPath.startsWith("\\\\"),
+    `expected absolute path, got ${data.parsedMdPath}`,
+  );
+});
+
+test("POST /api/upload 文本类附件返回 parseQuality 与 attachment_parsed.md", async () => {
+  const boundary = "----testboundary-att-md";
+  const mdContent = "附件说明：客户坐标与时间窗见 Excel。\n";
+  const body = [
+    `--${boundary}\r\n`,
+    `Content-Disposition: form-data; name="purpose"\r\n\r\n`,
+    `attachment\r\n`,
+    `--${boundary}\r\n`,
+    `Content-Disposition: form-data; name="file"; filename="readme.md"\r\n`,
+    `Content-Type: text/markdown\r\n\r\n`,
+    mdContent,
+    `\r\n--${boundary}--\r\n`,
+  ].join("");
+
+  const response = await fetch(`${base}/api/upload`, {
+    method: "POST",
+    headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+    body,
+  });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.filename, "readme.md");
+  assert.ok(data.parseQuality);
+  assert.equal(data.parseQuality.method, "direct");
+  assert.ok(data.parsedMdPath);
+  assert.match(data.parsedMdPath, /attachment_parsed\.md$/);
   assert.ok(
     data.parsedMdPath.includes(":") || data.parsedMdPath.startsWith("/") || data.parsedMdPath.startsWith("\\\\"),
     `expected absolute path, got ${data.parsedMdPath}`,

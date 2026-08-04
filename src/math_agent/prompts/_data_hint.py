@@ -99,6 +99,12 @@ def build_data_summary_hint(data_files: list) -> str:
         elif "text_excerpt" in summary:
             excerpt = summary["text_excerpt"][:200].replace("\n", " ")
             lines.append(f"  └ 文本摘录: {excerpt}...")
+            pq = summary.get("parse_quality") or {}
+            method = pq.get("method")
+            if method:
+                warn = pq.get("warnings") or []
+                flag = "需核对" if (pq.get("ok") is False or warn) else "可用"
+                lines.append(f"  └ 解析质量: {method} · {flag}")
         lines.append(line)
     return (
         "\n# 附件数据概况\n已有以下数据文件可用：\n" + "\n".join(lines) + "\n"

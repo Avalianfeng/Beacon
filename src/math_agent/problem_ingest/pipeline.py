@@ -179,10 +179,10 @@ def apply_vision_transcription(
     complete_fn=None,
     progress_cb=None,
 ) -> ProblemParseResult:
-    """对已上传的题面 PDF 执行视觉转写，并刷新 problem_parsed.md。"""
+    """对已上传的 PDF 执行视觉转写，并刷新解析 Markdown 中间产物。"""
     path = Path(path)
     if path.suffix.lower() != ".pdf":
-        raise ValueError("vision transcription only supports PDF problem files")
+        raise ValueError("vision transcription only supports PDF files")
 
     from math_agent.problem_ingest.vision import transcribe_pdf_with_vision
 

@@ -5,7 +5,9 @@
   python scripts/extract_file_meta.py <file_path> [purpose]
   purpose: problem | attachment（默认 attachment）
 
-题面 PDF 在乱码超阈值时会尝试视觉回退，并写入 problem_parsed.md。
+题面与文本类附件（PDF/DOCX/TXT/MD）共用 problem_ingest：
+快速文本抽取、乱码质量、Markdown 落盘；PDF 乱码时标记 needsVision（视觉另调）。
+Excel/CSV 仍走结构化摘要，不做视觉转写。
 """
 from __future__ import annotations
 import json
@@ -50,29 +52,13 @@ def _meta_csv(path: Path) -> dict:
                          "columns": columns, "preview": preview}]}
 
 
-def _meta_pdf_attachment(path: Path) -> dict:
-    """附件 PDF：只做文本层抽取，不做视觉回退。"""
-    from math_agent.problem_ingest.pdf_text import extract_pdf_text
-
-    text, total_pages = extract_pdf_text(path, include_tables=True)
-    return {"text_excerpt": text[:5000], "total_pages": total_pages}
-
-
-def _meta_docx_attachment(path: Path) -> dict:
-    from docx import Document
-    doc = Document(str(path))
-    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-    text = "\n".join(paragraphs)
-    return {"text_excerpt": text[:3000], "paragraphs": len(paragraphs), "tables": len(doc.tables)}
-
-
-def _meta_text_attachment(path: Path) -> dict:
-    text = path.read_text(encoding="utf-8", errors="ignore")
-    return {"text_excerpt": text[:3000], "lines": text.count("\n") + 1}
-
-
-def _meta_problem(path: Path) -> tuple[str, dict, dict]:
-    """题面：快速文本抽取 + MD 落盘；PDF 乱码时只标记 needsVision，不在此阻塞视觉。"""
+def _meta_ingest_text(
+    path: Path,
+    *,
+    md_filename: str,
+    text_limit: int,
+) -> tuple[str, dict, dict]:
+    """PDF/DOCX/TXT/MD：共用题面 ingest（不做视觉阻塞）。"""
     from math_agent.problem_ingest import parse_problem_file
 
     suffix = path.suffix.lower()
@@ -80,6 +66,7 @@ def _meta_problem(path: Path) -> tuple[str, dict, dict]:
         path,
         enable_vision_fallback=False,
         write_md=True,
+        md_filename=md_filename,
     )
     file_type = {
         ".pdf": "pdf",
@@ -88,7 +75,7 @@ def _meta_problem(path: Path) -> tuple[str, dict, dict]:
         ".md": "txt",
     }.get(suffix, suffix.lstrip(".") or "txt")
 
-    summary = result.to_summary_dict(text_limit=5000 if suffix == ".pdf" else 3000)
+    summary = result.to_summary_dict(text_limit=text_limit)
     if suffix == ".docx":
         from docx import Document
         doc = Document(str(path))
@@ -100,6 +87,8 @@ def _meta_problem(path: Path) -> tuple[str, dict, dict]:
     extras = {
         "parsed_md_path": str(result.parsed_md_path).replace("\\", "/") if result.parsed_md_path else "",
         "parse_quality": result.quality.to_dict(),
+        # 全文给题面文本框；summary.text_excerpt 仍截断供摘要/提示
+        "text": result.text,
     }
     return file_type, summary, extras
 
@@ -118,10 +107,15 @@ def main():
         sys.exit(1)
 
     suffix = path.suffix.lower()
+    text_like = {".pdf", ".docx", ".txt", ".md"}
 
-    if purpose == "problem" and suffix in {".pdf", ".docx", ".txt", ".md"}:
+    if suffix in text_like:
+        md_name = "problem_parsed.md" if purpose == "problem" else "attachment_parsed.md"
+        limit = 5000 if suffix == ".pdf" else 3000
         try:
-            file_type, summary, extras = _meta_problem(path)
+            file_type, summary, extras = _meta_ingest_text(
+                path, md_filename=md_name, text_limit=limit,
+            )
         except Exception as e:
             print(json.dumps({"error": f"extraction failed: {e}"}))
             sys.exit(1)
@@ -131,6 +125,7 @@ def main():
             "summary": summary,
             "parsed_md_path": extras["parsed_md_path"],
             "parse_quality": extras["parse_quality"],
+            "text": extras["text"],
         }, ensure_ascii=False))
         return
 
@@ -138,10 +133,6 @@ def main():
         ".xlsx": ("xlsx", _meta_xlsx),
         ".xls": ("xlsx", _meta_xlsx),
         ".csv": ("csv", _meta_csv),
-        ".pdf": ("pdf", _meta_pdf_attachment),
-        ".docx": ("docx", _meta_docx_attachment),
-        ".txt": ("txt", _meta_text_attachment),
-        ".md": ("txt", _meta_text_attachment),
     }
     if suffix not in type_map:
         print(json.dumps({"error": f"unsupported file type: {suffix}"}))

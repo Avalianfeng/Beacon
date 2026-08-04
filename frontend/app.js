@@ -183,14 +183,7 @@ function showParseQuality(result) {
   const needsVision = Boolean(quality?.needsVision);
   parseQualityBanner.classList.toggle("ok", ok && warnings.length === 0 && !needsVision);
   parseQualityBanner.classList.toggle("warn", !ok || warnings.length > 0 || needsVision);
-  const methodLabel = {
-    direct: "直接读取",
-    text: "文本层抽取",
-    vision: "视觉转写",
-    text_fallback: "文本抽取（视觉回退失败）",
-    docx: "Word 抽取",
-    user_confirmed: "用户确认",
-  }[method] || method;
+  const methodLabel = PARSE_METHOD_LABELS[method] || method;
   parseQualityTitle.textContent = needsVision
     ? `检测到公式乱码（${methodLabel}）`
     : ok && warnings.length === 0
@@ -222,11 +215,11 @@ function clearParseQuality() {
   parseQualityBanner.classList.remove("ok", "warn", "working");
 }
 
-async function runVisionTranscribe(storedPath, onProgress) {
+async function runVisionTranscribe(storedPath, onProgress, mdFilename = "problem_parsed.md") {
   const response = await fetch("/api/upload/vision", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ storedPath }),
+    body: JSON.stringify({ storedPath, mdFilename }),
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -862,6 +855,25 @@ async function uploadFile(file, purpose) {
   return payload;
 }
 
+const PARSE_METHOD_LABELS = {
+  direct: "直接读取",
+  text: "文本层抽取",
+  vision: "视觉转写",
+  text_fallback: "文本抽取（视觉回退失败）",
+  docx: "Word 抽取",
+  user_confirmed: "用户确认",
+};
+
+function attachmentQualityLabel(att) {
+  const q = att.parseQuality;
+  if (!q) return "";
+  if (att._visionProgress) return att._visionProgress;
+  const method = PARSE_METHOD_LABELS[q.method] || q.method;
+  if (q.needsVision) return `待视觉 · ${method}`;
+  if (q.ok === false || (Array.isArray(q.warnings) && q.warnings.length)) return `需核对 · ${method}`;
+  return method;
+}
+
 function renderAttachmentList() {
   attachmentList.innerHTML = uploadedAttachments.map((att, i) => {
     let meta = "";
@@ -872,10 +884,27 @@ function renderAttachmentList() {
     } else if (att.summary?.text_excerpt) {
       meta = `${Math.ceil(att.summary.text_excerpt.length / 1024)} KB 文本`;
     }
-    return `<div class="attachment-item">
-      <span class="att-name">${escapeHtml(att.filename)}</span>
-      <span class="att-meta">${escapeHtml(att.fileType)} · ${escapeHtml(meta)}</span>
-      <button class="att-remove" type="button" data-idx="${i}">×</button>
+    const quality = attachmentQualityLabel(att);
+    const qClass = att._visionProgress
+      ? "working"
+      : att.parseQuality?.needsVision || att.parseQuality?.ok === false
+        ? "warn"
+        : att.parseQuality
+          ? "ok"
+          : "";
+    const pathHtml = att.parsedMdPath
+      ? `<div class="att-path-row">
+          <code class="att-path" title="${escapeHtml(att.parsedMdPath)}">${escapeHtml(att.parsedMdPath)}</code>
+          <button class="ghost-button compact att-copy-path" type="button" data-path="${escapeHtml(att.parsedMdPath)}">复制路径</button>
+        </div>`
+      : "";
+    return `<div class="attachment-item ${qClass}">
+      <div class="att-main">
+        <span class="att-name">${escapeHtml(att.filename)}</span>
+        <span class="att-meta">${escapeHtml(att.fileType)}${meta ? ` · ${escapeHtml(meta)}` : ""}${quality ? ` · ${escapeHtml(quality)}` : ""}</span>
+        ${pathHtml}
+      </div>
+      <button class="att-remove" type="button" data-idx="${i}" ${att._visionProgress ? "disabled" : ""}>×</button>
     </div>`;
   }).join("");
   attachmentList.querySelectorAll(".att-remove").forEach((btn) => {
@@ -884,19 +913,92 @@ function renderAttachmentList() {
       renderAttachmentList();
     });
   });
+  attachmentList.querySelectorAll(".att-copy-path").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const path = btn.dataset.path || "";
+      if (!path) return;
+      try {
+        await navigator.clipboard.writeText(path);
+        showToast("已复制附件解析路径");
+      } catch {
+        showToast(path);
+      }
+    });
+  });
   updateStartGuide();
 }
 
 async function loadAttachmentFile(file) {
   if (!file) return;
+  const ext = file.name.split(".").pop()?.toLowerCase();
   showToast(`正在上传 ${file.name}...`);
+  if (attachmentZone) attachmentZone.classList.add("busy");
   try {
-    const result = await uploadFile(file, "attachment");
+    let result = await uploadFile(file, "attachment");
     uploadedAttachments.push(result);
     renderAttachmentList();
-    showToast(`${file.name} 已上传`);
+
+    if (ext === "pdf" && result.parseQuality?.needsVision && result.storedPath) {
+      const idx = uploadedAttachments.length - 1;
+      const pages = result.parseQuality.pages || result.summary?.total_pages || "?";
+      uploadedAttachments[idx] = {
+        ...result,
+        _visionProgress: `视觉转写中（约 ${pages} 页）…`,
+      };
+      renderAttachmentList();
+      showToast(`${file.name} 公式乱码，开始视觉转写…`);
+      try {
+        const visionResult = await runVisionTranscribe(
+          result.storedPath,
+          (event) => {
+            uploadedAttachments[idx] = {
+              ...uploadedAttachments[idx],
+              _visionProgress: event.message || "视觉转写中…",
+            };
+            renderAttachmentList();
+          },
+          "attachment_parsed.md",
+        );
+        uploadedAttachments[idx] = {
+          ...result,
+          ...visionResult,
+          id: result.id,
+          filename: result.filename,
+          fileType: result.fileType || "pdf",
+          size: result.size,
+          storedPath: result.storedPath,
+          summary: {
+            ...(result.summary || {}),
+            ...(visionResult.summary || {}),
+            text_excerpt: visionResult.text || result.summary?.text_excerpt,
+          },
+          text: visionResult.text || result.text,
+          parsedMdPath: visionResult.parsedMdPath || result.parsedMdPath,
+          parseQuality: visionResult.parseQuality || result.parseQuality,
+          _visionProgress: "",
+        };
+        renderAttachmentList();
+        showToast(visionResult.parseQuality?.method === "vision"
+          ? `${file.name} 已视觉转写，请核对公式`
+          : `${file.name} 视觉转写未完全成功，已保留文本层`);
+      } catch (visionError) {
+        uploadedAttachments[idx] = { ...result, _visionProgress: "" };
+        renderAttachmentList();
+        showToast(`${file.name} 视觉转写失败：${visionError.message}（已保留文本层）`);
+      }
+      return;
+    }
+
+    const q = result.parseQuality;
+    if (q && (q.ok === false || q.needsVision)) {
+      showToast(`${file.name} 已上传，建议核对解析文本`);
+    } else {
+      showToast(`${file.name} 已上传`);
+    }
   } catch (error) {
     showToast(`上传失败：${error.message}`);
+  } finally {
+    attachmentZone?.classList.remove("busy");
   }
 }
 

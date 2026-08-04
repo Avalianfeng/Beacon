@@ -400,7 +400,10 @@ async function handleApi(request, response, url) {
       parsedMdPath: meta.parsed_md_path || meta.summary?.parsed_md || "",
       parseQuality: meta.parse_quality || meta.summary?.parse_quality || null,
     };
-    if (purpose === "problem" && meta.summary && meta.summary.text_excerpt) {
+    // 优先全文 text（题面框）；text_excerpt 仅作摘要兼容
+    if (typeof meta.text === "string" && meta.text) {
+      result.text = meta.text;
+    } else if (meta.summary && meta.summary.text_excerpt) {
       result.text = meta.summary.text_excerpt;
     }
     result.parsedMdPath = normalizeParsedMdPath(result.parsedMdPath);
@@ -408,7 +411,7 @@ async function handleApi(request, response, url) {
     return;
   }
 
-  // 题面 PDF 视觉转写：NDJSON 流（progress 行 + 最终 result）
+  // PDF 视觉转写（题面或附件）：NDJSON 流（progress 行 + 最终 result）
   if (request.method === "POST" && url.pathname === "/api/upload/vision") {
     let body;
     try {
@@ -432,6 +435,9 @@ async function handleApi(request, response, url) {
       sendJson(response, 400, { error: "storedPath must point to an uploaded PDF." });
       return;
     }
+    const mdFilename = body.mdFilename === "attachment_parsed.md"
+      ? "attachment_parsed.md"
+      : "problem_parsed.md";
 
     response.writeHead(200, {
       "Content-Type": "application/x-ndjson; charset=utf-8",
@@ -447,7 +453,7 @@ async function handleApi(request, response, url) {
     });
 
     const python = resolvePython();
-    const py = spawn(python, ["scripts/vision_transcribe_problem.py", filePath], {
+    const py = spawn(python, ["scripts/vision_transcribe_problem.py", filePath, mdFilename], {
       cwd: projectRoot,
       windowsHide: true,
     });
@@ -692,11 +698,30 @@ async function handleApi(request, response, url) {
         const src = safeProjectPath(att.storedPath);
         const dst = resolve(dataDirPath, att.filename);
         await writeFile(dst, await readFile(src));
+        const summary = { ...(att.summary || {}) };
+        if (att.parseQuality && !summary.parse_quality) {
+          summary.parse_quality = att.parseQuality;
+        }
+        // 文本类附件的解析中间产物一并带入 run data，便于人工核对
+        if (att.parsedMdPath) {
+          try {
+            const mdSrc = isAbsolute(att.parsedMdPath)
+              ? resolve(att.parsedMdPath)
+              : safeProjectPath(att.parsedMdPath);
+            if (existsSync(mdSrc)) {
+              const stem = String(att.filename || "attachment").replace(/\.[^.]+$/, "");
+              await writeFile(resolve(dataDirPath, `${stem}_parsed.md`), await readFile(mdSrc));
+              summary.parsed_md = `${stem}_parsed.md`;
+            }
+          } catch {
+            // 中间产物缺失不阻断启动
+          }
+        }
         dataFiles.push({
           filename: att.filename,
           file_type: att.fileType,
           path: att.filename,
-          summary: att.summary || {},
+          summary,
         });
       }
       dataDir = dataDirPath;
