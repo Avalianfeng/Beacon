@@ -44,6 +44,31 @@ Web UI 首次访问按环境检查、服务商选择、密钥填写、模型验�
 因此会先移除 `openai/`、`ollama/` 等 LiteLLM 传输前缀，再发送厂商原生模型名；保存到 `.env`
 时仍使用 `provider/model`，测试协议与正式运行协议不能混为一谈。
 
+## 题面导入与解析
+
+题面在**启动流水线之前**完成导入与可选校对，不复用末尾 `human_review` 节点：
+
+1. **Markdown / TXT（推荐）**：直接读取为题面正文，并落盘 `problem_parsed.md`（`method=direct`）。
+2. **PDF / Word 文本抽取**：PyMuPDF（Word 用 python-docx）抽取；PDF 会做上标还原与符号规范化。
+3. **视觉回退（两阶段，带进度）**：上传 PDF 时先快速返回文本层；若乱码超阈值则标记
+   `needsVision`，前端再调用 `/api/upload/vision` 分页视觉转写。UI 会显示「抽取中 /
+   视觉转写第 x 页」状态条，而不是无反馈地阻塞。失败则保留文本层并标记 `text_fallback`。
+
+中间产物 `problem_parsed.md` 仅供人工核对；**送给模型的唯一正文**仍是启动时的题面文本框
+（可编辑）。启动成功后还会在输出目录写入 `problem_source.md`（用户最终确认稿）。
+
+数据附件分流：
+
+- **Excel / CSV**：结构化摘要（行列、列名预览），不做视觉转写。
+- **PDF / Word / TXT / MD**：与题面共用文本抽取与乱码检测；PDF 乱码时同样走视觉进度，
+  中间产物为上传目录下的 `attachment_parsed.md`（UI 展示绝对路径）。附件解析结果只作摘要/
+  人工核对，不覆盖题面文本框；建模仍优先按原文件路径读取。
+
+Web 高级选项中两个开关彼此独立：
+
+- **启动前确认题面**（默认关）：轻量二次确认，不进入 LangGraph interrupt。
+- **论文结果人工确认**：对应流水线末尾 `human_review` / `--no-interrupt`。
+
 ## 现行实现要点
 
 - 主链包含 ProblemBlueprint、蓝图审查、分阶段建模、模型—代码一致性、独立基线、

@@ -120,15 +120,27 @@
 
             <label class="field">
               <span>背景与目标</span>
-              <textarea id="problemBrief" rows="8" placeholder="粘贴赛题背景、需要解决的问题与输出要求，或直接上传题面文件。"></textarea>
+              <textarea id="problemBrief" rows="8" placeholder="粘贴或上传 Markdown 题面（推荐自行校对公式）；也可上传 PDF/Word 自动抽取。"></textarea>
             </label>
 
+            <div class="parse-quality-banner" id="parseQualityBanner" hidden>
+              <div class="parse-quality-main">
+                <strong id="parseQualityTitle">题面解析</strong>
+                <span id="parseQualityDetail"></span>
+              </div>
+              <div class="parse-quality-path" id="parseQualityPathRow" hidden>
+                <span>中间产物（绝对路径）</span>
+                <code id="parseQualityPath"></code>
+                <button type="button" class="ghost-button compact" id="copyParsedMdPath">复制路径</button>
+              </div>
+            </div>
+
             <input class="visually-hidden" id="problemFile" type="file" accept=".json,.md,.txt,.pdf,.docx" />
-            <div class="upload-zone" tabindex="0" role="button" aria-label="上传题目 JSON、Markdown、文本、PDF 或 Word" id="uploadZone">
+            <div class="upload-zone" tabindex="0" role="button" aria-label="上传题目 Markdown、文本、JSON、PDF 或 Word" id="uploadZone">
               <div class="upload-icon">+</div>
               <div>
-                <strong id="uploadTitle">拖入题目文件</strong>
-                <span id="uploadMeta">支持 JSON、Markdown、TXT、PDF、Word 题面</span>
+                <strong id="uploadTitle">拖入题面文件</strong>
+                <span id="uploadMeta">Markdown / TXT（推荐自行校对）· PDF / Word（自动抽取）· JSON</span>
               </div>
             </div>
 
@@ -137,7 +149,7 @@
               <div class="upload-icon">📎</div>
               <div>
                 <strong id="attachmentTitle">拖入数据附件</strong>
-                <span id="attachmentMeta">支持 Excel、CSV、PDF、Word、TXT（可多选）</span>
+                <span id="attachmentMeta">Excel/CSV 结构化预览 · PDF/Word/TXT 文本解析（乱码可视觉回退）</span>
               </div>
             </div>
             <div class="attachment-list" id="attachmentList"></div>
@@ -150,8 +162,12 @@
                   <span>启用知识库辅助</span>
                 </label>
                 <label class="toggle">
+                  <input id="confirmProblemToggle" type="checkbox" />
+                  <span>启动前确认题面</span>
+                </label>
+                <label class="toggle">
                   <input id="hitlToggle" type="checkbox" checked />
-                  <span>生成前人工确认</span>
+                  <span>论文结果人工确认</span>
                 </label>
                 <label class="toggle">
                   <input id="forceToggle" type="checkbox" />

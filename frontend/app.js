@@ -17,8 +17,15 @@ const threadId = document.querySelector("#threadId");
 const iterationDepth = document.querySelector("#iterationDepth");
 const iterationValue = document.querySelector("#iterationValue");
 const ragToggle = document.querySelector("#ragToggle");
+const confirmProblemToggle = document.querySelector("#confirmProblemToggle");
 const hitlToggle = document.querySelector("#hitlToggle");
 const forceToggle = document.querySelector("#forceToggle");
+const parseQualityBanner = document.querySelector("#parseQualityBanner");
+const parseQualityTitle = document.querySelector("#parseQualityTitle");
+const parseQualityDetail = document.querySelector("#parseQualityDetail");
+const parseQualityPathRow = document.querySelector("#parseQualityPathRow");
+const parseQualityPath = document.querySelector("#parseQualityPath");
+const copyParsedMdPath = document.querySelector("#copyParsedMdPath");
 const knowledgeBadge = document.querySelector("#knowledgeBadge");
 const runState = document.querySelector("#runState");
 const uploadZone = document.querySelector("#uploadZone");
@@ -59,6 +66,8 @@ const dashboardSections = document.querySelectorAll(
 const stages = ["Analyst", "Blueprint Critic", "Modeler", "Model Critic", "Coder", "Code Consistency", "Sensitivity", "Figure Pipeline", "Writer", "Paper Critic", "Table Assembler", "Evaluation", "Human Review", "LaTeX"];
 const stageLogNames = ["analyst", "blueprint_critic", "modeler", "model_critic", "coder", "model_code_consistency", "sensitivity", "figure_pipeline", "writer", "paper_critic", "table_assembler", "evaluation", "human_review", "latex"];
 const MAX_PROBLEM_TEXT_CHARS = 400_000;
+let latestParsedMdPath = "";
+let problemConfirmArmed = false;
 const templateHints = {
   default: "适配建模论文、代码、敏感性分析与 LaTeX 编译流程。",
   gmcm: "启用国赛论文封面字段，命令会追加 --template gmcm。",
@@ -128,9 +137,145 @@ function updatePipeline(mode = "local") {
   qualityScore.textContent = isComplete && Number.isFinite(Number(actualScore))
     ? Number(actualScore).toFixed(2)
     : "--";
-  runButton.textContent = mode === "running" ? "正在生成…" : isComplete ? "重新生成" : "开始生成论文";
+  if (mode === "running") {
+    runButton.textContent = "正在生成…";
+  } else if (isComplete) {
+    runButton.textContent = "重新生成";
+  } else if (problemConfirmArmed) {
+    runButton.textContent = "题面无误，开始生成";
+  } else {
+    runButton.textContent = "开始生成论文";
+  }
   runState.textContent = mode === "running" ? "Running" : mode === "paused" ? "Paused" : isComplete ? "Done" : "Ready";
   updateStartGuide();
+}
+
+function setUploadBusy(busy) {
+  uploadZone?.classList.toggle("busy", Boolean(busy));
+  if (uploadZone) uploadZone.setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+function showParseProgress(message, detail = "") {
+  if (!parseQualityBanner) return;
+  parseQualityBanner.hidden = false;
+  parseQualityBanner.classList.remove("ok", "warn");
+  parseQualityBanner.classList.add("working");
+  parseQualityTitle.textContent = message;
+  parseQualityDetail.textContent = detail || "请勿关闭页面；视觉转写按页进行，可能需要数分钟。";
+  parseQualityPathRow.hidden = !latestParsedMdPath;
+  if (latestParsedMdPath) parseQualityPath.textContent = latestParsedMdPath;
+}
+
+function showParseQuality(result) {
+  if (!parseQualityBanner) return;
+  const quality = result?.parseQuality;
+  const mdPath = result?.parsedMdPath || "";
+  latestParsedMdPath = mdPath;
+  if (!quality && !mdPath) {
+    parseQualityBanner.hidden = true;
+    return;
+  }
+  parseQualityBanner.hidden = false;
+  parseQualityBanner.classList.remove("working");
+  const ok = quality?.ok !== false;
+  const method = quality?.method || "direct";
+  const warnings = Array.isArray(quality?.warnings) ? quality.warnings : [];
+  const needsVision = Boolean(quality?.needsVision);
+  parseQualityBanner.classList.toggle("ok", ok && warnings.length === 0 && !needsVision);
+  parseQualityBanner.classList.toggle("warn", !ok || warnings.length > 0 || needsVision);
+  const methodLabel = PARSE_METHOD_LABELS[method] || method;
+  const emptyText = warnings.includes("empty_text");
+  parseQualityTitle.textContent = needsVision
+    ? (emptyText ? `文本层为空，将视觉转写（${methodLabel}）` : `检测到公式乱码（${methodLabel}）`)
+    : ok && warnings.length === 0
+      ? `题面解析完成（${methodLabel}）`
+      : `请核对题面公式（${methodLabel}）`;
+  const ratio = Number(quality?.garbleRatio);
+  const parts = [];
+  if (Number.isFinite(ratio) && ratio > 0) parts.push(`乱码比例 ${(ratio * 100).toFixed(1)}%`);
+  if (quality?.pages) parts.push(`${quality.pages} 页`);
+  if (warnings.length) parts.push(`警告: ${warnings.join(", ")}`);
+  if (needsVision) {
+    parts.push(emptyText
+      ? "扫描件或无文本层 PDF，将自动启动视觉转写。"
+      : "将自动启动视觉转写，进度会显示在此处。");
+  } else if (!parts.length) {
+    parts.push("可将下方 Markdown 中间产物作为校对参考；启动时以文本框内容为准。");
+  } else {
+    parts.push("建议打开中间产物核对公式后再启动。");
+  }
+  parseQualityDetail.textContent = parts.join(" · ");
+  if (mdPath) {
+    parseQualityPathRow.hidden = false;
+    parseQualityPath.textContent = mdPath;
+  } else {
+    parseQualityPathRow.hidden = true;
+    parseQualityPath.textContent = "";
+  }
+}
+
+function clearParseQuality() {
+  latestParsedMdPath = "";
+  problemConfirmArmed = false;
+  if (!parseQualityBanner) return;
+  parseQualityBanner.hidden = true;
+  parseQualityBanner.classList.remove("ok", "warn", "working");
+}
+
+async function runVisionTranscribe(storedPath, onProgress, mdFilename = "problem_parsed.md") {
+  const response = await fetch("/api/upload/vision", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ storedPath, mdFilename }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || `HTTP ${response.status}`);
+  }
+  if (!response.body) throw new Error("视觉转写响应缺少数据流");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResult = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (event.type === "progress") {
+        onProgress?.(event);
+      } else if (event.type === "result") {
+        finalResult = event;
+      } else if (event.type === "error") {
+        throw new Error(event.error || "视觉转写失败");
+      }
+    }
+  }
+  if (buffer.trim()) {
+    try {
+      const event = JSON.parse(buffer);
+      if (event.type === "result") finalResult = event;
+      else if (event.type === "error") throw new Error(event.error || "视觉转写失败");
+      else if (event.type === "progress") onProgress?.(event);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        // trailing incomplete line — ignore
+      } else {
+        throw error;
+      }
+    }
+  }
+  if (!finalResult) throw new Error("视觉转写未返回结果");
+  return finalResult;
 }
 
 function updateCommand() {
@@ -207,6 +352,16 @@ function updateStartGuide() {
       readinessBadge.textContent = "任务已结束";
       readinessBadge.dataset.state = "attention";
       runStepHint.textContent = "请检查运行日志，处理问题后可以重新生成。";
+    } else if (confirmProblemToggle?.checked && !problemConfirmArmed) {
+      readinessBadge.textContent = "请先确认题面";
+      readinessBadge.dataset.state = "attention";
+      runStepHint.textContent = latestParsedMdPath
+        ? `已开启启动前确认：请核对题面或 ${latestParsedMdPath}，再点击开始。`
+        : "已开启启动前确认：请核对题面文本，再点击开始进入确认。";
+    } else if (problemConfirmArmed) {
+      readinessBadge.textContent = "题面待最终确认";
+      readinessBadge.dataset.state = "attention";
+      runStepHint.textContent = "确认公式无误后，再次点击「题面无误，开始生成」。";
     } else {
       readinessBadge.textContent = "可以开始生成";
       readinessBadge.dataset.state = "ready";
@@ -376,6 +531,16 @@ async function startProjectRun() {
     updateStartGuide();
     throw new Error("请先填写赛题标题和背景目标，再开始生成。");
   }
+  if (confirmProblemToggle?.checked && !problemConfirmArmed) {
+    problemConfirmArmed = true;
+    document.querySelector("#task-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    updatePipeline(currentRunStatus || "local");
+    showToast(latestParsedMdPath
+      ? `请核对题面与 ${latestParsedMdPath}，确认后再次点击开始`
+      : "请核对题面文本中的公式，确认后再次点击开始");
+    return;
+  }
+  problemConfirmArmed = false;
   lastArtifacts = null;
   updateCommand();
   stageIndex = 0;
@@ -681,12 +846,32 @@ tabButtons.forEach((button) => {
   control?.addEventListener("input", () => {
     currentFixturePath = null;
     problemBadge.textContent = problemTitle.value.trim() || problemBrief.value.trim() ? "手动填写" : "未导入";
+    if (problemConfirmArmed) {
+      problemConfirmArmed = false;
+      updatePipeline(currentRunStatus || "local");
+    }
     updateStartGuide();
   });
 });
-[outputDir, threadId, iterationDepth, ragToggle, hitlToggle, forceToggle].forEach((control) => {
+[outputDir, threadId, iterationDepth, ragToggle, hitlToggle, forceToggle, confirmProblemToggle].forEach((control) => {
   control?.addEventListener("input", updateCommand);
-  control?.addEventListener("change", updateCommand);
+  control?.addEventListener("change", () => {
+    if (control === confirmProblemToggle) {
+      problemConfirmArmed = false;
+      updatePipeline(currentRunStatus || "local");
+    }
+    updateCommand();
+    updateStartGuide();
+  });
+});
+copyParsedMdPath?.addEventListener("click", async () => {
+  if (!latestParsedMdPath) return;
+  try {
+    await navigator.clipboard.writeText(latestParsedMdPath);
+    showToast("已复制 Markdown 路径");
+  } catch {
+    showToast(latestParsedMdPath);
+  }
 });
 
 async function uploadFile(file, purpose) {
@@ -699,6 +884,25 @@ async function uploadFile(file, purpose) {
   return payload;
 }
 
+const PARSE_METHOD_LABELS = {
+  direct: "直接读取",
+  text: "文本层抽取",
+  vision: "视觉转写",
+  text_fallback: "文本抽取（视觉回退失败）",
+  docx: "Word 抽取",
+  user_confirmed: "用户确认",
+};
+
+function attachmentQualityLabel(att) {
+  const q = att.parseQuality;
+  if (!q) return "";
+  if (att._visionProgress) return att._visionProgress;
+  const method = PARSE_METHOD_LABELS[q.method] || q.method;
+  if (q.needsVision) return `待视觉 · ${method}`;
+  if (q.ok === false || (Array.isArray(q.warnings) && q.warnings.length)) return `需核对 · ${method}`;
+  return method;
+}
+
 function renderAttachmentList() {
   attachmentList.innerHTML = uploadedAttachments.map((att, i) => {
     let meta = "";
@@ -709,10 +913,27 @@ function renderAttachmentList() {
     } else if (att.summary?.text_excerpt) {
       meta = `${Math.ceil(att.summary.text_excerpt.length / 1024)} KB 文本`;
     }
-    return `<div class="attachment-item">
-      <span class="att-name">${escapeHtml(att.filename)}</span>
-      <span class="att-meta">${escapeHtml(att.fileType)} · ${escapeHtml(meta)}</span>
-      <button class="att-remove" type="button" data-idx="${i}">×</button>
+    const quality = attachmentQualityLabel(att);
+    const qClass = att._visionProgress
+      ? "working"
+      : att.parseQuality?.needsVision || att.parseQuality?.ok === false
+        ? "warn"
+        : att.parseQuality
+          ? "ok"
+          : "";
+    const pathHtml = att.parsedMdPath
+      ? `<div class="att-path-row">
+          <code class="att-path" title="${escapeHtml(att.parsedMdPath)}">${escapeHtml(att.parsedMdPath)}</code>
+          <button class="ghost-button compact att-copy-path" type="button" data-path="${escapeHtml(att.parsedMdPath)}">复制路径</button>
+        </div>`
+      : "";
+    return `<div class="attachment-item ${qClass}">
+      <div class="att-main">
+        <span class="att-name">${escapeHtml(att.filename)}</span>
+        <span class="att-meta">${escapeHtml(att.fileType)}${meta ? ` · ${escapeHtml(meta)}` : ""}${quality ? ` · ${escapeHtml(quality)}` : ""}</span>
+        ${pathHtml}
+      </div>
+      <button class="att-remove" type="button" data-idx="${i}" ${att._visionProgress ? "disabled" : ""}>×</button>
     </div>`;
   }).join("");
   attachmentList.querySelectorAll(".att-remove").forEach((btn) => {
@@ -721,19 +942,92 @@ function renderAttachmentList() {
       renderAttachmentList();
     });
   });
+  attachmentList.querySelectorAll(".att-copy-path").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const path = btn.dataset.path || "";
+      if (!path) return;
+      try {
+        await navigator.clipboard.writeText(path);
+        showToast("已复制附件解析路径");
+      } catch {
+        showToast(path);
+      }
+    });
+  });
   updateStartGuide();
 }
 
 async function loadAttachmentFile(file) {
   if (!file) return;
+  const ext = file.name.split(".").pop()?.toLowerCase();
   showToast(`正在上传 ${file.name}...`);
+  if (attachmentZone) attachmentZone.classList.add("busy");
   try {
-    const result = await uploadFile(file, "attachment");
+    let result = await uploadFile(file, "attachment");
     uploadedAttachments.push(result);
     renderAttachmentList();
-    showToast(`${file.name} 已上传`);
+
+    if (ext === "pdf" && result.parseQuality?.needsVision && result.storedPath) {
+      const idx = uploadedAttachments.length - 1;
+      const pages = result.parseQuality.pages || result.summary?.total_pages || "?";
+      uploadedAttachments[idx] = {
+        ...result,
+        _visionProgress: `视觉转写中（约 ${pages} 页）…`,
+      };
+      renderAttachmentList();
+      showToast(`${file.name} 公式乱码，开始视觉转写…`);
+      try {
+        const visionResult = await runVisionTranscribe(
+          result.storedPath,
+          (event) => {
+            uploadedAttachments[idx] = {
+              ...uploadedAttachments[idx],
+              _visionProgress: event.message || "视觉转写中…",
+            };
+            renderAttachmentList();
+          },
+          "attachment_parsed.md",
+        );
+        uploadedAttachments[idx] = {
+          ...result,
+          ...visionResult,
+          id: result.id,
+          filename: result.filename,
+          fileType: result.fileType || "pdf",
+          size: result.size,
+          storedPath: result.storedPath,
+          summary: {
+            ...(result.summary || {}),
+            ...(visionResult.summary || {}),
+            text_excerpt: visionResult.text || result.summary?.text_excerpt,
+          },
+          text: visionResult.text || result.text,
+          parsedMdPath: visionResult.parsedMdPath || result.parsedMdPath,
+          parseQuality: visionResult.parseQuality || result.parseQuality,
+          _visionProgress: "",
+        };
+        renderAttachmentList();
+        showToast(visionResult.parseQuality?.method === "vision"
+          ? `${file.name} 已视觉转写，请核对公式`
+          : `${file.name} 视觉转写未完全成功，已保留文本层`);
+      } catch (visionError) {
+        uploadedAttachments[idx] = { ...result, _visionProgress: "" };
+        renderAttachmentList();
+        showToast(`${file.name} 视觉转写失败：${visionError.message}（已保留文本层）`);
+      }
+      return;
+    }
+
+    const q = result.parseQuality;
+    if (q && (q.ok === false || q.needsVision)) {
+      showToast(`${file.name} 已上传，建议核对解析文本`);
+    } else {
+      showToast(`${file.name} 已上传`);
+    }
   } catch (error) {
     showToast(`上传失败：${error.message}`);
+  } finally {
+    attachmentZone?.classList.remove("busy");
   }
 }
 
@@ -746,9 +1040,11 @@ function loadProblemFile(file) {
   uploadMeta.textContent = `${Math.ceil(file.size / 1024)} KB · ${file.type || "本地文件"}`;
   problemBadge.textContent = file.name.split(".").pop()?.toUpperCase() || "FILE";
   currentFixturePath = null;
+  problemConfirmArmed = false;
   updateStartGuide();
   const ext = file.name.split(".").pop()?.toLowerCase();
-  if (ext === "json" || ext === "md" || ext === "txt") {
+  if (ext === "json") {
+    clearParseQuality();
     const reader = new FileReader();
     reader.addEventListener("load", () => {
       const text = String(reader.result || "");
@@ -764,22 +1060,90 @@ function loadProblemFile(file) {
         problemBrief.value = text.slice(0, MAX_PROBLEM_TEXT_CHARS) || problemBrief.value;
       }
       updateStartGuide();
-      showToast("题目文件已读取");
+      showToast("题目 JSON 已读取");
     });
     reader.readAsText(file, "utf-8");
-  } else if (ext === "pdf" || ext === "docx") {
-    showToast(`正在提取 ${file.name} 文本...`);
-    uploadFile(file, "problem").then((result) => {
-      if (result.text) {
-        problemBrief.value = result.text.slice(0, MAX_PROBLEM_TEXT_CHARS);
+  } else if (ext === "md" || ext === "txt" || ext === "pdf" || ext === "docx") {
+    const label = (ext === "md" || ext === "txt") ? "导入" : "提取";
+    setUploadBusy(true);
+    showParseProgress(
+      ext === "pdf" ? "正在抽取 PDF 文本层…" : `正在${label} ${file.name}…`,
+      ext === "pdf"
+        ? "先快速抽取文本；若公式乱码，会自动进入视觉转写并显示分页进度。"
+        : "请稍候。",
+    );
+    showToast(`正在${label} ${file.name}...`);
+    uploadFile(file, "problem")
+      .then(async (result) => {
+        // 扫描件/全乱码 PDF：文本层为空但 needsVision=true，必须先走视觉，不能因空文本提前 return
+        const canVision = ext === "pdf" && result.parseQuality?.needsVision && result.storedPath;
+
+        if (result.text) {
+          problemBrief.value = result.text.slice(0, MAX_PROBLEM_TEXT_CHARS);
+        }
+        showParseQuality(result);
+        updatePipeline(currentRunStatus || "local");
         updateStartGuide();
-        showToast(`${file.name} 文本已提取`);
-      } else {
-        showToast("未能从文件中提取文本");
-      }
-    }).catch((error) => {
-      showToast(`提取失败：${error.message}`);
-    });
+
+        if (canVision) {
+          const pages = result.parseQuality.pages || result.summary?.total_pages || "?";
+          showParseProgress(
+            result.text ? "检测到公式乱码，正在视觉转写…" : "文本层为空，正在视觉转写扫描件…",
+            `约 ${pages} 页。进度会在此更新，请勿关闭页面。`,
+          );
+          showToast(result.text ? "公式乱码，开始视觉转写…" : "文本层为空，开始视觉转写…");
+          try {
+            const visionResult = await runVisionTranscribe(result.storedPath, (event) => {
+              showParseProgress(
+                event.message || "正在视觉转写…",
+                event.pages
+                  ? `共 ${event.pages} 页` + (event.batch ? ` · 第 ${event.batch}/${event.batches || "?"} 批` : "")
+                  : "请勿关闭页面。",
+              );
+              if (uploadMeta) {
+                uploadMeta.textContent = event.message || "视觉转写中…";
+              }
+            });
+            if (visionResult.text) {
+              problemBrief.value = visionResult.text.slice(0, MAX_PROBLEM_TEXT_CHARS);
+            }
+            showParseQuality(visionResult);
+            updatePipeline(currentRunStatus || "local");
+            updateStartGuide();
+            if (!visionResult.text && !result.text) {
+              showToast("视觉转写后仍无可用文本，请改传 Markdown/TXT 或检查 PDF");
+              return;
+            }
+            showToast(visionResult.parseQuality?.method === "vision"
+              ? `${file.name} 已视觉转写，请核对公式`
+              : `${file.name} 视觉转写未完全成功，已保留文本层`);
+          } catch (visionError) {
+            if (!result.text) {
+              clearParseQuality();
+              showToast(`视觉转写失败：${visionError.message}`);
+              return;
+            }
+            showParseQuality(result);
+            showToast(`视觉转写失败：${visionError.message}（已保留文本层）`);
+          }
+          return;
+        }
+
+        if (!result.text) {
+          clearParseQuality();
+          showToast("未能从文件中提取文本");
+          return;
+        }
+
+        showToast(`${file.name} 已${label === "导入" ? "导入" : "提取"}`);
+      })
+      .catch((error) => {
+        clearParseQuality();
+        showToast(`提取失败：${error.message}`);
+      })
+      .finally(() => {
+        setUploadBusy(false);
+      });
   } else {
     showToast("当前仅支持 JSON、Markdown、TXT、PDF、Word 文件");
   }
