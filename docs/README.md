@@ -80,6 +80,13 @@ Web UI 首次访问按环境检查、服务商选择、密钥填写、模型验�
 - [`plan-c-runbook.md`](plan-c-runbook.md)：RAG、benchmark 和错误处理的历史运维快照；
   运行参数仍以 `.env.example` 和代码为准。
 
+## 待确认设计（非现行实现）
+
+- [`../PLAN-console-progress-management.md`](../PLAN-console-progress-management.md)：控制台**观察面**
+  （`watch` / `progress.jsonl`），优先实施候选。
+- [`../PLAN-console-control-plane.md`](../PLAN-console-control-plane.md)：控制面愿景（断点问人、
+  空闲重做、流程 profile）；不进入本轮实现。
+
 ## 历史设计与诊断
 
 以下文件用于追溯，不是现行事实源：
