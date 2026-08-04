@@ -159,12 +159,31 @@ function updateStartGuide() {
   const needsRetry = isFinished && !isSuccessful;
 
   importStep?.classList.toggle("done", ready);
-  importStep?.classList.toggle("active", !ready);
+  importStep?.classList.toggle("active", !ready && !isActive);
   reviewStep?.classList.toggle("done", ready);
   reviewStep?.classList.toggle("active", ready && !currentRunStatus);
-  runStep?.classList.toggle("active", ready && (!currentRunStatus || needsRetry));
+  runStep?.classList.toggle("active", isActive || (ready && (!currentRunStatus || needsRetry)));
   runStep?.classList.toggle("done", isSuccessful);
   runButton.disabled = !ready || isActive;
+
+  // 接回磁盘任务时表单可能仍空：活跃任务优先于「等待导入」
+  if (isActive) {
+    if (currentRunStatus === "running") {
+      readinessBadge.textContent = "任务生成中";
+      readinessBadge.dataset.state = "running";
+      runStepHint.textContent = "任务正在处理，进度会持续更新。";
+    } else {
+      readinessBadge.textContent = "等待人工确认";
+      readinessBadge.dataset.state = "attention";
+      runStepHint.textContent = "请在产物区域审核当前结果后继续。";
+    }
+    reviewStepHint.textContent = ready
+      ? (uploadedAttachments.length
+        ? `题目已就绪，并附有 ${uploadedAttachments.length} 个数据文件。`
+        : "题目已就绪；如有数据文件，可在下方继续添加。")
+      : "题目表单尚未填写；不影响已接回的运行任务。导入只会改表单，不会中断当前任务。";
+    return;
+  }
 
   if (!hasTitle && !hasBrief) {
     readinessBadge.textContent = "等待导入赛题";
@@ -180,15 +199,7 @@ function updateStartGuide() {
     reviewStepHint.textContent = uploadedAttachments.length
       ? `题目已就绪，并附有 ${uploadedAttachments.length} 个数据文件。`
       : "题目已就绪；如有数据文件，可在下方继续添加。";
-    if (currentRunStatus === "running") {
-      readinessBadge.textContent = "任务生成中";
-      readinessBadge.dataset.state = "running";
-      runStepHint.textContent = "任务正在处理，进度会持续更新。";
-    } else if (currentRunStatus === "paused") {
-      readinessBadge.textContent = "等待人工确认";
-      readinessBadge.dataset.state = "attention";
-      runStepHint.textContent = "请在产物区域审核当前结果后继续。";
-    } else if (["completed", "degraded"].includes(currentRunStatus)) {
+    if (["completed", "degraded"].includes(currentRunStatus)) {
       readinessBadge.textContent = "生成已完成";
       readinessBadge.dataset.state = "ready";
       runStepHint.textContent = "论文产物已经生成，可查看或重新运行。";
@@ -202,6 +213,14 @@ function updateStartGuide() {
       runStepHint.textContent = "默认设置已配置好，点击即可启动。";
     }
   }
+}
+
+/** @returns {boolean} 用户确认继续导入 */
+function confirmImportWhileActive() {
+  if (!["running", "paused"].includes(currentRunStatus)) return true;
+  return window.confirm(
+    "当前任务仍在运行中。\n\n导入只会修改题目表单，不会中断或替换正在生成的任务。是否继续？",
+  );
 }
 
 function activateNav(hash) {
@@ -395,6 +414,7 @@ async function pollCurrentRun() {
     const run = await api(`/api/runs/${encodeURIComponent(currentRunId)}`);
     currentRunStatus = run.status;
     if (run.status === "running") {
+      if (run.nextNode) applyNextNodeToStage(run.nextNode);
       if (!logStream) {
         // SSE 未连接 -> 用 API 轮询作为日志 fallback
         setRunLogPreview(run);
@@ -512,7 +532,7 @@ function handleRunEnd(run) {
     showToast("流水线已收口，但存在需要检查的警告");
     loadArtifacts("paper").catch(() => {});
   } else if (run.status === "blocked") {
-    showToast("恢复已达到安全上限，请先处理日志中的问题");
+    showToast("恢复已达到安全上限，请先处理日志中的问题后再用 CLI recover");
   } else if (run.status === "failed" && run.recoverable) {
     showToast("流水线失败，可从最近检查点恢复");
     showRecoverBar(run);
@@ -618,10 +638,12 @@ resetPipelineButton?.addEventListener("click", () => {
 });
 
 importDemoButton?.addEventListener("click", () => {
+  if (!confirmImportWhileActive()) return;
   loadFixturesIntoProblem().catch((error) => showToast(error.message));
 });
 
 chooseProblemButton?.addEventListener("click", () => {
+  if (!confirmImportWhileActive()) return;
   problemFile?.click();
 });
 
@@ -763,10 +785,14 @@ function loadProblemFile(file) {
   }
 }
 
-uploadZone?.addEventListener("click", () => problemFile.click());
+uploadZone?.addEventListener("click", () => {
+  if (!confirmImportWhileActive()) return;
+  problemFile.click();
+});
 uploadZone?.addEventListener("keydown", (event) => {
   if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
+    if (!confirmImportWhileActive()) return;
     problemFile.click();
   }
 });
@@ -779,6 +805,7 @@ uploadZone?.addEventListener("dragleave", () => uploadZone.classList.remove("dra
 uploadZone?.addEventListener("drop", (event) => {
   event.preventDefault();
   uploadZone.classList.remove("dragging");
+  if (!confirmImportWhileActive()) return;
   loadProblemFile(event.dataTransfer.files[0]);
 });
 
@@ -808,6 +835,64 @@ attachmentZone?.addEventListener("drop", (event) => {
   }
 });
 
+function applyNextNodeToStage(nextNode) {
+  if (!nextNode) return;
+  const key = String(nextNode).toLowerCase();
+  const exact = stageLogNames.indexOf(key);
+  if (exact >= 0) {
+    stageIndex = exact;
+    return;
+  }
+  // 最长子串匹配，避免 model_code_consistency 误命中 coder
+  let best = -1;
+  let bestLen = -1;
+  for (let i = 0; i < stageLogNames.length; i += 1) {
+    const name = stageLogNames[i];
+    if (key.includes(name) && name.length > bestLen) {
+      best = i;
+      bestLen = name.length;
+    }
+  }
+  if (best >= 0) stageIndex = best;
+}
+
+async function restoreActiveRunFromDisk() {
+  try {
+    const payload = await api("/api/active-run");
+    if (!payload?.run) return false;
+    const run = payload.run;
+    if (outputDir && payload.out) {
+      outputDir.value = payload.out;
+    }
+    if (threadId && payload.thread) {
+      threadId.value = payload.thread;
+    }
+    updateCommand();
+    currentRunId = run.id;
+    currentRunStatus = run.status;
+    applyNextNodeToStage(payload.nextNode || run.nextNode);
+    if (["running", "paused"].includes(run.status)) {
+      updatePipeline(run.status === "paused" ? "paused" : "running");
+      setRunLogPreview(run);
+      if (run.status === "paused") {
+        showResumeBar(run);
+      } else {
+        startLogStream(currentRunId);
+        pollTimer = window.setTimeout(pollCurrentRun, 2000);
+      }
+      showToast(`已接回任务：${payload.out} (${payload.how || "auto"})`);
+    } else {
+      handleRunEnd(run);
+      showToast(`已加载最近任务：${payload.out} · ${run.status}`);
+    }
+    updateStartGuide();
+    return true;
+  } catch (error) {
+    showToast(`接回任务失败：${error.message}`);
+    return false;
+  }
+}
+
 window.addEventListener("hashchange", () => {
   const hash = window.location.hash || "#workspace";
   activateNav(hash);
@@ -816,11 +901,12 @@ updatePipeline();
 updateCommand();
 updateStartGuide();
 api("/api/health")
-  .then((health) => {
+  .then(async (health) => {
     if (health.onboarding && health.onboarding.needed) {
       showOnboarding();
     } else {
       showToast(`已连接项目：${health.fixtures} 个示例题`);
+      await restoreActiveRunFromDisk();
     }
   })
   .catch((error) => showToast(`项目 API 未连接：${error.message}`));

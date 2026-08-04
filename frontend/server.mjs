@@ -10,6 +10,12 @@ import { fileURLToPath } from "node:url";
 import { handleEnvRoutes } from "./routes/env.mjs";
 import { handleConfigRoutes } from "./routes/config.mjs";
 import { handleOnboardingRoutes, getOnboardingStatus } from "./routes/onboarding.mjs";
+import {
+  adoptedRunId,
+  mapSupervisorToUiStatus,
+  reconcileSupervisorState,
+  resolveActiveRun,
+} from "./lib/active-run.mjs";
 
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const projectRoot = resolve(root, "..");
@@ -233,10 +239,92 @@ function _notifySseClients(run) {
 function _publicRun(run) {
   const { child, sseClients, stdoutBuffer, ...safeRun } = run;
   const checkpointPath = resolve(safeProjectPath(run.out), "checkpoints.sqlite");
+  const hasCheckpoint = existsSync(checkpointPath);
+  const recoverable = hasCheckpoint && run.status === "failed";
   return {
     ...safeRun,
-    recoverable: run.status === "failed" && existsSync(checkpointPath),
+    recoverable,
+    nextNode: run.nextNode || "",
   };
+}
+
+async function _refreshRunFromDisk(run) {
+  const outDir = safeProjectPath(run.out);
+  const supervisor = reconcileSupervisorState(
+    await readJsonSafe(resolve(outDir, "supervisor.json")),
+  );
+  if (supervisor) {
+    const ownsLiveChild = Boolean(
+      run.child && run.pid && !run.adopted && run.status === "running",
+    );
+    if (run.adopted || !ownsLiveChild) {
+      run.status = mapSupervisorToUiStatus(supervisor);
+      run.nextNode = supervisor.last_node || run.nextNode || "";
+      run.threadId = supervisor.thread || run.threadId || "default";
+      if (["completed", "degraded", "rejected", "blocked", "failed", "paused"].includes(run.status)) {
+        run.endedAt = run.endedAt || supervisor.ended_at || new Date().toISOString();
+      }
+    }
+  }
+  const preferredLog = resolve(outDir, "supervisor.log");
+  if (existsSync(preferredLog)) {
+    run.logPath = preferredLog;
+  }
+  return run;
+}
+
+async function readJsonSafe(path) {
+  try {
+    return JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function _adoptOrGetActiveRun() {
+  const discovered = await resolveActiveRun(projectRoot);
+  if (!discovered) return null;
+
+  // 内存里已有同 out 的活任务，优先返回（保留 SSE/child）
+  const existing = [...runs.values()].find(
+    (item) => toPosixRel(item.out) === toPosixRel(discovered.outRel),
+  );
+  if (existing) {
+    await _refreshRunFromDisk(existing);
+    return { run: existing, how: discovered.how, discovered };
+  }
+
+  const id = adoptedRunId(discovered.outRel);
+  let run = runs.get(id);
+  if (!run) {
+    const logPath = resolve(discovered.outAbs, "supervisor.log");
+    run = {
+      id,
+      status: mapSupervisorToUiStatus(discovered.supervisor),
+      command: "(adopted from disk)",
+      out: discovered.outRel,
+      threadId: discovered.thread,
+      ragEnabled: true,
+      iterationDepth: 3,
+      logPath,
+      startedAt: discovered.supervisor?.started_at || null,
+      endedAt: discovered.supervisor?.ended_at || null,
+      exitCode: null,
+      stdoutBuffer: "",
+      sseClients: new Set(),
+      adopted: true,
+      nextNode: discovered.nextNode || "",
+      child: null,
+      pid: null,
+    };
+    runs.set(id, run);
+  }
+  await _refreshRunFromDisk(run);
+  return { run, how: discovered.how, discovered };
+}
+
+function toPosixRel(value) {
+  return String(value || "").replace(/\\/g, "/");
 }
 
 async function _spawnContinuation(run, { mode, approve = null, notes = "" }) {
@@ -251,9 +339,15 @@ async function _spawnContinuation(run, { mode, approve = null, notes = "" }) {
     if (notes) { args.push("--notes", notes); }
   }
 
+  // adopted 任务从未走过 /api/run，ui-server/<id> 目录可能不存在；
+  // 未先 mkdir 时 createWriteStream 的 ENOENT 会变成未处理 error 并打崩整个 Web UI。
   const runDir = safeProjectPath(`runs/ui-server/${run.id}`);
+  await mkdir(runDir, { recursive: true });
   const logPath = resolve(runDir, isHumanReview ? "resume.log" : "recover.log");
   const logStream = createWriteStream(logPath, { flags: "a" });
+  logStream.on("error", (error) => {
+    run.stdoutBuffer = (run.stdoutBuffer + `\n[log error] ${error.message}\n`).slice(-8192);
+  });
   logStream.write(`$ ${command} ${args.join(" ")}\n\n`);
 
   // 恢复沿用原 run id，前端的 SSE 和状态轮询无需切换任务。
@@ -446,6 +540,27 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/active-run") {
+    const adopted = await _adoptOrGetActiveRun();
+    if (!adopted) {
+      sendJson(response, 200, { run: null, how: null });
+      return;
+    }
+    let log = "";
+    try {
+      log = await readFile(adopted.run.logPath, "utf8");
+    } catch {}
+    sendJson(response, 200, {
+      how: adopted.how,
+      out: adopted.discovered.outRel,
+      outAbs: adopted.discovered.outAbs,
+      thread: adopted.discovered.thread,
+      nextNode: adopted.discovered.nextNode || adopted.run.nextNode || "",
+      run: { ..._publicRun(adopted.run), log: log.slice(-6000) },
+    });
+    return;
+  }
+
     if (request.method === "POST" && url.pathname.startsWith("/api/runs/") && url.pathname.endsWith("/stop")) {
     const id = decodeURIComponent(url.pathname.split("/").at(-2) || "");
     const run = runs.get(id);
@@ -533,6 +648,7 @@ async function handleApi(request, response, url) {
       sendJson(response, 404, { error: "Run not found." });
       return;
     }
+    await _refreshRunFromDisk(run);
     let log = "";
     try {
       log = await readFile(run.logPath, "utf8");

@@ -1,6 +1,6 @@
 # Beacon 控制台观察面 · 设计方案
 
-> 状态：待确认（2026-08-04 修订；初稿基于 `main@4fc3ab1`）
+> 状态：实施中（2026-08-04；现行用法见 [`docs/console-observation.md`](docs/console-observation.md)）
 > 定位：**观察面（Observation）**——开跑后永远能看；不指挥任务、不改 checkpoint。
 > 控制面愿景见 [`PLAN-console-control-plane.md`](PLAN-console-control-plane.md)（另页，不进入本轮实现）。
 

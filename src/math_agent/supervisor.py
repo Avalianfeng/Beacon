@@ -242,7 +242,10 @@ def failure_record_for_exception(node: str, exc: BaseException) -> FailureRecord
     if isinstance(exc, (LLMAuthenticationError, LLMInvalidRequestError, FinalizationError)):
         retriable = False
     kind = type(exc).__name__
-    message = str(exc).replace("\r", " ").replace("\n", " ")[:1000]
+    message = str(exc).replace("\r", " ").replace("\n", " ").strip()
+    if not message:
+        message = repr(exc)
+    message = message[:1000]
     return FailureRecord(node=node or "(unknown)", kind=kind, retriable=retriable,
                          message=message)
 
@@ -324,7 +327,23 @@ def _process_worker(
     clear_failure_report(out)
     state.update({"status": "running", "mode": mode, "command": command, "heartbeat_at": _now()})
     _atomic_json(out / "supervisor.json", state)
-    print(f"[supervisor] starting worker: {mode} (attempt {state.get('attempt', 1)})", flush=True)
+    try:
+        from math_agent.run_pointer import write_active_run
+        write_active_run(out, thread=str(state.get("thread") or "default"), status="running")
+    except Exception:
+        pass
+    start_line = f"[supervisor] starting worker: {mode} (attempt {state.get('attempt', 1)})"
+    print(start_line, flush=True)
+    try:
+        from math_agent.progress import append_supervisor_log, emit_run_boundary
+        append_supervisor_log(out, start_line)
+        emit_run_boundary(
+            out,
+            attempt=int(state.get("attempt", 1) or 1),
+            mode=str(mode),
+        )
+    except Exception:
+        pass
     worker_env = {
         **os.environ,
         "PYTHONPATH": os.pathsep.join(filter(None, [
@@ -484,6 +503,11 @@ def run_process_supervisor(
             "message": result.message,
         })
         _atomic_json(out / "supervisor.json", state)
+        try:
+            from math_agent.run_pointer import write_active_run
+            write_active_run(out, thread=thread, status=result.status)
+        except Exception:
+            pass
         return result
 
 

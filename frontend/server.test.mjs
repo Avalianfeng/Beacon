@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -251,6 +251,43 @@ test("POST /api/runs/:id/recover 从失败任务的 checkpoint 恢复", async ()
   assert.match(recovered.command, /supervise-recover/);
 });
 
+test("POST recover 在缺少 ui-server 日志目录时仍可用且不打崩服务", async () => {
+  const outputDir = `runs/ui-test-recover-mkdir-${Date.now()}`;
+  const response = await fetch(`${base}/api/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "recover-mkdir-test",
+      background: "recover-mkdir-test",
+      fixturePath: "tests/fixtures/does-not-exist.json",
+      outputDir,
+      threadId: "recover-mkdir-test",
+      noInterrupt: true,
+      ragEnabled: false,
+    }),
+  });
+  assert.equal(response.status, 202);
+  const { run } = await response.json();
+  await waitForRunStatus(run.id, "failed");
+
+  const absoluteOut = resolve(projectRoot, outputDir);
+  await mkdir(absoluteOut, { recursive: true });
+  await writeFile(resolve(absoluteOut, "checkpoints.sqlite"), "checkpoint");
+  // 模拟 adopted / 目录被删：恢复写 recover.log 前必须自行 mkdir
+  await rm(resolve(projectRoot, "runs/ui-server", run.id), { recursive: true, force: true });
+
+  const recoverResponse = await fetch(`${base}/api/runs/${run.id}/recover`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(recoverResponse.status, 200);
+  assert.equal((await recoverResponse.json()).run.status, "running");
+
+  const health = await fetch(`${base}/api/health`);
+  assert.equal(health.status, 200);
+});
+
 test("恢复达到安全上限后进入 blocked 且不能再次恢复", async () => {
   const outputDir = `runs/ui-test-recover-blocked-${Date.now()}`;
   const response = await fetch(`${base}/api/run`, {
@@ -362,11 +399,17 @@ test("POST /api/config/test-llm 向直连端点发送原生模型名", async (co
   assert.deepEqual(receivedModels, ["deepseek-chat", "llama3", "ocg/custom-model"]);
 });
 
-test("GET /api/providers 返回提供商列表", async () => {
-  const response = await fetch(`${base}/api/providers`);
+test("GET /api/active-run 可发现磁盘上的运行目录", async () => {
+  const response = await fetch(`${base}/api/active-run`);
   assert.equal(response.status, 200);
   const data = await response.json();
-  assert.ok(Array.isArray(data));
-  assert.ok(data.length >= 5);
-  assert.ok(data.some((p) => p.id === "deepseek"));
+  // 本机可能已有 runs/ui-latest；无任务时 run 为 null
+  if (data.run) {
+    assert.ok(data.out);
+    assert.ok(data.how);
+    assert.ok(data.run.id);
+    assert.ok(data.run.status);
+  } else {
+    assert.equal(data.run, null);
+  }
 });

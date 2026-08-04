@@ -33,8 +33,11 @@ uv run math-agent start `
 
 ```powershell
 uv run math-agent status --out runs/my-run --thread default
-Get-Content -Wait runs/my-run/supervisor.log
+uv run math-agent watch --out runs/my-run --thread default
 ```
+
+`watch` 只读跟随进度与日志，退出观察不会终止后台任务。也可用
+`Get-Content -Wait runs/my-run/supervisor.log` 直接看原始日志。
 
 需要在当前终端持续看输出时，使用 `supervise`；需要人工处理时仍可直接调用 `recover`：
 

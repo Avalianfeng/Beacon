@@ -2,6 +2,7 @@
 
 run     : 启动一次任务（默认在 human_review 处中断）
 resume  : 提供 human decision 并续跑
+watch   : 只读跟随运行进度与日志（不杀任务）
 report  : 打印一次运行的 trace 报告
 ingest  : 把语料目录嵌入到向量库（RAG 索引）
 bench   : 真跑历年题回归基准（live 模式）
@@ -186,6 +187,11 @@ def _failure_node(exc: BaseException) -> str:
 def _record_failure(out: Path, exc: BaseException):
     record = failure_record_for_exception(_failure_node(exc), exc)
     write_failure_report(out, record)
+    try:
+        from math_agent.progress import emit_error
+        emit_error(out, node=record.node, kind=record.kind, message=record.message)
+    except Exception:
+        pass
     return record
 
 
@@ -318,9 +324,14 @@ def _prepare_run_output(out: Path, thread: str, force: bool) -> None:
     for stale_name in (
         "trace.json", "state_summary.json", "paper.md", "paper.tex", "paper.pdf",
         "completion.json", "final_state.json", "failure.json", "supervisor.json",
-        "run_manifest.json",
+        "run_manifest.json", "progress.jsonl",
     ):
         (out / stale_name).unlink(missing_ok=True)
+    try:
+        from math_agent.progress import reset_progress
+        reset_progress(out, epoch=1, attempt=1)
+    except Exception:
+        pass
 
 
 @app.command()
@@ -368,6 +379,16 @@ def run(
             _prepare_run_output(out, thread, force)
             _write_run_manifest(out, thread, spec, no_interrupt=no_interrupt)
             clear_failure_report(out)
+            try:
+                from math_agent.progress import emit_run_boundary
+                emit_run_boundary(out, attempt=1, mode="run")
+            except Exception:
+                pass
+            try:
+                from math_agent.run_pointer import write_active_run
+                write_active_run(out, thread=thread, status="running")
+            except Exception:
+                pass
             tracer = Tracer(thread_id=thread, out_dir=out)
             tok = set_current(tracer)
             with _saver_cm(out) as saver:
@@ -687,17 +708,77 @@ def start(
     if force:
         args.append("--force")
     pid = start_detached_supervisor(out=out, supervise_args=args, cwd=Path.cwd())
+    try:
+        from math_agent.run_pointer import write_active_run
+        write_active_run(out, thread=thread, status="starting")
+    except Exception:
+        pass
     typer.echo(f"Beacon supervisor 已在后台启动，PID={pid}")
+    typer.echo(f"观察：uv run math-agent watch")
+    typer.echo(f"     （或显式）uv run math-agent watch --out {out} --thread {thread}")
     typer.echo(f"状态：uv run math-agent status --out {out} --thread {thread}")
     typer.echo(f"日志：{out / 'supervisor.log'}")
 
 
 @app.command()
+def watch(
+    out: Path | None = typer.Option(
+        None,
+        "--out",
+        help="运行目录；省略则自动指向进行中的任务，否则最近一次运行",
+    ),
+    thread: str = typer.Option("default"),
+    mode: str = typer.Option(
+        "auto",
+        "--mode",
+        help="auto=TTY 面板否则纯文本；log=纯文本；panel=强制面板",
+    ),
+    tail: int = typer.Option(200, min=1, help="日志尾部行数"),
+    refresh: float = typer.Option(1.0, min=0.2, help="刷新间隔秒"),
+    follow_exit: bool = typer.Option(
+        False,
+        "--follow-exit",
+        help="在 completed/degraded/rejected/blocked 时自动退出观察",
+    ),
+):
+    """只读跟随运行进度与日志；退出观察不会终止后台任务。
+
+    默认无需 ``--out``：自动发现进行中的任务，否则跟随最近一次运行。
+    """
+    if mode not in {"auto", "log", "panel"}:
+        raise typer.BadParameter("mode 只能是 auto | log | panel", param_hint="--mode")
+    from math_agent.run_pointer import resolve_out_dir
+    from math_agent.watch import watch_loop
+
+    resolved, how = resolve_out_dir(out)
+    if how != "explicit":
+        typer.echo(f"[watch] auto → {resolved}  ({how})", err=True)
+    raise typer.Exit(watch_loop(
+        resolved,
+        thread,
+        mode=mode,  # type: ignore[arg-type]
+        tail=tail,
+        refresh=refresh,
+        follow_exit=follow_exit,
+        resolve_how=how,
+    ))
+
+
+@app.command()
 def status(
-    out: Path = typer.Option(Path("runs/latest")),
+    out: Path | None = typer.Option(
+        None,
+        "--out",
+        help="运行目录；省略则自动指向进行中或最近一次运行",
+    ),
     thread: str = typer.Option("default"),
 ):
     """读取 checkpoint、supervisor 和最终提交标记，不修改运行状态。"""
+    from math_agent.run_pointer import resolve_out_dir
+
+    out, how = resolve_out_dir(out)
+    if how != "explicit":
+        typer.echo(f"[status] auto → {out}  ({how})")
     inspection = inspect_checkpoint(out, thread)
     supervisor_state = None
     completion = None

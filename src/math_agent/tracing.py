@@ -120,6 +120,17 @@ class Tracer:
         m["prompt_tokens"] += prompt_tokens
         m["completion_tokens"] += completion_tokens
         m["latency_ms"] += latency_ms
+        try:
+            from math_agent.progress import emit_llm_call
+            emit_llm_call(
+                self.out_dir,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                latency_ms=latency_ms,
+            )
+        except Exception:
+            pass
 
     # ---- §9.1 attempt 级追踪 ----
     _pending_attempt: dict | None = None

@@ -468,6 +468,15 @@ def complete(
                     _can_fail_over(error)
                     and candidate_index + 1 < len(ordered_candidates)
                 ):
+                    nxt = ordered_candidates[candidate_index + 1]
+                    failover_line = f"[llm] failover {active_model}→{nxt}"
+                    print(failover_line, flush=True)
+                    if tracer is not None:
+                        try:
+                            from math_agent.progress import append_supervisor_log
+                            append_supervisor_log(tracer.out_dir, failover_line)
+                        except Exception:
+                            pass
                     candidate_index += 1
                     continue
                 allowed = _attempt_limit(error)

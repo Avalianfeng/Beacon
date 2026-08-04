@@ -41,20 +41,54 @@ def _wrap(fn, name: str):
     """如当前 contextvar 上有 Tracer，按节点名打点；没有则原样调用。
     同时设置 _last_node_name contextvar 供 CLI 报错时显示当前节点。"""
     def _inner(s):
+        import time
+
+        from math_agent.progress import (
+            append_supervisor_log, emit_error, emit_node_end, emit_node_start,
+        )
         from math_agent.tracing import (
             get_current, set_last_node, reset_last_node, record_failed_node,
         )
         tok = set_last_node(name)
+        stage = ""
         try:
-            print(f"[pipeline] node: {name}", flush=True)
-            tracer = get_current()
+            stage = str(
+                s.get("stage_target", "") if isinstance(s, dict)
+                else getattr(s, "stage_target", "") or ""
+            )
+        except Exception:
+            stage = ""
+        stage_bit = f" (stage={stage})" if stage else ""
+        line = f"[pipeline] node: {name}{stage_bit}"
+        print(line, flush=True)
+        tracer = get_current()
+        out_dir = tracer.out_dir if tracer is not None else None
+        append_supervisor_log(out_dir, line)
+        emit_node_start(out_dir, name, **({"stage": stage} if stage else {}))
+        started = time.monotonic()
+        try:
             if tracer is not None:
                 with tracer.node(name):
-                    return fn(s)
-            return fn(s)
+                    result = fn(s)
+            else:
+                result = fn(s)
+            duration_ms = int(max(0.0, time.monotonic() - started) * 1000)
+            end_line = f"[pipeline] node_end: {name} ({duration_ms}ms)"
+            print(end_line, flush=True)
+            append_supervisor_log(out_dir, end_line)
+            emit_node_end(out_dir, name, duration_ms=duration_ms)
+            return result
         except BaseException as exc:
             # 活跃节点 contextvar 会在 finally 中恢复；另存失败节点供 CLI 报错。
             record_failed_node(name)
+            duration_ms = int(max(0.0, time.monotonic() - started) * 1000)
+            emit_error(
+                out_dir,
+                node=name,
+                kind=type(exc).__name__,
+                message=(str(exc).strip() or repr(exc)),
+                duration_ms=duration_ms,
+            )
             # LangGraph 可能在线程池上下文中执行节点，contextvar 的写入不会反向
             # 传播到调用线程。把节点名附到异常对象上，跨线程重新抛出后仍可读取。
             try:

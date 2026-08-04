@@ -75,17 +75,18 @@ Web UI 首次访问按环境检查、服务商选择、密钥填写、模型验�
   图文排布和篇幅门禁。
 - [`beacon-resilient-execution.md`](beacon-resilient-execution.md)：后台监督、恢复、硬期限和
   最终原子收口。
+- [`console-observation.md`](console-observation.md)：控制台观察面（`watch` / `progress.jsonl`）。
 - [`huazhong-2026-a-quality-gap.md`](huazhong-2026-a-quality-gap.md)：当前真题结果、
   8 篇获奖论文对比和剩余差距。
 - [`plan-c-runbook.md`](plan-c-runbook.md)：RAG、benchmark 和错误处理的历史运维快照；
   运行参数仍以 `.env.example` 和代码为准。
 
-## 待确认设计（非现行实现）
+## 待确认 / 愿景设计（非现行实现说明）
 
-- [`../PLAN-console-progress-management.md`](../PLAN-console-progress-management.md)：控制台**观察面**
-  （`watch` / `progress.jsonl`），优先实施候选。
+- [`../PLAN-console-progress-management.md`](../PLAN-console-progress-management.md)：观察面设计稿
+  （实现说明以 [`console-observation.md`](console-observation.md) 为准）。
 - [`../PLAN-console-control-plane.md`](../PLAN-console-control-plane.md)：控制面愿景（断点问人、
-  空闲重做、流程 profile）；不进入本轮实现。
+  空闲重做、流程 profile）；尚未实现。
 
 ## 历史设计与诊断
 

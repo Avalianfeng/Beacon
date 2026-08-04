@@ -157,6 +157,7 @@ uv run math-agent recover --out runs/demo2
 
 # 推荐：后台监管运行，适合 Codex CLI / Claude CLI 等短生命周期宿主
 uv run math-agent start --problem tests/fixtures/sample_problem.json --out runs/demo3 --no-interrupt
+uv run math-agent watch --out runs/demo3
 uv run math-agent status --out runs/demo3
 
 # View the run report (tokens, timing, per-node breakdown)
@@ -190,6 +191,8 @@ Beacon/
 │   ├── config.py               # Centralized configuration
 │   ├── llm.py                  # Unified LLM client (LiteLLM + retry + repair)
 │   ├── tracing.py              # Lightweight run tracer
+│   ├── watch.py                # Read-only console progress follower
+│   ├── progress.py             # progress.jsonl event stream
 │   ├── routing.py              # Conditional edge routing (critic loops)
 │   ├── errors.py               # Typed exception hierarchy
 │   ├── retry.py                # Tenacity retry decorators
