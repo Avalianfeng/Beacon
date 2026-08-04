@@ -34,3 +34,12 @@ def test_empty_superscripts_trigger_when_common():
 def test_short_clean_text_not_forced():
     report = assess_garble("短文本 ok")
     assert report.should_vision_fallback is False
+
+
+def test_empty_text_triggers_vision():
+    """扫描件/无文本层：空串必须标记视觉回退，供前端两阶段路径消费。"""
+    report = assess_garble("")
+    assert report.ok is False
+    assert report.should_vision_fallback is True
+    assert "empty_text" in report.warnings
+    assert report.garble_ratio == 1.0

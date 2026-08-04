@@ -184,8 +184,9 @@ function showParseQuality(result) {
   parseQualityBanner.classList.toggle("ok", ok && warnings.length === 0 && !needsVision);
   parseQualityBanner.classList.toggle("warn", !ok || warnings.length > 0 || needsVision);
   const methodLabel = PARSE_METHOD_LABELS[method] || method;
+  const emptyText = warnings.includes("empty_text");
   parseQualityTitle.textContent = needsVision
-    ? `检测到公式乱码（${methodLabel}）`
+    ? (emptyText ? `文本层为空，将视觉转写（${methodLabel}）` : `检测到公式乱码（${methodLabel}）`)
     : ok && warnings.length === 0
       ? `题面解析完成（${methodLabel}）`
       : `请核对题面公式（${methodLabel}）`;
@@ -194,9 +195,15 @@ function showParseQuality(result) {
   if (Number.isFinite(ratio) && ratio > 0) parts.push(`乱码比例 ${(ratio * 100).toFixed(1)}%`);
   if (quality?.pages) parts.push(`${quality.pages} 页`);
   if (warnings.length) parts.push(`警告: ${warnings.join(", ")}`);
-  if (needsVision) parts.push("将自动启动视觉转写，进度会显示在此处。");
-  else if (!parts.length) parts.push("可将下方 Markdown 中间产物作为校对参考；启动时以文本框内容为准。");
-  else parts.push("建议打开中间产物核对公式后再启动。");
+  if (needsVision) {
+    parts.push(emptyText
+      ? "扫描件或无文本层 PDF，将自动启动视觉转写。"
+      : "将自动启动视觉转写，进度会显示在此处。");
+  } else if (!parts.length) {
+    parts.push("可将下方 Markdown 中间产物作为校对参考；启动时以文本框内容为准。");
+  } else {
+    parts.push("建议打开中间产物核对公式后再启动。");
+  }
   parseQualityDetail.textContent = parts.join(" · ");
   if (mdPath) {
     parseQualityPathRow.hidden = false;
@@ -1046,43 +1053,63 @@ function loadProblemFile(file) {
     showToast(`正在${label} ${file.name}...`);
     uploadFile(file, "problem")
       .then(async (result) => {
-        if (!result.text) {
-          clearParseQuality();
-          showToast("未能从文件中提取文本");
-          return;
+        // 扫描件/全乱码 PDF：文本层为空但 needsVision=true，必须先走视觉，不能因空文本提前 return
+        const canVision = ext === "pdf" && result.parseQuality?.needsVision && result.storedPath;
+
+        if (result.text) {
+          problemBrief.value = result.text.slice(0, MAX_PROBLEM_TEXT_CHARS);
         }
-        problemBrief.value = result.text.slice(0, MAX_PROBLEM_TEXT_CHARS);
         showParseQuality(result);
         updatePipeline(currentRunStatus || "local");
         updateStartGuide();
 
-        if (ext === "pdf" && result.parseQuality?.needsVision && result.storedPath) {
+        if (canVision) {
           const pages = result.parseQuality.pages || result.summary?.total_pages || "?";
           showParseProgress(
-            "检测到公式乱码，正在视觉转写…",
+            result.text ? "检测到公式乱码，正在视觉转写…" : "文本层为空，正在视觉转写扫描件…",
             `约 ${pages} 页。进度会在此更新，请勿关闭页面。`,
           );
-          showToast("公式乱码，开始视觉转写…");
-          const visionResult = await runVisionTranscribe(result.storedPath, (event) => {
-            showParseProgress(
-              event.message || "正在视觉转写…",
-              event.pages
-                ? `共 ${event.pages} 页` + (event.batch ? ` · 第 ${event.batch}/${event.batches || "?"} 批` : "")
-                : "请勿关闭页面。",
-            );
-            if (uploadMeta) {
-              uploadMeta.textContent = event.message || "视觉转写中…";
+          showToast(result.text ? "公式乱码，开始视觉转写…" : "文本层为空，开始视觉转写…");
+          try {
+            const visionResult = await runVisionTranscribe(result.storedPath, (event) => {
+              showParseProgress(
+                event.message || "正在视觉转写…",
+                event.pages
+                  ? `共 ${event.pages} 页` + (event.batch ? ` · 第 ${event.batch}/${event.batches || "?"} 批` : "")
+                  : "请勿关闭页面。",
+              );
+              if (uploadMeta) {
+                uploadMeta.textContent = event.message || "视觉转写中…";
+              }
+            });
+            if (visionResult.text) {
+              problemBrief.value = visionResult.text.slice(0, MAX_PROBLEM_TEXT_CHARS);
             }
-          });
-          if (visionResult.text) {
-            problemBrief.value = visionResult.text.slice(0, MAX_PROBLEM_TEXT_CHARS);
+            showParseQuality(visionResult);
+            updatePipeline(currentRunStatus || "local");
+            updateStartGuide();
+            if (!visionResult.text && !result.text) {
+              showToast("视觉转写后仍无可用文本，请改传 Markdown/TXT 或检查 PDF");
+              return;
+            }
+            showToast(visionResult.parseQuality?.method === "vision"
+              ? `${file.name} 已视觉转写，请核对公式`
+              : `${file.name} 视觉转写未完全成功，已保留文本层`);
+          } catch (visionError) {
+            if (!result.text) {
+              clearParseQuality();
+              showToast(`视觉转写失败：${visionError.message}`);
+              return;
+            }
+            showParseQuality(result);
+            showToast(`视觉转写失败：${visionError.message}（已保留文本层）`);
           }
-          showParseQuality(visionResult);
-          updatePipeline(currentRunStatus || "local");
-          updateStartGuide();
-          showToast(visionResult.parseQuality?.method === "vision"
-            ? `${file.name} 已视觉转写，请核对公式`
-            : `${file.name} 视觉转写未完全成功，已保留文本层`);
+          return;
+        }
+
+        if (!result.text) {
+          clearParseQuality();
+          showToast("未能从文件中提取文本");
           return;
         }
 
