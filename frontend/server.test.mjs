@@ -102,6 +102,50 @@ test("产物接口禁止访问项目目录之外", async () => {
   assert.equal(response.status, 403);
 });
 
+test("POST /api/upload/vision 缺少 storedPath 时返回 400", async () => {
+  const response = await fetch(`${base}/api/upload/vision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(response.status, 400);
+});
+
+test("POST /api/upload 题面 Markdown 返回 parseQuality 与 parsedMdPath", async () => {
+  const boundary = "----testboundary-md-problem";
+  const mdContent = "# 赛题\n\n最小化运输成本，满足时间窗约束。\n";
+  const body = [
+    `--${boundary}\r\n`,
+    `Content-Disposition: form-data; name="purpose"\r\n\r\n`,
+    `problem\r\n`,
+    `--${boundary}\r\n`,
+    `Content-Disposition: form-data; name="file"; filename="problem.md"\r\n`,
+    `Content-Type: text/markdown\r\n\r\n`,
+    mdContent,
+    `\r\n--${boundary}--\r\n`,
+  ].join("");
+
+  const response = await fetch(`${base}/api/upload`, {
+    method: "POST",
+    headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+    body,
+  });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.filename, "problem.md");
+  assert.ok(data.text.includes("最小化运输成本"));
+  assert.ok(data.parseQuality);
+  assert.equal(data.parseQuality.method, "direct");
+  assert.equal(data.parseQuality.ok, true);
+  assert.ok(data.parsedMdPath);
+  assert.match(data.parsedMdPath, /problem_parsed\.md$/);
+  // UI 需要绝对路径，便于用户在资源管理器中打开
+  assert.ok(
+    data.parsedMdPath.includes(":") || data.parsedMdPath.startsWith("/") || data.parsedMdPath.startsWith("\\\\"),
+    `expected absolute path, got ${data.parsedMdPath}`,
+  );
+});
+
 test("POST /api/upload 接受 CSV 附件并返回摘要", async () => {
   const boundary = "----testboundary12345";
   const csvContent = "name,value\nAlice,30\nBob,25\n";

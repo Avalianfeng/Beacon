@@ -97,14 +97,19 @@ function parseMultipart(buffer, boundary) {
   return parts;
 }
 
-async function generateFileMeta(filePath) {
+function resolvePython() {
   const venvPython = resolve(
     projectRoot,
     ".venv",
     globalThis.process?.platform === "win32" ? "Scripts/python.exe" : "bin/python",
   );
-  const python = env.PYTHON || (existsSync(venvPython) ? venvPython : "python");
-  const py = spawn(python, ["scripts/extract_file_meta.py", filePath], {
+  return env.PYTHON || (existsSync(venvPython) ? venvPython : "python");
+}
+
+async function generateFileMeta(filePath, purpose = "attachment") {
+  const python = resolvePython();
+  const safePurpose = purpose === "problem" ? "problem" : "attachment";
+  const py = spawn(python, ["scripts/extract_file_meta.py", filePath, safePurpose], {
     cwd: projectRoot,
     windowsHide: true,
   });
@@ -122,6 +127,12 @@ async function generateFileMeta(filePath) {
     });
     py.on("error", reject);
   });
+}
+
+function normalizeParsedMdPath(rawPath) {
+  // UI 展示绝对路径，便于用户在资源管理器中定位；相对路径容易找不到。
+  if (!rawPath) return "";
+  return isAbsolute(rawPath) ? resolve(rawPath) : resolve(projectRoot, rawPath);
 }
 
 class HttpError extends Error {
@@ -373,7 +384,7 @@ async function handleApi(request, response, url) {
 
     let meta;
     try {
-      meta = await generateFileMeta(filePath);
+      meta = await generateFileMeta(filePath, purpose);
     } catch (e) {
       sendJson(response, 500, { error: `File meta extraction failed: ${e.message}` });
       return;
@@ -386,11 +397,113 @@ async function handleApi(request, response, url) {
       storedPath: relative(projectRoot, filePath).replace(/\\/g, "/"),
       summary: meta.summary,
       text: "",
+      parsedMdPath: meta.parsed_md_path || meta.summary?.parsed_md || "",
+      parseQuality: meta.parse_quality || meta.summary?.parse_quality || null,
     };
     if (purpose === "problem" && meta.summary && meta.summary.text_excerpt) {
       result.text = meta.summary.text_excerpt;
     }
+    result.parsedMdPath = normalizeParsedMdPath(result.parsedMdPath);
     sendJson(response, 200, result);
+    return;
+  }
+
+  // 题面 PDF 视觉转写：NDJSON 流（progress 行 + 最终 result）
+  if (request.method === "POST" && url.pathname === "/api/upload/vision") {
+    let body;
+    try {
+      body = await readJsonBody(request);
+    } catch (error) {
+      sendJson(response, error.status || 400, { error: error.message || "Invalid JSON body." });
+      return;
+    }
+    if (!body.storedPath) {
+      sendJson(response, 400, { error: "storedPath is required." });
+      return;
+    }
+    let filePath;
+    try {
+      filePath = safeProjectPath(body.storedPath);
+    } catch {
+      sendJson(response, 403, { error: "storedPath is outside project root." });
+      return;
+    }
+    if (!existsSync(filePath) || extname(filePath).toLowerCase() !== ".pdf") {
+      sendJson(response, 400, { error: "storedPath must point to an uploaded PDF." });
+      return;
+    }
+
+    response.writeHead(200, {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache",
+    });
+    const writeEvent = (payload) => {
+      response.write(`${JSON.stringify(payload)}\n`);
+    };
+    writeEvent({
+      type: "progress",
+      stage: "start",
+      message: "已检测到公式乱码，正在启动视觉转写…",
+    });
+
+    const python = resolvePython();
+    const py = spawn(python, ["scripts/vision_transcribe_problem.py", filePath], {
+      cwd: projectRoot,
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderrBuf = "";
+    py.stdout.on("data", (chunk) => { stdout += chunk; });
+    py.stderr.on("data", (chunk) => {
+      stderrBuf += chunk.toString("utf8");
+      const lines = stderrBuf.split(/\r?\n/);
+      stderrBuf = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("PROGRESS ")) continue;
+        try {
+          const event = JSON.parse(line.slice("PROGRESS ".length));
+          writeEvent({ type: "progress", ...event });
+        } catch {
+          // ignore malformed progress lines
+        }
+      }
+    });
+    py.on("error", (error) => {
+      writeEvent({ type: "error", error: error.message });
+      response.end();
+    });
+    py.on("close", (code) => {
+      if (stderrBuf.startsWith("PROGRESS ")) {
+        try {
+          writeEvent({ type: "progress", ...JSON.parse(stderrBuf.slice("PROGRESS ".length)) });
+        } catch {}
+      }
+      if (code !== 0) {
+        writeEvent({ type: "error", error: stderrBuf || stdout || "vision script failed" });
+        response.end();
+        return;
+      }
+      try {
+        const meta = JSON.parse(stdout.trim());
+        if (meta.error) {
+          writeEvent({ type: "error", error: meta.error });
+          response.end();
+          return;
+        }
+        writeEvent({
+          type: "result",
+          text: meta.text || meta.summary?.text_excerpt || "",
+          parsedMdPath: normalizeParsedMdPath(meta.parsed_md_path || meta.summary?.parsed_md || ""),
+          parseQuality: meta.parse_quality || meta.summary?.parse_quality || null,
+          summary: meta.summary || {},
+          filename: meta.filename,
+          storedPath: body.storedPath,
+        });
+      } catch (error) {
+        writeEvent({ type: "error", error: error.message || "invalid vision JSON" });
+      }
+      response.end();
+    });
     return;
   }
 
@@ -605,6 +718,22 @@ async function handleApi(request, response, url) {
       problem.data_files = dataFiles;
     }
     await writeFile(problemPath, JSON.stringify(problem, null, 2), "utf8");
+
+    // 最终确认后的题面落盘，供审计（以用户编辑后的 background 为准）
+    const sourceBody = String(body.background || "");
+    const sourceMd = [
+      "---",
+      'source: "user_confirmed"',
+      'method: "user_confirmed"',
+      "garble_score: 0",
+      "pages: 0",
+      "warnings: []",
+      "---",
+      "",
+      sourceBody.replace(/\r\n/g, "\n").trimEnd(),
+      "",
+    ].join("\n");
+    await writeFile(resolve(outDir, "problem_source.md"), sourceMd, "utf8");
 
     const commandParts = splitCommandLine(env.MATH_AGENT_COMMAND || "uv run math-agent");
     const command = commandParts[0];
