@@ -19,7 +19,8 @@ uv run math-agent watch --out runs/ui-latest
 Web UI 刷新后通过 `GET /api/active-run` 用同一套规则接回任务（内存里的 run id 会丢，但磁盘上的 pipeline 不会），原有轮询与 SSE 刷新机制保持不变。
 
 `watch` **只读**跟随 `supervisor.json`、`supervisor.log`、checkpoint 与 `progress.jsonl`。
-`q` / `Ctrl+C` 只退出观察进程，不会终止后台任务。
+`q` / `Ctrl+C` 只退出观察进程，不会终止后台任务。  
+非 TTY（管道/CI）默认进入 `log` 模式，行为类似 `tail -f`：需 `Ctrl+C` 结束，或加 `--follow-exit` 在终态自动退出。
 
 ## 三种意图
 

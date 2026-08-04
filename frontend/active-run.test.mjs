@@ -9,6 +9,7 @@ import {
   peekProgressNodeFromText,
   reconcileSupervisorState,
   resolveActiveRun,
+  resolveNextNode,
 } from "./lib/active-run.mjs";
 
 test("reconcile marks expired heartbeat as stale", () => {
@@ -90,4 +91,25 @@ test("resolveActiveRun prefers progress after boundary over stale last_node", as
   const found = await resolveActiveRun(root);
   assert.ok(found);
   assert.equal(found.nextNode, "modeler");
+});
+
+test("resolveNextNode keeps progress node across poll-style refresh", async () => {
+  const out = join(tmpdir(), `beacon-next-${randomUUID()}`);
+  await mkdir(out, { recursive: true });
+  const supervisor = {
+    status: "running",
+    last_node: "writer",
+    heartbeat_at: new Date().toISOString(),
+  };
+  await writeFile(
+    join(out, "progress.jsonl"),
+    [
+      JSON.stringify({ type: "run_boundary", attempt: 2 }),
+      JSON.stringify({ type: "node_start", node: "model_critic" }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+  assert.equal(await resolveNextNode(out, supervisor), "model_critic");
+  // 模拟第二次轮询：last_node 仍陈旧，结果不得回退
+  assert.equal(await resolveNextNode(out, supervisor), "model_critic");
 });

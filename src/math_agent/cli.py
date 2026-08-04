@@ -738,7 +738,7 @@ def watch(
     follow_exit: bool = typer.Option(
         False,
         "--follow-exit",
-        help="在 completed/degraded/rejected/blocked 时自动退出观察",
+        help="在 completed/degraded/rejected/blocked 时自动退出观察（非 TTY 管道场景建议开启）",
     ),
 ):
     """只读跟随运行进度与日志；退出观察不会终止后台任务。

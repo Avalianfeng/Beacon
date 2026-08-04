@@ -15,6 +15,7 @@ import {
   mapSupervisorToUiStatus,
   reconcileSupervisorState,
   resolveActiveRun,
+  resolveNextNode,
 } from "./lib/active-run.mjs";
 
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
@@ -259,7 +260,11 @@ async function _refreshRunFromDisk(run) {
     );
     if (run.adopted || !ownsLiveChild) {
       run.status = mapSupervisorToUiStatus(supervisor);
-      run.nextNode = supervisor.last_node || run.nextNode || "";
+      // 与 finalize / resolveNextNode 同一规则：勿用陈旧 last_node 覆盖 progress
+      const fromDisk = await resolveNextNode(outDir, supervisor);
+      if (fromDisk) {
+        run.nextNode = fromDisk;
+      }
       run.threadId = supervisor.thread || run.threadId || "default";
       if (["completed", "degraded", "rejected", "blocked", "failed", "paused"].includes(run.status)) {
         run.endedAt = run.endedAt || supervisor.ended_at || new Date().toISOString();

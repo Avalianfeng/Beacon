@@ -122,22 +122,26 @@ export async function resolveActiveRun(projectRoot) {
 async function finalize(projectRoot, outAbs, supervisor, how, threadHint) {
   const outRel = toPosix(relative(projectRoot, outAbs)) || ".";
   const thread = threadHint || supervisor?.thread || "default";
-  const status = String(supervisor?.status || "");
-  // 运行中 last_node 常为空或来自上一轮结束，优先读本 epoch 的 progress
-  let nextNode = "";
-  if (["starting", "running", "paused"].includes(status)) {
-    nextNode = await peekProgressNode(outAbs);
-  } else {
-    nextNode = supervisor?.last_node || (await peekProgressNode(outAbs));
-  }
   return {
     outAbs,
     outRel,
     thread: String(thread),
     how,
     supervisor: supervisor || null,
-    nextNode: String(nextNode || ""),
+    nextNode: await resolveNextNode(outAbs, supervisor),
   };
+}
+
+/**
+ * 运行中优先 progress.jsonl（本 epoch）；终态可用 supervisor.last_node 兜底。
+ * 轮询刷新必须走同一规则，否则会用陈旧 last_node 盖掉接回时的正确节点。
+ */
+export async function resolveNextNode(outAbs, supervisor) {
+  const status = String(supervisor?.status || "");
+  if (["starting", "running", "paused"].includes(status)) {
+    return String((await peekProgressNode(outAbs)) || "");
+  }
+  return String(supervisor?.last_node || (await peekProgressNode(outAbs)) || "");
 }
 
 /**

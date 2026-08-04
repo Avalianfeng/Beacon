@@ -723,6 +723,12 @@ def watch_loop(
 
     try:
         if effective == "log":
+            if not console.is_terminal and not follow_exit:
+                console.print(
+                    "[watch] 非 TTY：类似 tail -f，Ctrl+C 退出；"
+                    "若要在终态自动退出请加 --follow-exit",
+                    style="dim",
+                )
             printed_logs = 0
             last_header = ""
             while True:
