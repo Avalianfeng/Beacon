@@ -1,0 +1,23 @@
+---
+description: 本仓库 ↔ 中枢状态板强关联（开场读状态、收尾回写）
+alwaysApply: true
+---
+
+# 中枢状态板（本项目）
+
+状态真相（本机，可含隐私）只在：
+
+`C:\Users\m1995\Desktop\agent\状态\项目\Beacon.md`
+
+使用说明（如何开场比 Git、如何收尾回写）：
+
+`C:\Users\m1995\Desktop\agent\状态\项目\使用说明.md`
+
+## 硬动作
+
+1. 动手前：Read 上列状态文件；若尚未读过使用说明，先 Read 使用说明。
+2. 对该仓库轻量比 Git（`rev-parse HEAD` / `log -1 --format=%ci`；必要时 `status` / `diff --stat`）。禁止为验状态通读业务代码。
+3. 任务收尾：回写同一状态文件（焦点/下一步 + 指纹字段）；需要时改 `状态/总览.md` 对应行。
+4. 全局开机面仍是 `C:\Users\m1995\Desktop\agent\BOOT.md`（由全局 Rule 强制）；**不要**在本仓另建平行状态板代替中枢文件。
+
+隐私：状态详情不进中枢父仓远程；本 Rule 只含指针，不含 WIP 正文。
