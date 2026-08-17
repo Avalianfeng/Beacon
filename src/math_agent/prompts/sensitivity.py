@@ -95,6 +95,9 @@ def build_code_prompt(model, plan_runs, prev_failure: str | None = None,
             f"```python\n{main_code[:16000]}\n```\n"
             "每条敏感性曲线的中心参数值必须复现上述对应基准指标（允许数值算法小误差）；"
             "不得另写一套口径、缩放单位或手工校准曲线。\n"
+            "扫参必须改写主代码里与计划参数对应的赋值或中间量后重跑同一求解；"
+            "禁止套用 SPEED_SCALE、BAN_START、GREEN_ZONE_RADIUS 等物流专用替换，"
+            "除非这些名字确实出现在主代码中。参数取值的单位必须与主代码赋值一致。\n"
         )
     return (
         f"# 最终模型\n{model.description}\n方程：\n{chr(10).join(model.equations)}\n\n"

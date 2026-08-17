@@ -42,6 +42,12 @@ from math_agent.rag.retrieve import format_snippets, search
 from math_agent.state import FigureArtifact, MathModelingState, SensitivityRun
 from math_agent.tools.runner import extract_valid_result_lines, infer_entity_upper_bound
 
+# 分节写作输出上限。references 等长文本节曾多次因模型默认 max_tokens(8192)
+# 撞墙截断 JSON（Invalid JSON: EOF while parsing a string），导致同节点连续
+# 失败直至 supervisor 熔断。这里显式放大容纳度；模板侧另有条数/字数上界，
+# 双保险：prompt 让模型在撞墙前主动停，max_tokens 兜底防截断。
+_WRITER_SECTION_MAX_TOKENS = 16000
+
 
 def writer_node(state: MathModelingState) -> dict:
     """准备论文大纲和本轮分节队列。
@@ -1427,11 +1433,27 @@ _MIN_SECTION_NONSPACE_CHARS = {
 }
 
 
-def _section_quality_issues(group_name: str, section_out) -> list[str]:
+_MIN_SENSITIVITY_CHARS_WITHOUT_RUNS = 400
+
+
+def _section_min_chars(field: str, state: MathModelingState | None) -> int:
+    minimum = _MIN_SECTION_NONSPACE_CHARS[field]
+    if (
+        field == "sensitivity"
+        and state is not None
+        and not formal_sensitivity_runs(state)
+    ):
+        return min(minimum, _MIN_SENSITIVITY_CHARS_WITHOUT_RUNS)
+    return minimum
+
+
+def _section_quality_issues(
+    group_name: str, section_out, state: MathModelingState | None = None,
+) -> list[str]:
     group = next(item for item in writer_sections() if item.name == group_name)
     issues: list[str] = []
     for field in group.fields:
-        minimum = _MIN_SECTION_NONSPACE_CHARS[field]
+        minimum = _section_min_chars(field, state)
         value = str(getattr(section_out, field, "") or "")
         actual = len("".join(value.split()))
         if actual < minimum:
@@ -1732,6 +1754,7 @@ def writer_section_node(state: MathModelingState) -> dict:
             system=SYSTEM,
             model=MODEL_ROUTING["writer"],
             profile="long",
+            max_tokens=_WRITER_SECTION_MAX_TOKENS,
         )
     section_out = _enforce_section_contract(group_name, section_out, state)
     group = next(item for item in writer_sections() if item.name == group_name)
@@ -1741,7 +1764,7 @@ def writer_section_node(state: MathModelingState) -> dict:
         )
         setattr(section_out, field, cleaned)
 
-    issues = _section_quality_issues(group_name, section_out)
+    issues = _section_quality_issues(group_name, section_out, state)
     if issues and not _should_use_deterministic_writer():
         section_out = complete(
             _section_repair_prompt(prompt, issues),
@@ -1749,6 +1772,7 @@ def writer_section_node(state: MathModelingState) -> dict:
             system=SYSTEM,
             model=MODEL_ROUTING["writer"],
             profile="long",
+            max_tokens=_WRITER_SECTION_MAX_TOKENS,
         )
         section_out = _enforce_section_contract(group_name, section_out, state)
         for field in group.fields:
@@ -1756,11 +1780,19 @@ def writer_section_node(state: MathModelingState) -> dict:
                 str(getattr(section_out, field, "") or ""), field,
             )
             setattr(section_out, field, cleaned)
-        issues = _section_quality_issues(group_name, section_out)
+        issues = _section_quality_issues(group_name, section_out, state)
     if issues and not _should_use_deterministic_writer():
-        raise ValueError(
-            f"writer section quality gate failed for {group_name}: " + "；".join(issues)
-        )
+        if group_name == "sensitivity" and not formal_sensitivity_runs(state):
+            print(
+                "[writer] sensitivity below budget but no formal runs; "
+                "keep honest draft instead of crashing",
+                flush=True,
+            )
+        else:
+            raise ValueError(
+                f"writer section quality gate failed for {group_name}: "
+                + "；".join(issues)
+            )
 
     paper = state.paper.model_copy(deep=True)
     for group in writer_sections():

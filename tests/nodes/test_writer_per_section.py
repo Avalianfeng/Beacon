@@ -340,6 +340,48 @@ def test_writer_retries_once_when_section_is_below_content_budget(mocker):
     assert delta["paper"].solution.startswith("VAL_solution")
 
 
+def test_writer_keeps_short_sensitivity_when_no_formal_runs(mocker):
+    state = _rich_state()
+    state.writer_iteration = 1
+    state.writer_outline_dump = WriterOutline(sensitivity="敏感性锚点").model_dump()
+    state.writer_section_queue = ["sensitivity"]
+    honest = (
+        "未执行参数扰动实验，因此不报告未经计算的变化幅度。"
+        "中心点复现正式主方案 RESULT，并按模型结构给出定性排序。"
+    )
+    mocker.patch(
+        "math_agent.nodes.writer.complete",
+        return_value=schema_for_group("sensitivity")(sensitivity=honest),
+    )
+
+    delta = writer_section_node(state)
+
+    assert "未执行参数扰动实验" in delta["paper"].sensitivity
+    assert delta["writer_section_queue"] == []
+
+
+def test_writer_still_gates_short_sensitivity_when_runs_exist(mocker):
+    state = _rich_state()
+    state.sensitivity_runs = [SensitivityRun(
+        parameter="K", values=[0.1, 0.2], metric="T_max", results=[1.0, 2.0],
+    )]
+    state.writer_iteration = 1
+    state.writer_outline_dump = WriterOutline(sensitivity="敏感性锚点").model_dump()
+    state.writer_section_queue = ["sensitivity"]
+    mocker.patch(
+        "math_agent.nodes.writer.complete",
+        return_value=schema_for_group("sensitivity")(sensitivity="过短"),
+    )
+
+    try:
+        writer_section_node(state)
+    except ValueError as exc:
+        assert "writer section quality gate failed for sensitivity" in str(exc)
+        assert "至少需要 1000" in str(exc)
+    else:
+        raise AssertionError("expected sensitivity length gate to fail when runs exist")
+
+
 def test_writer_retry_reuses_first_outline(mocker):
     side, calls = _make_complete_side_effect()
     mocker.patch("math_agent.nodes.writer.complete", side_effect=side)

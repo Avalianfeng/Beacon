@@ -566,6 +566,46 @@ for run_index, run in enumerate(RUNS):
 '''
 
 
+def _is_green_replay_parameter(parameter: str) -> bool:
+    """canonical replay 的 perturb() 只认绿色物流扫参 ABI。"""
+    name = str(parameter or "")
+    if "二维组合编码" in name:
+        return True
+    if ("速度" in name and "比例" in name) or name == "speed_multiplier":
+        return True
+    if "限行" in name and "开始" in name:
+        return True
+    if "惩罚" in name and ("时间窗" in name or "晚到" in name):
+        return True
+    return name in {
+        "time_window_penalty_factor",
+        "c_late",
+        "carbon_emission_cost_coefficient",
+        "beta_v(fuel)",
+        "green_zone_radius",
+    }
+
+
+def _should_use_canonical_replay(
+    plan: SensitivityPlan,
+    main_code: str,
+    *,
+    previous_error: str = "",
+) -> bool:
+    """有主源码时也不要无条件套物流 replay。
+
+    非物流参数（如 K/f/e）会被 perturb() 直接 ValueError；若仍走 replay，
+    重试只会重建同一包装脚本，LLM 扫参路径永远进不去。
+    """
+    if not main_code or previous_error:
+        return False
+    if "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in main_code:
+        return True
+    return bool(plan.runs) and all(
+        _is_green_replay_parameter(run.parameter) for run in plan.runs
+    )
+
+
 def _use_deterministic_sensitivity() -> bool:
     """显式离线应急开关；正常流程必须基于实际模型生成扫参代码。"""
     return os.getenv("MATH_AGENT_SENSITIVITY_DETERMINISTIC", "").strip() == "1"
@@ -636,7 +676,9 @@ def sensitivity_code_generate_node(state: MathModelingState) -> dict:
     main_code, primary_metrics = _canonical_primary(state)
     if _use_deterministic_sensitivity():
         code_out = SensitivityCode(code=_build_sensitivity_template_code(plan))
-    elif main_code:
+    elif _should_use_canonical_replay(
+        plan, main_code, previous_error=state.sensitivity_code_error,
+    ):
         code_out = SensitivityCode(code=_build_canonical_replay_code(plan, main_code))
     else:
         final = next(

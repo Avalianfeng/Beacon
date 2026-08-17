@@ -50,7 +50,11 @@ PaperCritic 评分：{{ prior_critic.score }}/10，approved={{ prior_critic.appr
 
 | 字段 | 字数区间 | 强制结构 |
 |---|---|---|
+{% if sensitivity_runs %}
 | `sensitivity` | 1000–1800 | 包含实验设计、中心点复现、参数敏感度排序、随机稳健性区别、误差边界与管理含义。无二维交互实验时直接说明，不用扩展设计凑篇幅。 |
+{% else %}
+| `sensitivity` | 400–800 | 必须写明未执行定量扫参；用上方代码 RESULT 做中心点复现，再按模型结构做定性排序与管理含义。禁止编造扰动幅度、敏感度系数或未出现在结果清单中的数字。 |
+{% endif %}
 
 **IRON RULE 1（禁编造）铁律**：sensitivity 中的所有数字必须可在上方「敏感性分析结果」或「代码运行结果」中追溯。
 
