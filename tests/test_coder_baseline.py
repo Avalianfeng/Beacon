@@ -178,6 +178,19 @@ def test_main_figure_prompt_forbids_nan_inf_output():
     assert "所有打印数值必须是有限数" in prompt
 
 
+def test_main_figure_prompt_includes_limitation_protocol():
+    """模型数学边界不可用时允许 LIMITATION 声明，禁止伪造数值。"""
+    from math_agent.prompts.coder_figure_one import build_prompt_figure_one
+    from math_agent.state import ModelVersion
+
+    prompt = build_prompt_figure_one(ModelVersion(stage="final", description="锚杆预紧"), "主图")
+    assert "LIMITATION: <问题id或字段> <具体数学原因" in prompt
+    assert "模型不可用" in prompt
+    assert "禁止伪造一个数值凑数" in prompt
+    assert "不得用于掩盖代码 bug" in prompt
+    assert "空洞声明" in prompt
+
+
 def test_main_figure_prompt_metric_contract_exact_names():
     """RESULT 指标标签必须与 blueprint 一字不差：禁止改名、只输出部分、增删字段。"""
     from math_agent.prompts.coder_figure_one import build_prompt_figure_one

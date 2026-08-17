@@ -55,10 +55,19 @@ def build_prompt(
         for key, value in sections.items()
     )
     stdout_block = ""
+    limitation_note = ""
     if code_stdout.strip():
         stdout_block = (
             f"\n# 代码运行真实输出（事实源；用于核对正文数字）\n"
             f"```\n{code_stdout[:12000]}\n```\n"
+        )
+        limitation_note = (
+            "\n# LIMITATION 声明处理规则\n"
+            "stdout 中形如 `LIMITATION: <问题id> <原因>` 的行，是模型在参数域内数学"
+            "不可用时的**合法声明**（如应力公式在极端边界下根号内为负）。正文可将其"
+            "如实写入「模型局限」小节，这**不算编造，不因此扣分**。"
+            "但被声明字段的正文**不得给出具体数值**；若正文对被声明字段给出了数字，"
+            "仍按编造处理，approved 设 False。\n"
         )
     upstream = (
         "# 上游质量证据\n"
@@ -81,7 +90,8 @@ def build_prompt(
         f"{upstream}\n"
         f"# 图表证据清单\n{figure_summary}\n\n"
         f"# 敏感性数组\n{sensitivity_summary}\n"
-        f"{stdout_block}\n"
+        f"{stdout_block}"
+        f"{limitation_note}\n"
         f"请输出 JSON：{{\"target\":\"paper\",\"score\":int,"
         f"\"issues\":[{{\"section\":\"abstract|problem_restatement|assumptions|notation|model_section|solution|sensitivity|conclusion|references|general\",\"problem\":str}}, ...],"
         f"\"suggestions\":[str],\"approved\":bool}}。"

@@ -202,6 +202,56 @@ def test_validate_numeric_results_requires_enough_primary_metrics():
     assert "至少需要 4" in reason
 
 
+def test_validate_numeric_results_limitation_exempts_metric_gap():
+    """LIMITATION 声明可豁免指标缺口：模型适用边界是合法标注而非失败。"""
+    from math_agent.tools.runner import validate_numeric_results
+
+    valid, reason, _ = validate_numeric_results(
+        "LIMITATION: Q3.2 当 e>10mm 时 P_ecc 公式根号内为负，模型不可用。\n"
+        "LIMITATION: Q4 当 f<0.5 时 Topt 公式发散，模型不可用。\n"
+        "RESULT: baseline=ours total_cost=46750 service_rate=0.88",
+        require_result=True,
+        min_metrics_per_result=4,
+    )
+
+    assert valid is True, reason
+
+
+def test_validate_numeric_results_limitation_does_not_exempt_all_metrics():
+    """LIMITATION 不能豁免全部指标：至少保留一半真实指标，防止凑数。"""
+    from math_agent.tools.runner import validate_numeric_results
+
+    valid, reason, _ = validate_numeric_results(
+        "LIMITATION: Q1 公式不可用。\n"
+        "LIMITATION: Q2 公式不可用。\n"
+        "LIMITATION: Q3 公式不可用。\n"
+        "RESULT: baseline=ours total_cost=46750",
+        require_result=True,
+        min_metrics_per_result=4,
+    )
+
+    assert valid is False
+    assert "至少需要 4" in reason
+
+
+def test_validate_numeric_results_empty_limitation_is_invalid():
+    """空洞声明（过短/无实质内容）不计数，不能豁免缺口。"""
+    from math_agent.tools.runner import extract_limitations, validate_numeric_results
+
+    assert extract_limitations("LIMITATION: 无\n") == []
+    assert extract_limitations("LIMITATION: nan\n") == []
+
+    valid, reason, _ = validate_numeric_results(
+        "LIMITATION: 无\n"
+        "RESULT: baseline=ours total_cost=46750 service_rate=0.88",
+        require_result=True,
+        min_metrics_per_result=4,
+    )
+
+    assert valid is False
+    assert "至少需要 4" in reason
+
+
 def test_validate_code_data_usage_rejects_hardcoded_results():
     from math_agent.tools.runner import validate_code_data_usage
 

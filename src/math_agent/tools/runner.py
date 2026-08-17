@@ -399,6 +399,11 @@ _NONFINITE_OUTPUT_RE = _re.compile(
     r"(?<![A-Za-z0-9_])(?:nan|[+-]?inf)(?![A-Za-z0-9_])",
     _re.IGNORECASE,
 )
+# 模型适用边界的合法声明行：LIMITATION: <问题id> <具体数学原因>
+# 与 nan/inf 不同，这是"数学模型在参数域内不可用"的显式标注，允许 RESULT
+# 指标缺口被豁免；空洞声明（过短/无实质内容）不计入。
+_LIMITATION_RE = _re.compile(r"^LIMITATION:\s*(.+)$", _re.MULTILINE)
+_MIN_LIMITATION_REASON_CHARS = 12
 _RATE_WORDS = ("rate", "ratio", "share", "proportion", "utilization")
 _COUNT_KEYS = {
     "vehicle_count", "veh_count", "vehicles", "vehicle_num", "fleet_size",
@@ -447,6 +452,20 @@ def detect_output_failure(stdout: str, stderr: str = "") -> str:
     return ""
 
 
+def extract_limitations(stdout: str) -> list[str]:
+    """解析 stdout 中的 LIMITATION 声明（模型适用边界标注）。
+
+    仅返回有实质内容的声明（原因长度 >= 12 字符），避免模型用
+    ``LIMITATION: 无`` / ``LIMITATION: nan`` 之类空话豁免指标缺口。
+    """
+    found = []
+    for match in _LIMITATION_RE.finditer(stdout or ""):
+        reason = match.group(1).strip()
+        if len(reason) >= _MIN_LIMITATION_REASON_CHARS:
+            found.append(reason)
+    return found
+
+
 def validate_numeric_results(
     stdout: str,
     *,
@@ -477,9 +496,25 @@ def validate_numeric_results(
 
     for identifier, metrics in parsed.items():
         if len(metrics) < min_metrics_per_result:
+            # LIMITATION 声明可豁免指标缺口：模型适用边界（如公式在极端参数下
+            # 数学不可用）是合法标注而非失败，允许对应字段从 RESULT 缺失。
+            # 但保留防滥用约束：最多豁免一半指标，且至少保留 1 个真实指标，
+            # 空洞声明（过短）不计数。
+            limitations = extract_limitations(stdout)
+            shortfall = min_metrics_per_result - len(metrics)
+            if (
+                shortfall <= len(limitations)
+                and len(metrics) >= 1
+                and len(metrics) * 2 >= min_metrics_per_result
+            ):
+                continue
             return (
                 False,
-                f"RESULT {identifier} 仅含 {len(metrics)} 个指标，至少需要 {min_metrics_per_result} 个",
+                f"RESULT {identifier} 仅含 {len(metrics)} 个指标，至少需要 {min_metrics_per_result} 个"
+                + (
+                    f"（LIMITATION 声明 {len(limitations)} 条不足以覆盖缺口）"
+                    if limitations else ""
+                ),
                 parsed,
             )
         if metrics and all(abs(value) <= 1e-12 for value in metrics.values()):

@@ -99,6 +99,20 @@ def test_prompt_omits_stdout_block_when_empty():
     assert "代码运行真实输出" not in prompt
 
 
+def test_prompt_includes_limitation_handling_rule():
+    """LIMITATION 声明是合法标注：正文可写进模型局限，但被声明字段不得给数值。"""
+    real_stdout = (
+        "LIMITATION: Q3.2 当 e>10mm 时 P_ecc 公式根号内为负，模型不可用。\n"
+        "RESULT: baseline=ours total_cost=52.7174 service_rate=0.95"
+    )
+    prompt = build_prompt(_paper_with_numbers(), 0, 0, real_stdout)
+    assert "LIMITATION" in prompt
+    assert "合法声明" in prompt
+    assert "模型局限" in prompt
+    assert "不得给出具体数值" in prompt
+    assert "不算编造" in prompt
+
+
 def test_prompt_keeps_evidence_beyond_old_4000_character_cutoff():
     evidence = "A" * 5000 + "\nROBUSTNESS: scenarios=200 cost_p95=99730.48"
     prompt = build_prompt(_paper_with_numbers(), 0, 0, evidence)
