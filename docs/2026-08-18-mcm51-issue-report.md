@@ -2,7 +2,7 @@
 
 - 报告日期：2026-08-18
 - 题目：2026 年第二十三届五一数学建模竞赛 A 题（煤矿巷道锚杆支护）
-- 运行序列：`runs/51mcm-a-sens-scan`（r1）→ `...-r2` → `...-r3` → `...-r4` → `...-r5` → `...-r6`（进行中）
+- 运行序列：`runs/51mcm-a-sens-scan`（r1）→ `...-r2` → `...-r3` → `...-r4` → `...-r5` → `...-r6`（已停止）
 - 范围：仅陈述**已观测事实**与**已确定落地的解决方案**；未决项在文末"遗留风险与观察项"单列
 - 提交对照：所有修复均已通过 `git commit` 记录，commit 哈希见文末对照表
 
@@ -17,7 +17,7 @@
 | r3 `...-r3` | stopped | 一致性 7/10 通过但预算耗尽 | 暴露"7 分反馈死区"与"预算共用"两个机制缺陷 |
 | r4 `...-r4` | stopped | paper_critic 5/10 未通过（证据链不足） | 门禁 6 轮内 8/10 通过并前进；中途 references 截断熔断，修复后 recover 完成全部章节 |
 | r5 `...-r5` | stopped | 无主证据轮次达到上限（6） | 六轮失败根因同一：stdout 出现非有限数值 + RESULT 指标契约违反 |
-| r6 `...-r6` | running | — | 携带全部修复重跑，验证中 |
+| r6 `...-r6` | stopped（03:34:51） | paper_critic 4/10 未通过 | 一致性门禁 8/10 通过后前进至 writer；中途 worker 恢复 2 次（flash 截断 JSON）；暴露 P09–P14 |
 
 ---
 
@@ -87,7 +87,7 @@
 - **现象**：r4 终稿 paper_critic 5/10，8 条反馈中 4 条指向"关键定量结论缺乏证据"：问题 1.2 临界预紧力矩、问题 2.2（工况 B）Tmax、问题 3.2、问题 4 的数值结果均未在代码输出中体现，摘要却声称已求解。
 - **根因（事实）**：blueprint 含 7 个子问题（`expected_output` 明确），但 coder 提示词只要求输出 4 个指标；paper_critic 以代码 stdout 为唯一数字事实源 → 正文结论无据可查。
 - **解决方案（已落地）**：新增 `_subquestions_output_hint`，把 `blueprint.subquestions[].expected_output` 逐问织入主证据图提示词，强制按 `Q<id>: 字段=数值` 格式逐问打印；无法计算的子问题必须在 stdout 说明原因，不得静默跳过；支撑图不重复逐问。
-- **验证**：r6 验证中（r5 起提示词已携带）。
+- **验证**：r6 代码层已逐问输出（批次 6/7 stdout 含 Q1.1–Q4 全部数值行）；但论文证据路径曾把 Q 行剥掉（P09，已修复），r7 起评审与 writer 可见。
 - **commit**：`6d04e70`
 
 ### P07 RESULT 指标契约不严格与 nan/inf 字面量输出
@@ -101,7 +101,7 @@
 - **解决方案（已落地）**：
   1. `_result_format_hint` 直接给出含全部 blueprint 指标标签的完整 RESULT 行模板（如 `RESULT: baseline=ours R²={m0} RMSE={m1} Tmax={m2} 安全裕度={m3}`），并明确"共 N 个、禁止改名（R² 不得写成 R_squared）/只输出一部分/增删字段"；
   2. `_result_common_hint` 明示 stdout 全部输出（调试 print、Q 行、图表标签）不得出现 nan/inf；无约束项禁止 `np.inf`/`np.nan` 占位。
-- **验证**：r6 验证中。
+- **验证**：r6 批次 6/7 stdout 已无 nan/inf 字面量（B 类误伤随"不打印原始数据"自然消失）；但批次 7 RESULT 仍只含 3 个指标（缺 RMSE、安全裕度），由 P10（数值合理性）+ P14（单位自检）覆盖，r7 验证。
 - **commit**：`edf3546`
 
 ### P08 模型适用边界无合法出口（设计评审后新增协议）
@@ -116,6 +116,61 @@
 - **验证**：逻辑层测试通过（豁免/防凑数/空洞声明无效/coder 协议/paper_critic 规则共 6 项），真实场景待 r6 及后续验证。
 - **commit**：`fc1874f`
 
+### P09 论文证据白名单只认车辆路径模板前缀，MCM 题逐问输出被剥掉
+
+- **现象**：r6 paper_critic 4/10，其中"正文声称'代码输出显示'但实际 stdout 仅有一行汇总结果"等 4 条反馈指向"编造"。但实际 stdout 中 Q1.1–Q4 逐问数值齐全（如 `Q3.2: 修正后 Tmax(e=2.0mm)=0.23 N·m`），评审误判。
+- **根因（事实）**：`paper_critic._last_successful_stdout` 与 writer 侧证据路径（`_compact_code_artifacts`、`_extract_available_numbers`）共用一套**车辆路径模板专用前缀白名单**（SCENARIO_*/DYNAMIC_*/RESULT: 等）。MCM 题的逐问输出行 `Q<id>:` 与 LIMITATION 声明行全部被剥掉 → 评审与 writer 只见 RESULT 一行 → writer 无逐问数值可引（被迫扩散 RESULT 值编造细节），评审把有据可查的数值误判为编造，LIMITATION 协议在论文环节同时失效。
+- **解决方案（已落地）**：
+  1. `runner.structured_evidence_lines()`：模板无关白名单 = 既有前缀 + `Q<id>:` 逐问行 + `LIMITATION:` 行；
+  2. paper_critic、writer 的 compact artifacts 与 available numbers 三处证据路径统一改用它，保证评审与 writer 同源；
+  3. writer 增加"数值溯源硬约束"：正文数值必须逐字来自证据清单，禁止用 RESULT 行数值推断其他字段（r6 中 writer 把 Tmax=0.37 扩散到 Q1.2/Q2.1/Q3.2 等从未输出的字段），查不到就写"待验证"。
+- **验证**：`structured_evidence_lines` 单测（保留 Q/LIMITATION/SCENARIO、丢弃调试行）+ paper_critic/writer 证据送达测试共 4 项；r7 真实运行验证。
+- **commit**：`5e58ddb`
+
+### P10 一致性评审放行"已知致命数值缺陷"
+
+- **现象**：r6 一致性审查第 7 轮（03:21:08）**8/10 批准**了主证据，而其自身 issues 明确写着"Tmax=0.37 与工程经验值 100-500 N·m 严重不符""928611.38 N·m 明显不合理"。错误数值随后一路流进摘要与正文，最终由 paper_critic 拦截。
+- **根因（事实）**：评审 prompt 的"严重不一致"定义只覆盖模型实现层面（变量/目标/约束/指标对齐），**不含数值合理性**；评审按"代码实现了模型"给分，忽略自己列出的数量级错误。同份代码第 6 轮得 2/10、第 7 轮得 8/10，也暴露评审随机性。
+- **解决方案（已落地）**：
+  1. 评审 SYSTEM 增加硬规则：数值与 blueprint validation pass_criteria / 工程合理范围严重不符（数量级错误、运行内部自相矛盾）属于严重不一致，必须 `approved=False` 且 `score<=5`；`approved=True` 需要 score≥8（与 `MIN_MODEL_CODE_SCORE` 对齐，原提示词写 7）；
+  2. 确定性兜底 `_apply_numeric_fatal_backstop`：评审 issues 含"严重不符/明显不合理/数量级错误/编造/伪造"等关键词时强制不通过并封顶 5 分（r6 的 8/10 放行在此兜底下会被拦下）。
+- **验证**：兜底单测 2 项（致命关键词拦截、干净报告放行）+ 提示词规则单测 1 项；r7 验证。
+- **commit**：`5e58ddb`
+
+### P11 敏感性分析代码生成静默失败（thinking 烧光 token 预算）
+
+- **现象**：r6 sensitivity 阶段 3 次 codegen 全部返回空内容（`content: ""`、`completion_tokens=6000` 满额、`reasoning_chars=11241`），无敏感性结果 → writer 诚实声明"本文未执行定量参数扫描" → paper_critic 扣分。
+- **根因（事实）**：sensitivity codegen 调用 `complete(schema=None, ...)`。`llm_worker` 只在 `response_format`（有 schema）时注入 thinking 关闭参数；`schema=None` 时模型默认 thinking，把 6000 token 预算全部烧在推理上，最终 content 为空。coder 侧因走 `schema=CoderDraft` 不受影响。
+- **解决方案（已落地）**：codegen 改 `schema=SensitivityCode`（结构化输出 → 自动关 thinking + JSON 校验修复轮，代码经 JSON 往返还原换行）。
+- **验证**：单测跑通（sensitivity 相关 21 项全部通过）；r7 真实运行验证。
+- **commit**：`5e58ddb`
+
+### P12 绘图任务执行成功但不产出图片，figure 流水线空转
+
+- **现象**：r6 批次 7 三个 figure artifact（1 主 + 2 支撑）全部 `success: true` 但 `artifact_paths=[]`（无任何 .png）→ figure_pipeline 队列为空 → 论文图表数 0 → paper_critic 扣分"缺少图表"。
+- **根因（事实）**：`coder_execute_node` 只校验 RESULT 协议与执行退出码，**不校验 figure 任务是否真的产出图片文件**；模型省略 `plt.savefig` 也能"成功"。
+- **解决方案（已落地）**：figure 任务执行成功但工作目录无 .png → 判执行失败，反馈"必须调用 plt.savefig 保存 .png"进入定向重试。
+- **验证**：`tests/nodes/test_coder.py` 8 个受影响测试更新（mock 补 artifact_paths、成功脚本补 savefig）后 34 项全过；r7 验证。
+- **commit**：`5e58ddb`
+
+### P13 flash 生成 supporting figure 时 JSON 截断，触发 supervisor 恢复循环
+
+- **现象**：r6 两次 worker 崩溃恢复（recoveries=2，attempt 3）。崩溃点均为 `coder_generate`：flash 输出 19435 字符/12000 tokens 满额时 JSON 字符串被截断（`EOF while parsing a string at line 3 column 40447`）→ CoderDraft 校验失败 → 节点未捕获 → supervisor 按致命错误恢复。恢复后同 prompt 重试再次截断（崩溃 1 与崩溃 2 输出仅差 3 字符），每次浪费约 5 分钟与 2×12k tokens。
+- **根因（事实）**：1) `_supporting_figure_model()` 在 STRONG==CODER 时退到 flash，flash 在 12000 token 上限内无法完成含 previous_code 的完整草稿；2) figure 分支的 `complete()` 无 try/except，校验失败直接炸掉 worker；3) supervisor 恢复不改变 prompt，同因必然复现。
+- **解决方案（已落地）**：
+  1. supporting figure 与主图统一使用强模型（STRONG_MODEL）；
+  2. `coder_generate_node` figure 分支捕获生成异常：节点内有界重试（≤MAX_CODE_RETRIES），附"输出被截断/JSON 无效，请显著精简、不要复述 previous_code 全文"反馈，预算耗尽才上抛。
+- **验证**：既有 coder 测试全过；r7 验证。
+- **commit**：`5e58ddb`
+
+### P14 代码输出数值数量级混乱（单位换算错误）缺少自检闸门
+
+- **现象**：r6 主证据输出 K=0.000162（工程常规 0.1–0.3）、Tmax=0.37 N·m（blueprint validation pass_criteria 明示合理范围 100-500 N·m）、且同一次运行内 T_y_shank=928611 与 Tmax=0.37 相差 10^6 倍——P 从 kN 换算成 N 后公式混用两套单位。此缺陷同时被 P10（放行）与 P06（逐问输出已有）放大，最终由 paper_critic 捕获。
+- **根因（事实）**：coder 提示词只要求"注意单位换算"，未把 blueprint 的校验标准（pass_criteria、指标单位）变成可对照的硬约束；模型无数量级自检习惯。
+- **解决方案（已落地）**：coder 提示词注入"数值数量级自检"硬要求：逐条列出 blueprint validation_plan pass_criteria 与指标单位；输出 RESULT 前必须自检数量级，偏离工程常识（力矩应为数百 N·m、K 差 1000 倍）即单位换算错误，修正后再输出；同次运行数值必须自洽。
+- **验证**：提示词单测 1 项；r7 验证。
+- **commit**：`5e58ddb`
+
 ---
 
 ## 三、遗留风险与观察项（未决）
@@ -124,8 +179,11 @@
 |---|---|---|---|
 | O01 | 一致性轮次上限是否提升 | 观察中 | r5 六轮无主证据的失败根因同一（系统性矛盾），`routing.py` 注释明确"重试本身不会解决"。**决定：暂不提升上限**，先修根因，观察修复后收敛轮数；上限是防死循环保险，不应为系统性矛盾让路。 |
 | O02 | 面板展示 `latest_issue` 正文 | 暂缓 | 用户明确：面板显示非重点，暂不处理；具体失败原因可从 `insights/model_code_consistency.md` 读取。 |
-| O03 | 模型层剩余差距 | 观察中 | 51mcm 题目 paper_critic 曾指出：螺纹强度量纲、P-T 转换关系、钢带判断准则、敏感性定量扫参。属模型/代码质量能力问题，非机制缺陷，视 r6 结果决定是否迭代。 |
+| O03 | 模型层剩余差距 | 观察中 | 51mcm 题目 paper_critic 曾指出：螺纹强度量纲、P-T 转换关系、钢带判断准则、敏感性定量扫参。r6 中量纲混乱已由 P14 提示词闸门覆盖（待 r7 验证）；其余项待 r7 结束再评估。 |
 | O04 | 新题附件数据形态 | 预期内 | 每道新题可能有自己的数据坑（稀疏分组、竖表等），大概率仍需 1–2 轮"发现→修复"循环，属真实实验才能暴露的类别。 |
+| O05 | 一致性评审分数随机性 | 观察中 | r6 同一份代码第 6 轮 2/10、第 7 轮 8/10。P10 兜底已把"自认致命缺陷仍批准"拦下，但分数抖动仍可能影响收敛轮数；若 r7 收敛轮数异常再考虑提示词加固。 |
+| O06 | 主证据数值质量依赖模型自检 | 观察中 | P14 是提示词层约束，不是确定性校验；blueprint pass_criteria（如 100-500 N·m）的数值区间尚未做机器可读提取与确定性门禁。若 r7 仍出现数量级错误，升级为解析 pass_criteria 区间 + 确定性拦截。 |
+| O07 | worker 恢复机制成本 | 已修复 | r6 两次恢复均为 P13 根因（flash 截断），修复后预计不再触发；恢复机制本身工作正常（checkpoint 无损续跑），保留观察。 |
 
 ---
 
@@ -141,8 +199,9 @@
 | `6d04e70` | fix(coder)：主证据图逐问输出 expected_output，禁止截断掩盖负值（P06） |
 | `edf3546` | fix(coder)：RESULT 指标契约一字不差 + 禁止 nan/inf 输出（P07） |
 | `fc1874f` | feat(gate)：LIMITATION 声明协议（P08） |
+| `5e58ddb` | fix(r6)：论文证据白名单、数值合理性门禁、sensitivity/figure/coder 韧性（P09–P14） |
 
-测试基线：修复后全量回归 `680 passed / 4 skipped`（排除本环境无法运行的 subprocess 相关测试）。
+测试基线：修复后全量回归 `688 passed / 4 skipped`（排除本环境无法运行的 subprocess 相关测试）。
 
 ---
 
