@@ -89,29 +89,41 @@ def test_supporting_figure_uses_strong_model_without_primary_source(mocker, work
     assert complete.call_args.kwargs["model"] == _supporting_figure_model()
 
 
-def test_coder_rejects_literal_backslash_n_without_running(mocker, workdir):
-    """字符串之外的字面量 \\n 在进入 subprocess 前即被拒绝（r7 首轮 SyntaxError 形态）。"""
+def test_coder_auto_fixes_literal_backslash_n_before_running(mocker, workdir):
+    """字符串外字面量 \\n 自动修复后进入执行（L2），不再拒绝重试（r8 死循环成因）。"""
     from math_agent.nodes.coder import coder_node, CoderDraft
+    from math_agent.tools.runner import RunResult
 
     mocker.patch(
         "math_agent.nodes.coder.complete",
         return_value=CoderDraft(
             purpose="solve",
-            code=("control_B = '压陷' if Tmax_B == T_bearing_B else '屈服'"
+            code=("import matplotlib; matplotlib.use('Agg')\n"
+                  "import matplotlib.pyplot as plt\n"
+                  "plt.savefig('fig.png')\n"
+                  "control_B = '压陷' if Tmax_B == T_bearing_B else '屈服'"
                   "\\nuse_steel_A = control_A == '压陷'\n"
                   "print('RESULT: baseline=ours T_max=10 K=0.18')"),
         ),
     )
-    spy_run = mocker.patch("math_agent.nodes.coder.run_python")
+    spy_run = mocker.patch(
+        "math_agent.nodes.coder.run_python",
+        side_effect=lambda code, **kw: RunResult(
+            success=True,
+            stdout="RESULT: baseline=ours T_max=10 K=0.18",
+            artifact_paths=["fig.png"],
+        ),
+    )
     s = MathModelingState(problem="p", output_dir=str(workdir))
     s.model_versions.append(ModelVersion(stage="final", description="d"))
 
     delta = coder_node(s)
 
     figures = [a for a in delta["code_artifacts"] if a.category == "figure"]
-    assert figures[0].success is False
-    assert "字面量 \\n" in figures[0].stderr
-    spy_run.assert_not_called()
+    assert figures[0].success is True
+    assert "\\n" not in figures[0].code  # 修复后 artifact 内无字面量 \n
+    assert spy_run.call_count >= 1
+    assert "\\n" not in spy_run.call_args_list[0].args[0]
 
 
 def test_coder_retries_once_on_failure(mocker, workdir):

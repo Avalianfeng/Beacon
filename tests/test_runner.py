@@ -567,6 +567,67 @@ def test_detect_literal_backslash_n_ignores_strings_and_clean_code():
     assert detect_literal_backslash_n(line_continuation) == ""
 
 
+def test_normalize_literal_backslash_n_fixes_comment_and_code_escapes():
+    """字符串外字面量 \\n 替换为真实换行（r6 注释吞语句 / r7 代码区 / r8 连发）。"""
+    from math_agent.tools.runner import normalize_literal_backslash_n
+
+    comment_case = (
+        "# 钢带必要性判断。\\nuse_steel_A = (min_idx_A == 3)  # 索引3为围岩压陷"
+        "\\nuse_steel_B = (min_idx_B == 3)\nprint('x')"
+    )
+    fixed = normalize_literal_backslash_n(comment_case)
+    assert "\\n" not in fixed
+    compile(fixed, "<fixed>", "exec")  # 修复后必须可编译
+
+    code_case = (
+        "control_B = '压陷' if Tmax_B == T_bearing_B else '屈服'"
+        "\\nuse_steel_A = control_A == '压陷'"
+    )
+    fixed2 = normalize_literal_backslash_n(code_case)
+    assert "\\n" not in fixed2
+    compile(fixed2, "<fixed2>", "exec")
+
+
+def test_normalize_literal_backslash_n_preserves_strings_and_idempotent():
+    """字符串内 \\n（如 '锚杆直径\\n/mm'）、三引号、行延续不得被改动。"""
+    from math_agent.tools.runner import normalize_literal_backslash_n
+
+    clean = (
+        "df1['锚杆直径\\n/mm'] = df1['锚杆直径\\n/mm'].ffill()\n"
+        "# 前向填充直径\n"
+        "print('x')  # 正常行内注释\n"
+    )
+    assert normalize_literal_backslash_n(clean) == clean
+
+    triple = "'''# 注释样例\\n 换行'''\nx = 1"
+    assert normalize_literal_backslash_n(triple) == triple
+
+    continuation = "x = 1 + \\\n    2"
+    assert normalize_literal_backslash_n(continuation) == continuation
+
+    # 幂等：修复后再修一次结果不变
+    bad = "a = 1\\nb = 2\nc = 'x\\ny'"
+    once = normalize_literal_backslash_n(bad)
+    assert normalize_literal_backslash_n(once) == once
+
+
+def test_run_python_auto_fixes_literal_backslash_n(workdir):
+    """run_python 对注释吞语句形态自动修复后正常执行（端到端）。"""
+    from math_agent.tools.runner import run_python
+
+    code = (
+        "import matplotlib; matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "plt.savefig('fig.png')\n"
+        "K = 0.18\\nR2 = 0.98\n"
+        "print('RESULT: baseline=ours K=%s R2=%s' % (K, R2))\n"
+    )
+    result = run_python(code, workdir=workdir)
+    assert result.success is True
+    assert "RESULT: baseline=ours K=0.18 R2=0.98" in result.stdout
+    assert any(str(p).endswith("fig.png") for p in result.artifact_paths)
+
+
 def test_runner_end_to_end_no_hang_from_plt_show(workdir):
     """端到端：含 plt.show() 的代码在 run_python 中不阻塞，正常完成。"""
     code = (

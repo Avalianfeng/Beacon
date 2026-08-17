@@ -29,6 +29,7 @@ from math_agent.tools.runner import (
     RunResult,
     detect_literal_backslash_n,
     infer_entity_upper_bound,
+    normalize_literal_backslash_n,
     run_python,
     validate_code_data_usage,
     validate_numeric_results,
@@ -2878,10 +2879,11 @@ def coder_execute_node(state: MathModelingState) -> dict:
     artifacts = list(state.coder_work_artifacts)
 
     if item["kind"] == "figure":
-        # fail-fast：字符串之外出现字面量 \n（注释内吞语句 r6 批5 NameError、
-        # 代码区 r7 首轮 SyntaxError 均为该成因）。命中直接拒绝并带反馈重试，
-        # 不进入执行。
-        comment_escape_reason = detect_literal_backslash_n(draft.code)
+        # L2 机械噪声自动修复：字符串之外的字面量 \n（注释吞语句/代码区 SyntaxError，
+        # r6/r7/r8 连续复现）词法替换为真实换行，零 LLM 轮次成本。替换后不可能再
+        # 命中，fail-fast 仅作安全网。
+        code_to_run = normalize_literal_backslash_n(draft.code)
+        comment_escape_reason = detect_literal_backslash_n(code_to_run)
         if comment_escape_reason:
             result = RunResult(
                 success=False, stdout="", stderr=comment_escape_reason,
@@ -2889,14 +2891,14 @@ def coder_execute_node(state: MathModelingState) -> dict:
             )
         else:
             result = run_python(
-                draft.code,
+                code_to_run,
                 workdir=workdir / f"fig_{item['index']}_attempt_{item['attempt']}",
                 timeout=_code_timeout_seconds(),
                 expected_input_paths=_input_paths(state),
             )
         has_primary = _has_primary_for_current_batch(state, artifacts)
         effective_success, validation_reason, error_kind = _validated_execution(
-            state, item, result, code=draft.code,
+            state, item, result, code=code_to_run,
             require_data_usage=bool(state.data_files) and evidence_target == "primary",
         )
         # 绘图任务必须真的产出图片（r6 批次 7 三个 figure artifact 全部
@@ -2921,7 +2923,7 @@ def coder_execute_node(state: MathModelingState) -> dict:
             else "none"
         )
         artifacts.append(CodeArtifact(
-            purpose=draft.purpose, code=draft.code, stdout=result.stdout,
+            purpose=draft.purpose, code=code_to_run, stdout=result.stdout,
             stderr=_combined_stderr(result.stderr, validation_reason), success=effective_success,
             artifact_paths=result.artifact_paths,
             read_paths=getattr(result, "read_paths", []),

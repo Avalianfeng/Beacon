@@ -248,6 +248,66 @@ def _normalize_escaped_source(code: str) -> str:
     return normalized
 
 
+def normalize_literal_backslash_n(code: str) -> str:
+    """把字符串字面量之外的 ``\\n``（反斜杠+n 两个字符）替换为真实换行。
+
+    模型生成代码时偶尔把换行写成字面量 ``\\n``：r6 批5（注释吞语句 → NameError）、
+    r7 首轮（代码区 → SyntaxError）、r8 连续 4 批同因（同一失败原因连续 4 次）。
+    字符串之外出现 ``\\`` + ``n`` 在 Python 源码里永远是非法字符，且模型的意图
+    永远是换行——因此词法替换是 100% 安全的自动修复（字符串内如
+    ``'锚杆直径\\n/mm'`` 原样保留）。这是"门禁错误分级 L2：机械噪声自动修复"的
+    落地：零 LLM 轮次成本，替代"拒绝→重试"死循环。
+    """
+    in_string = None  # None | "'" | '"' | "'''" | '"""'
+    i = 0
+    n = len(code)
+    out: list[str] = []
+    while i < n:
+        ch = code[i]
+        if in_string is None:
+            if ch in ("'", '"'):
+                if code.startswith(ch * 3, i):
+                    in_string = ch * 3
+                    out.append(ch * 3)
+                    i += 3
+                    continue
+                in_string = ch
+                out.append(ch)
+                i += 1
+                continue
+            if ch == "\\" and i + 1 < n and code[i + 1] == "n":
+                out.append("\n")
+                i += 2
+                continue
+            out.append(ch)
+            i += 1
+        else:
+            if ch == "\\":
+                out.append(code[i:i + 2])
+                i += 2
+                continue
+            if in_string in ("'", '"'):
+                if code.startswith(in_string * 3, i):
+                    out.append(in_string * 3)
+                    i += 3
+                    in_string = None
+                    continue
+                if ch == in_string:
+                    out.append(ch)
+                    i += 1
+                    in_string = None
+                    continue
+            else:  # 三引号字符串
+                if code.startswith(in_string, i):
+                    out.append(in_string)
+                    i += len(in_string)
+                    in_string = None
+                    continue
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def _terminate_process_tree(pid: int, *, grace: float = 2.0) -> None:
     """终止 pid 及全部后代；Windows venv launcher 会额外派生真实解释器。"""
     try:
@@ -297,6 +357,7 @@ def run_python(
     # 相对 script 解释为相对于新 cwd，导致路径双重前缀。
     workdir = Path(workdir).resolve()
     workdir.mkdir(parents=True, exist_ok=True)
+    code = normalize_literal_backslash_n(code)  # 词法级修复字符串外的字面量 \n（L2 自动修复）
     code = _normalize_escaped_source(code)  # 修复整段源码被双重转义成字面量 \n/\t
     code = _normalize_common_import_mistakes(code)
     code = _auto_fix_imports(code)   # 补缺的 import + matplotlib.use('Agg')
