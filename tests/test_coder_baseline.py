@@ -119,6 +119,54 @@ def test_generic_figure_prompt_forbids_logistics_metrics():
     assert "Excel 附件必须遍历全部工作表" in prompt
 
 
+def test_main_figure_prompt_lists_subquestion_outputs():
+    """主证据图必须逐问输出 expected_output；支撑图不重复逐问。"""
+    from math_agent.prompts.coder_figure_one import build_prompt_figure_one
+    from math_agent.state import ModelVersion, ProblemBlueprint, SubQuestionBlueprint
+
+    bp = ProblemBlueprint(
+        core_task="锚杆预紧",
+        subquestions=[
+            SubQuestionBlueprint(
+                id="1.2", task_type="evaluation",
+                original_text="求临界预紧力矩。",
+                expected_output="临界预紧力矩的数值。",
+            ),
+            SubQuestionBlueprint(
+                id="2.2", task_type="evaluation",
+                original_text="求工况A和B的Tmax。",
+                expected_output="工况A和工况B下的 Tmax 数值及是否加钢带的结论。",
+            ),
+        ],
+    )
+    model = ModelVersion(stage="final", description="锚杆预紧模型")
+
+    main_prompt = build_prompt_figure_one(model, "主图", blueprint=bp)
+    assert "逐问数值输出要求" in main_prompt
+    assert "问题 1.2：临界预紧力矩的数值。" in main_prompt
+    assert "问题 2.2：工况A和工况B下的 Tmax" in main_prompt
+    assert "Q1.2: 临界预紧力矩=" in main_prompt
+    assert "不得静默跳过" in main_prompt
+
+    support_prompt = build_prompt_figure_one(
+        model, "补充图", blueprint=bp,
+        canonical_evidence="RESULT: baseline=ours R²=0.99 Tmax=80.0",
+    )
+    assert "逐问数值输出要求" not in support_prompt
+    assert "唯一主方案证据" in support_prompt
+
+
+def test_main_figure_prompt_forbids_masking_negative_margins():
+    """安全裕度等负值不得被 max(0,...) 截断掩盖。"""
+    from math_agent.prompts.coder_figure_one import build_prompt_figure_one
+    from math_agent.state import ModelVersion
+
+    prompt = build_prompt_figure_one(ModelVersion(stage="final", description="锚杆预紧"), "主图")
+    assert "禁止截断掩盖" in prompt
+    assert "max(0, ...)/clip/截断" in prompt
+    assert "安全裕度为负表示超限" in prompt
+
+
 def test_supporting_figure_prompt_reuses_canonical_evidence():
     from math_agent.prompts.coder_figure_one import build_prompt_figure_one
     from math_agent.state import DataFileInfo, ModelVersion

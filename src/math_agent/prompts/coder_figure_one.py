@@ -48,6 +48,53 @@ def _blueprint_metrics_hint(blueprint) -> str:
     )
 
 
+def _subquestions_output_hint(blueprint) -> str:
+    """逐问列出 blueprint.subquestions 的 expected_output，要求主证据代码
+    对每个子问题都输出对应的可核验数值。
+
+    背景：paper_critic 以代码 stdout 为唯一数字事实源；若主证据代码只输出
+    metrics 而漏掉各问的关键结论（如临界预紧力矩、工况 A/B 的 Tmax、钢带
+    结论、Topt(f) 等），正文声称的定量结论会被判为“无证据”。因此这里把
+    analyst 解析出的每问预期输出织入 coder prompt，强制代码逐问打印。
+    """
+    if blueprint is None or not blueprint.subquestions:
+        return ""
+    items = []
+    for sub in blueprint.subquestions:
+        qid = str(sub.id or "")
+        expect = str(sub.expected_output or "").strip()
+        if not qid or not expect:
+            continue
+        short = expect.replace("\n", " ")[:120]
+        items.append(f"- 问题 {qid}：{short}")
+    if not items:
+        return ""
+    return (
+        "\n# 逐问数值输出要求（论文评审以 stdout 为唯一数字事实源）\n"
+        "主证据脚本必须对下列每个子问题都计算并打印其 expected_output 中的"
+        "关键数值，不得只输出 Blueprint 指标：\n"
+        + "\n".join(items)
+        + "\n"
+        "输出约定：每个子问题的数值用一行 `Q<问题id>: <字段名>=<数值> ...` "
+        "打印（字段名可用中文或英文，数值为有限浮点），例如：\n"
+        "print(f'Q1.2: 临界预紧力矩={critical_torque:.2f} N·m')\n"
+        "print(f'Q2.2: Tmax_A={tmax_a:.2f} Tmax_B={tmax_b:.2f} 加钢带={use_steel}')\n"
+        "缺失或无法计算的子问题必须在 stdout 明确说明原因（如“Q3.2: 附件无偏心"
+        "数据，按规范取 e=0 计算”），不得静默跳过。\n"
+    )
+
+
+def _no_masking_hint() -> str:
+    """禁止用 max(0, x)/clip 掩盖真实负值或越界结果。"""
+    return (
+        "\n# 禁止截断掩盖（硬性要求）\n"
+        "凡指标为负值、比例越界或物理上不允许的结果，必须打印真实计算值并"
+        "说明含义（如“安全裕度为负表示超限”），禁止用 max(0, ...)/clip/截断"
+        "把它伪装成 0 或边界值；仅当指标定义本身要求裁剪（如拟合 R² 因数值"
+        "噪声略超 [0,1]）时才允许 clip，且必须在 stdout 打印裁剪前的原始值。\n"
+    )
+
+
 def _forbidden_green_metrics_hint() -> str:
     return (
         "禁止输出与本题无关的物流指标名，包括但不限于："
@@ -124,6 +171,9 @@ def build_prompt_figure_one(model, purpose: str, prev_failure=None, prev_error_k
             )
 
     metrics_hint = _blueprint_metrics_hint(blueprint)
+    # 支撑图复用主方案证据，不再重复逐问求解；只有主证据图需要逐问数值输出。
+    subquestions_hint = _subquestions_output_hint(blueprint) if not canonical_evidence else ""
+    no_masking_hint = _no_masking_hint()
     data_hint = ""
     if data_dir and data_files:
         from math_agent.prompts._data_hint import build_data_hint
@@ -195,7 +245,7 @@ def build_prompt_figure_one(model, purpose: str, prev_failure=None, prev_error_k
         f"# 核心方程（节选）\n{eqs}\n\n"
         f"# 核心变量（节选）\n{vars_}\n\n"
         f"# 当前绘图任务\n{purpose}\n"
-        f"{metrics_hint}{data_hint}{canonical_hint}{fb}{repair_hint}\n"
+        f"{metrics_hint}{subquestions_hint}{data_hint}{canonical_hint}{fb}{repair_hint}\n"
         f"请为上述绘图任务生成一段独立可运行的 Python 脚本。\n"
         f"优先使用标准库 + numpy + matplotlib；除非确有必要，不要依赖 pandas、seaborn、networkx 等额外库。\n"
         f"如果任务属于鲁棒性或敏感性图，请用小规模、轻量级实验设计，保证单脚本 60 秒内完成。\n"
@@ -207,6 +257,7 @@ def build_prompt_figure_one(model, purpose: str, prev_failure=None, prev_error_k
         )
         + "请直接输出正常的多行 Python 源码，不要把整段 code 写成带字面量 \\n 的转义字符串。\n"
         f"若标题、注释、docstring 里需要反斜杠或 LaTeX 记号，请使用原始字符串或双反斜杠，避免非法转义。\n"
+        f"{no_masking_hint}"
         f"{_result_format_hint(blueprint, green)}"
         f"{_result_common_hint(green)}"
         f"请输出 JSON：{{\"purpose\": str, \"code\": str}}，code 字段是完整的 Python 源码。"
