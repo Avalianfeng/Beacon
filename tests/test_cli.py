@@ -403,3 +403,104 @@ def test_run_rejects_nonexistent_data_dir(tmp_path):
     result = runner.invoke(app, ["run", "--problem", str(problem), "--out", str(out), "--no-interrupt"])
     assert result.exit_code != 0
     assert "data_dir" in result.output
+
+
+def test_review_rejects_when_paper_incomplete(tmp_path):
+    """论文关键 section 为空时 review 必须拒绝，不能送半成品进人审。"""
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "checkpoints.sqlite").write_bytes(b"x")
+    (out / "trace.json").write_text(json.dumps({"thread_id": "default"}), encoding="utf-8")
+
+    from math_agent.state import MathModelingState, CriticReport, CriticIssue
+    state = MathModelingState(problem="p")
+    state.paper.abstract = ""
+    state.paper.model_section = ""
+    state.paper.solution = ""
+    state.paper.conclusion = ""
+
+    fake_graph = MagicMock()
+    fake_graph.get_state.return_value = MagicMock(values=state)
+    saver_cm = MagicMock()
+    saver_cm.__enter__.return_value = object()
+    saver_cm.__exit__.return_value = False
+
+    with patch("math_agent.cli._saver_cm", return_value=saver_cm), \
+         patch("math_agent.cli.build_graph", return_value=fake_graph), \
+         patch("math_agent.cli._require_checkpoint"), \
+         patch("math_agent.cli._require_trace_thread"):
+        result = runner.invoke(app, ["review", "--out", str(out)])
+
+    assert result.exit_code == 1
+    assert "论文关键 section 为空" in result.output
+    fake_graph.invoke.assert_not_called()
+
+
+def test_review_skips_when_paper_already_approved(tmp_path):
+    """论文评审已通过时 review 提示跳过，不重复接管。"""
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "checkpoints.sqlite").write_bytes(b"x")
+    (out / "trace.json").write_text(json.dumps({"thread_id": "default"}), encoding="utf-8")
+
+    from math_agent.state import MathModelingState, CriticReport, CriticIssue
+    state = MathModelingState(problem="p")
+    state.paper.abstract = "a"
+    state.paper.model_section = "m"
+    state.paper.solution = "s"
+    state.paper.conclusion = "c"
+    critic = CriticReport(target="paper", approved=True, score=9)
+    state.critic_reports.append(critic)
+
+    fake_graph = MagicMock()
+    fake_graph.get_state.return_value = MagicMock(values=state)
+    saver_cm = MagicMock()
+    saver_cm.__enter__.return_value = object()
+    saver_cm.__exit__.return_value = False
+
+    with patch("math_agent.cli._saver_cm", return_value=saver_cm), \
+         patch("math_agent.cli.build_graph", return_value=fake_graph), \
+         patch("math_agent.cli._require_checkpoint"), \
+         patch("math_agent.cli._require_trace_thread"):
+        result = runner.invoke(app, ["review", "--out", str(out)])
+
+    assert result.exit_code == 0
+    assert "[SKIP]" in result.output
+    fake_graph.invoke.assert_not_called()
+
+
+def test_review_reroutes_stopped_run_to_human_review(tmp_path):
+    """评审未过但论文完整：review 用 as_node=paper_critic 重新路由并 invoke。"""
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "checkpoints.sqlite").write_bytes(b"x")
+    (out / "trace.json").write_text(json.dumps({"thread_id": "default"}), encoding="utf-8")
+
+    from math_agent.state import MathModelingState, CriticReport, CriticIssue
+    state = MathModelingState(problem="p")
+    state.paper.abstract = "a"
+    state.paper.model_section = "m"
+    state.paper.solution = "s"
+    state.paper.conclusion = "c"
+    state.writer_iteration = 3
+    critic = CriticReport(target="paper", approved=False, score=6)
+    state.critic_reports.append(critic)
+
+    fake_graph = MagicMock()
+    fake_graph.get_state.return_value = MagicMock(values=state)
+    saver_cm = MagicMock()
+    saver_cm.__enter__.return_value = object()
+    saver_cm.__exit__.return_value = False
+
+    with patch("math_agent.cli._saver_cm", return_value=saver_cm), \
+         patch("math_agent.cli.build_graph", return_value=fake_graph), \
+         patch("math_agent.cli._require_checkpoint"), \
+         patch("math_agent.cli._require_trace_thread"), \
+         patch("math_agent.cli._dump_state_summary"), \
+         patch("math_agent.cli._echo_run_outcome"):
+        result = runner.invoke(app, ["review", "--out", str(out)])
+
+    assert result.exit_code == 0, result.output
+    kwargs = fake_graph.update_state.call_args.kwargs
+    assert kwargs["as_node"] == "paper_critic"
+    fake_graph.invoke.assert_called_once()

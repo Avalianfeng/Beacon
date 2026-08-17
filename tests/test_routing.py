@@ -31,9 +31,16 @@ def test_routing_after_final_goes_to_coder():
     assert after_model_critic(_state_with("final", 9, 0)) == "to_coder"
 
 
-def _state_with_paper_critic(score: int, approved: bool, writer_iter: int):
+def _state_with_paper_critic(score: int, approved: bool, writer_iter: int,
+                                *, complete: bool = True):
     s = MathModelingState(problem="p")
-    s.paper.abstract = "非空论文"
+    if complete:
+        s.paper.abstract = "非空论文"
+        s.paper.model_section = "非空模型"
+        s.paper.solution = "非空求解"
+        s.paper.conclusion = "非空结论"
+    else:
+        s.paper.abstract = "非空论文"
     s.writer_iteration = writer_iter
     s.critic_reports.append(CriticReport(
         target="paper", score=score, approved=approved,
@@ -52,9 +59,19 @@ def test_after_paper_critic_retries_when_below_threshold_and_iter_left():
     assert after_paper_critic(s) == "retry"
 
 
-def test_after_paper_critic_stops_when_iter_cap_hit():
+def test_after_paper_critic_advances_to_review_when_iter_cap_hit():
+    # 论文内容完整但自动评审未达门槛且修复轮耗尽：移交人工整体评估，
+    # 而不是直接 stop 掐断人工机会。
     from math_agent.config import MAX_WRITER_ITERATIONS
     s = _state_with_paper_critic(score=4, approved=False, writer_iter=MAX_WRITER_ITERATIONS)
+    assert after_paper_critic(s) == "advance_review"
+
+
+def test_after_paper_critic_stops_when_incomplete_paper_at_iter_cap():
+    # 论文关键 section 为空：不允许进入人工评估（半成品不能送审）。
+    from math_agent.config import MAX_WRITER_ITERATIONS
+    s = _state_with_paper_critic(score=4, approved=False, writer_iter=MAX_WRITER_ITERATIONS,
+                                 complete=False)
     assert after_paper_critic(s) == "stop"
 
 

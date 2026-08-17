@@ -18,9 +18,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from math_agent.config import MIN_PAPER_CRITIC_SCORE
 from math_agent.graph import build_graph
 from math_agent.checkpointing import sqlite_saver
-from math_agent.state import HumanDecision, DataFileInfo
+from math_agent.state import HumanDecision, DataFileInfo, MathModelingState
 from math_agent.errors import LLMError, LLMRateLimitError, LLMTransportError
 from math_agent.nodes.finalizer import load_verified_completion
 from math_agent.run_lock import RunLock, RunLockedError
@@ -471,7 +472,100 @@ def _echo_run_outcome(out: Path, thread: str) -> None:
 
 
 @app.command()
+def review(
+    out: Path = typer.Option(Path("runs/latest")),
+    thread: str = typer.Option("default"),
+    no_interrupt: bool = typer.Option(
+        False, "--no-interrupt", help="接管后自动批准并直接产出（degraded 状态）"
+    ),
+):
+    """人工接管：把停在论文评审（paper_critic 未过）的 run 推进到 human_review。
+
+    自动评审未达门槛且 writer 修复轮耗尽时，流程原本 stop，论文永远到不了
+    人工评估环节。本命令从已保存 checkpoint 把流程重新路由到
+    table_assembler → evaluation → human_review，由人工整体评估后
+    resume --approve / --no-approve 决定；--no-interrupt 则自动批准并
+    直接产出（质量警告会如实写入 completion.json，状态为 degraded）。
+    """
+    _require_checkpoint(out)
+    _require_trace_thread(out, thread)
+    clear_failed_node()
+    clear_failure_report(out)
+    tracer = Tracer(thread_id=thread, out_dir=out, append_existing=True)
+    tok = set_current(tracer)
+    try:
+        with RunLock(out):
+            with _saver_cm(out) as saver:
+                g = build_graph(
+                    checkpointer=saver,
+                    interrupt_before=[] if no_interrupt else ["human_review"],
+                )
+                snapshot = g.get_state(_config(thread))
+                if snapshot is None or not snapshot.values:
+                    raise ValueError(f"checkpoint has no state for thread={thread}")
+                state = MathModelingState.model_validate(snapshot.values)
+                empty = [
+                    field for field in ("abstract", "model_section", "solution", "conclusion")
+                    if not (getattr(state.paper, field, "") or "").strip()
+                ]
+                if empty:
+                    typer.echo(
+                        f"[REJECT] 论文关键 section 为空（{', '.join(empty)}），"
+                        "不能进入人工评估。",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+                critic = state.latest_critic("paper")
+                if critic is None or (
+                    critic.approved and critic.score >= MIN_PAPER_CRITIC_SCORE
+                ):
+                    typer.echo(
+                        "[SKIP] 论文评审已通过或无需人工接管；"
+                        "若流程中断请用 recover。",
+                    )
+                    return
+                # 把 checkpoint 视为 paper_critic 刚执行完，重新走条件边路由：
+                # after_paper_critic 对“内容完整但未达门槛且迭代耗尽”返回
+                # advance_review → table_assembler → evaluation → human_review。
+                g.update_state(
+                    _config(thread),
+                    {"writer_iteration": state.writer_iteration},
+                    as_node="paper_critic",
+                )
+                g.invoke(None, config=_config(thread))
+    except RunLockedError as e:
+        typer.echo(f"[BUSY] {e}", err=True)
+        raise typer.Exit(75)
+    except LLMError as e:
+        failure = _record_failure(out, e)
+        typer.echo(f"[FAILED] LLM error at node '{failure.node}': {e}", err=True)
+        typer.echo(
+            f"  已暂停在 human_review 之前；修复后重试 review 或直接 "
+            f"resume --approve/--no-approve 继续。",
+            err=True,
+        )
+        raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        failure = _record_failure(out, e)
+        typer.echo(
+            f"[FAILED] review error at node '{failure.node}': "
+            f"{type(e).__name__}: {e}",
+            err=True,
+        )
+        raise typer.Exit(1)
+    finally:
+        tracer.flush()
+        reset_current(tok)
+    clear_failure_report(out)
+    _dump_state_summary(out, thread)
+    _echo_run_outcome(out, thread)
+
+
+@app.command()
 def resume(
+
     out: Path = typer.Option(Path("runs/latest")),
     thread: str = typer.Option("default"),
     approve: bool | None = typer.Option(

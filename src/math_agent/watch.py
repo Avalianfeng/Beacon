@@ -329,7 +329,9 @@ def build_next_hint(view: WatchView) -> str:
     if status == "stopped":
         return (
             f"流程在质量门禁或图终点结束，未进入人审。不要 recover；"
-            f"查看 insight 后新开 run。详见 {out / 'insights'}"
+            f"查看 insight 后新开 run。若论文已完整（停在 paper_critic "
+            f"未通过），可人工接管：uv run math-agent review "
+            f"--out {out} --thread {thread}。详见 {out / 'insights'}"
         )
     if status == "blocked":
         return _blocked_hint(view)

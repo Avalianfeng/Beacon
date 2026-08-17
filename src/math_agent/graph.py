@@ -224,7 +224,8 @@ def build_graph(
     g.add_conditional_edges(
         "paper_critic",
         after_paper_critic,
-        {"retry": "writer", "advance": "table_assembler", "stop": END},
+        {"retry": "writer", "advance": "table_assembler",
+         "advance_review": "table_assembler", "stop": END},
     )
     g.add_edge("table_assembler", "evaluation")
     g.add_edge("evaluation", "human_review")

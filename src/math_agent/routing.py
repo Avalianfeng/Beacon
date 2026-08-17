@@ -50,9 +50,18 @@ def after_model_critic(state: MathModelingState) -> str:
 
 
 def after_paper_critic(state: MathModelingState) -> str:
-    """writer 闭环：优秀论文门槛通过才前进；重试耗尽仍不通过则停止。"""
-    paper_has_content = any([
-        state.paper.abstract, state.paper.model_section, state.paper.solution,
+    """writer 闭环：优秀论文门槛通过才前进；重试耗尽仍不通过则停止。
+
+    自动评审只是质量预筛，不是最终裁决。修复轮耗尽仍未达门槛时，只要论文
+    关键 section 全部有实质内容，就移交 human_review 由人工整体评估决定
+    （approve 走 finalize；reject 停止），不再直接 stop 掐断人工机会。
+    论文不完整（关键 section 为空）时仍 stop，防止半成品流入人工环节。
+    """
+    paper_has_content = all([
+        (state.paper.abstract or "").strip(),
+        (state.paper.model_section or "").strip(),
+        (state.paper.solution or "").strip(),
+        (state.paper.conclusion or "").strip(),
     ])
     if not paper_has_content:
         return "stop" if state.writer_iteration >= MAX_WRITER_ITERATIONS else "retry"
@@ -62,7 +71,7 @@ def after_paper_critic(state: MathModelingState) -> str:
     if critic.approved and critic.score >= MIN_PAPER_CRITIC_SCORE:
         return "advance"
     if state.writer_iteration >= MAX_WRITER_ITERATIONS:
-        return "stop"
+        return "advance_review"
     return "retry"
 
 
