@@ -102,6 +102,39 @@ test("产物接口禁止访问项目目录之外", async () => {
   assert.equal(response.status, 403);
 });
 
+test("机制快照接口只读 insights 文本并拒绝路径穿越", async () => {
+  const outRel = "runs/_insight-api-test";
+  const outAbs = resolve(projectRoot, outRel);
+  await mkdir(resolve(outAbs, "insights"), { recursive: true });
+  await writeFile(
+    resolve(outAbs, "insights", "latest.md"),
+    "# coder_execute\nheadline: 执行失败\n\nValueError: NaN\n",
+    "utf8",
+  );
+  await writeFile(
+    resolve(outAbs, "insights", "latest.json"),
+    JSON.stringify({
+      node: "coder_execute",
+      headline: "coder_execute · 执行失败/回修",
+      path: "insights/coder_execute.md",
+      updated_at: "2026-08-17 19:20:00",
+    }),
+    "utf8",
+  );
+  try {
+    const ok = await fetch(`${base}/api/insights?out=${encodeURIComponent(outRel)}`);
+    assert.equal(ok.status, 200);
+    const payload = await ok.json();
+    assert.equal(payload.exists, true);
+    assert.match(payload.headline, /执行失败/);
+    assert.match(payload.body, /ValueError: NaN/);
+    const bad = await fetch(`${base}/api/insights?out=${encodeURIComponent(outRel)}&file=${encodeURIComponent("../secrets.md")}`);
+    assert.equal(bad.status, 400);
+  } finally {
+    await rm(outAbs, { recursive: true, force: true });
+  }
+});
+
 test("POST /api/upload/vision 缺少 storedPath 时返回 400", async () => {
   const response = await fetch(`${base}/api/upload/vision`, {
     method: "POST",

@@ -77,6 +77,12 @@ def _wrap(fn, name: str):
             print(end_line, flush=True)
             append_supervisor_log(out_dir, end_line)
             emit_node_end(out_dir, name, duration_ms=duration_ms)
+            try:
+                from math_agent.insight import record_node_insight, record_node_result
+                record_node_result(out_dir, name, result, duration_ms=duration_ms, stage=stage)
+                record_node_insight(out_dir, name, result)
+            except Exception:
+                pass
             return result
         except BaseException as exc:
             # 活跃节点 contextvar 会在 finally 中恢复；另存失败节点供 CLI 报错。

@@ -277,7 +277,7 @@ async function _refreshRunFromDisk(run) {
         run.nextNode = fromDisk;
       }
       run.threadId = supervisor.thread || run.threadId || "default";
-      if (["completed", "degraded", "rejected", "blocked", "failed", "paused"].includes(run.status)) {
+      if (["completed", "degraded", "rejected", "blocked", "failed", "paused", "stopped"].includes(run.status)) {
         run.endedAt = run.endedAt || supervisor.ended_at || new Date().toISOString();
       }
     }
@@ -411,6 +411,8 @@ async function _spawnContinuation(run, { mode, approve = null, notes = "" }) {
       // 保留用户主动停止状态，不让 close 事件覆盖。
     } else if (code === 0 && run.stdoutBuffer.includes("pipeline rejected at human_review")) {
       run.status = "rejected";
+    } else if (code === 0 && run.stdoutBuffer.includes("pipeline stopped before human_review")) {
+      run.status = "stopped";
     } else if (code === 0 && run.stdoutBuffer.includes("pipeline paused before human_review")) {
       run.status = "paused";
     } else if (run.stdoutBuffer.includes("[DEGRADED]")) {
@@ -660,6 +662,66 @@ async function handleApi(request, response, url) {
           }
         : null,
       stateSummary,
+    });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/insights") {
+    const out = url.searchParams.get("out") || "runs/latest";
+    const outDir = safeProjectPath(out);
+    const folder = resolve(outDir, "insights");
+    let files = [];
+    try {
+      files = (await readdir(folder)).filter((name) => name.endsWith(".md"));
+    } catch {
+      files = [];
+    }
+    let meta = null;
+    try {
+      meta = JSON.parse(await readFile(resolve(folder, "latest.json"), "utf8"));
+    } catch {}
+    const requested = url.searchParams.get("file");
+    let fileName = "latest.md";
+    if (requested) {
+      if (/[\\/]/.test(requested) || requested.includes("..") || !/^[A-Za-z0-9._-]+\.md$/.test(requested)) {
+        throw new HttpError(400, "Invalid insight file.");
+      }
+      fileName = requested;
+    }
+    let body = "";
+    try {
+      body = await readFile(resolve(folder, fileName), "utf8");
+    } catch {}
+    const stepsIndex = resolve(outDir, "steps", "index.jsonl");
+    const recentSteps = [];
+    try {
+      const lines = (await readFile(stepsIndex, "utf8")).split(/\r?\n/).filter(Boolean);
+      for (const line of lines.slice(-8)) {
+        try {
+          const row = JSON.parse(line);
+          if (row && typeof row === "object") recentSteps.push(row);
+        } catch {}
+      }
+    } catch {}
+    if (!body && recentSteps.length) {
+      const last = recentSteps[recentSteps.length - 1];
+      const rel = String(last.dir || "");
+      if (/^steps\/[A-Za-z0-9._-]+$/.test(rel)) {
+        try {
+          body = await readFile(resolve(outDir, rel, "output.json"), "utf8");
+        } catch {}
+      }
+    }
+    sendJson(response, 200, {
+      out,
+      exists: Boolean(body) || recentSteps.length > 0,
+      headline: meta && typeof meta.headline === "string" ? meta.headline : (recentSteps.at(-1)?.headline || ""),
+      node: meta && typeof meta.node === "string" ? meta.node : (recentSteps.at(-1)?.node || ""),
+      updatedAt: meta && typeof meta.updated_at === "string" ? meta.updated_at : (recentSteps.at(-1)?.updated_at || ""),
+      path: meta && typeof meta.path === "string" ? meta.path : (recentSteps.at(-1)?.dir || (body ? `insights/${fileName}` : "")),
+      files,
+      recentSteps,
+      body: body.slice(0, 12000),
     });
     return;
   }
@@ -944,7 +1006,9 @@ async function handleApi(request, response, url) {
       if (childSettled) return;
       childSettled = true;
       if (run.status !== "stopped") {
-        if (code === 0 && run.stdoutBuffer.includes("pipeline paused before human_review")) {
+        if (code === 0 && run.stdoutBuffer.includes("pipeline stopped before human_review")) {
+          run.status = "stopped";
+        } else if (code === 0 && run.stdoutBuffer.includes("pipeline paused before human_review")) {
           run.status = "paused";
         } else if (run.stdoutBuffer.includes("[DEGRADED]")) {
           run.status = "degraded";

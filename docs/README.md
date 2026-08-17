@@ -100,7 +100,7 @@ Web 高级选项中两个开关彼此独立：
   图文排布和篇幅门禁。
 - [`beacon-resilient-execution.md`](beacon-resilient-execution.md)：后台监督、恢复、硬期限和
   最终原子收口。
-- [`console-observation.md`](console-observation.md)：控制台观察面（`watch` / `progress.jsonl`）。
+- [`console-observation.md`](console-observation.md)：控制台观察面（`watch` / `progress.jsonl` / `insights/`）。
 - [`huazhong-2026-a-quality-gap.md`](huazhong-2026-a-quality-gap.md)：当前真题结果、
   8 篇获奖论文对比和剩余差距。
 - [`plan-c-runbook.md`](plan-c-runbook.md)：RAG、benchmark 和错误处理的历史运维快照；

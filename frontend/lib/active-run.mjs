@@ -191,6 +191,7 @@ export function mapSupervisorToUiStatus(supervisor) {
   if (status === "completed") return "completed";
   if (status === "degraded") return "degraded";
   if (status === "rejected") return "rejected";
+  if (status === "stopped") return "stopped";
   if (status === "stale") {
     // 心跳过期但仍可能有 checkpoint，交给前端当 failed/blocked 处理
     return "failed";

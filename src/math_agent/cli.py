@@ -327,6 +327,14 @@ def _prepare_run_output(out: Path, thread: str, force: bool) -> None:
         "run_manifest.json", "progress.jsonl",
     ):
         (out / stale_name).unlink(missing_ok=True)
+    insights = out / "insights"
+    if insights.is_dir():
+        import shutil
+        shutil.rmtree(insights, ignore_errors=True)
+    steps = out / "steps"
+    if steps.is_dir():
+        import shutil
+        shutil.rmtree(steps, ignore_errors=True)
     try:
         from math_agent.progress import reset_progress
         reset_progress(out, epoch=1, attempt=1)
@@ -428,11 +436,38 @@ def run(
             reset_current(tok)
     clear_failure_report(out)
     _dump_state_summary(out, thread)
-    if interrupt:
-        typer.echo(f"pipeline paused before human_review (thread={thread}); trace at {out / 'trace.json'}")
+    _echo_run_outcome(out, thread)
+
+
+def _echo_run_outcome(out: Path, thread: str) -> None:
+    """按 checkpoint 的真实 next 汇报，避免图已 END 时谎报人审暂停。"""
+    inspection = inspect_checkpoint(out, thread)
+    if inspection.next_node == "human_review":
+        typer.echo(
+            f"pipeline paused before human_review (thread={thread}); "
+            f"trace at {out / 'trace.json'}"
+        )
         typer.echo(f"use `math-agent resume --out {out} --thread {thread} --approve` to continue.")
-    else:
+        return
+    if inspection.next_node:
+        typer.echo(
+            f"pipeline left at node '{inspection.next_node}' (thread={thread}); "
+            f"trace at {out / 'trace.json'}"
+        )
+        return
+    if inspection.final_status == "rejected":
+        typer.echo(f"pipeline rejected at human_review; no finalization was performed for {out}")
+        return
+    if inspection.final_status in {"completed", "degraded"}:
         typer.echo(f"done. paper at {out / 'paper.md'}; trace at {out / 'trace.json'}")
+        return
+    if inspection.checkpoint_exists:
+        typer.echo(
+            f"pipeline stopped before human_review (thread={thread}); "
+            f"quality gate or graph ended. trace at {out / 'trace.json'}"
+        )
+        return
+    typer.echo(f"done. paper at {out / 'paper.md'}; trace at {out / 'trace.json'}")
 
 
 @app.command()
@@ -609,6 +644,12 @@ def _supervisor_exit(result, out: Path, thread: str) -> None:
         return
     if result.status == "paused":
         typer.echo(f"pipeline paused before human_review (thread={thread}); trace at {out / 'trace.json'}")
+        return
+    if result.status == "stopped":
+        typer.echo(
+            f"pipeline stopped before human_review (thread={thread}); "
+            f"quality gate or graph ended. trace at {out / 'trace.json'}"
+        )
         return
     if result.status == "rejected":
         typer.echo(f"pipeline rejected at human_review; no finalization was performed for {out}")

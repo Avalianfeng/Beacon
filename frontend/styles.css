@@ -1308,6 +1308,47 @@ input[type="range"] {
   line-height: 1.75;
 }
 
+.insight-pane {
+  margin-top: 14px;
+  padding: 16px 18px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #f7faff;
+}
+
+.insight-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.insight-heading strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.insight-heading small {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.insight-body {
+  max-height: 280px;
+  margin: 0;
+  padding: 14px 16px;
+  overflow: auto;
+  color: #dce8f6;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 12px;
+  background: var(--navy);
+}
+
 .paper-lines {
   display: grid;
   gap: 11px;

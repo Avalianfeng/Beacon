@@ -58,6 +58,29 @@ def test_run_force_removes_existing_checkpoint_files(tmp_path):
     assert manifest["no_interrupt"] is True
 
 
+def test_run_does_not_claim_pause_when_graph_already_ended(tmp_path):
+    problem = _problem(tmp_path)
+    out = tmp_path / "run"
+    out.mkdir()
+    fake_graph = MagicMock()
+    fake_graph.get_state.return_value = MagicMock(values={"problem": "p"}, next=())
+    saver_cm = MagicMock()
+    saver_cm.__enter__.return_value = object()
+    saver_cm.__exit__.return_value = False
+    ended = MagicMock(checkpoint_exists=True, next_node="", final_status="")
+    with patch("math_agent.cli._saver_cm", return_value=saver_cm), \
+         patch("math_agent.cli.build_graph", return_value=fake_graph), \
+         patch("math_agent.cli._dump_state_summary"), \
+         patch("math_agent.cli.inspect_checkpoint", return_value=ended):
+        result = runner.invoke(app, [
+            "run", "--problem", str(problem), "--out", str(out),
+        ])
+
+    assert result.exit_code == 0, result.output
+    assert "paused before human_review" not in result.output
+    assert "stopped before human_review" in result.output
+
+
 def test_run_without_force_preserves_existing_checkpoint(tmp_path):
     problem = _problem(tmp_path)
     out = tmp_path / "run"

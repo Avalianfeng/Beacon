@@ -11,6 +11,8 @@ const problemTitle = document.querySelector("#problemTitle");
 const problemBrief = document.querySelector("#problemBrief");
 const problemBadge = document.querySelector("#problemBadge");
 const artifactPreview = document.querySelector("#artifactPreview");
+const insightMeta = document.querySelector("#insightMeta");
+const insightBody = document.querySelector("#insightBody");
 const commandPreview = document.querySelector("#commandPreview");
 const outputDir = document.querySelector("#outputDir");
 const threadId = document.querySelector("#threadId");
@@ -109,6 +111,41 @@ function escapeHtml(value) {
 
 function setPreview(title, body, extra = "") {
   artifactPreview.innerHTML = `<h3>${escapeHtml(title)}</h3><p>${escapeHtml(body)}</p>${extra}`;
+}
+
+let lastInsightStamp = "";
+let insightTimer = 0;
+
+async function refreshInsightPane() {
+  if (!insightBody || !outputDir) return;
+  try {
+    const payload = await api(`/api/insights?out=${encodeURIComponent(outputDir.value || "runs/ui-latest")}`);
+    const stamp = `${payload.updatedAt || ""}|${payload.headline || ""}|${payload.body?.length || 0}`;
+    if (stamp === lastInsightStamp) return;
+    lastInsightStamp = stamp;
+    if (!payload.exists) {
+      insightMeta.textContent = "尚无评审/校验正文";
+      return;
+    }
+    insightMeta.textContent = [payload.headline, payload.updatedAt, payload.path]
+      .filter(Boolean)
+      .join(" · ");
+    const steps = Array.isArray(payload.recentSteps) ? payload.recentSteps : [];
+    const listing = steps.length
+      ? steps.map((row) => `${row.seq ?? "?"}  ${row.node || "?"}  ${row.dir || ""}`).join("\n") + "\n\n"
+      : "";
+    insightBody.textContent = listing + (payload.body || "");
+  } catch {
+    // 观察窗失败不影响主流程
+  }
+}
+
+function startInsightPolling() {
+  window.clearInterval(insightTimer);
+  refreshInsightPane().catch(() => {});
+  insightTimer = window.setInterval(() => {
+    refreshInsightPane().catch(() => {});
+  }, 4000);
 }
 
 function setRunLogPreview(run) {
@@ -568,6 +605,7 @@ async function startProjectRun() {
   updateStartGuide();
   showToast("已启动项目流水线");
   startLogStream(currentRunId);
+  startInsightPolling();
   // 慢速状态轮询：SSE 活跃时仅检测 paused/终态（不写日志），SSE 断开时作为日志 fallback
   pollTimer = window.setTimeout(pollCurrentRun, 2000);
 }
@@ -580,6 +618,7 @@ async function pollCurrentRun() {
     currentRunStatus = run.status;
     if (run.status === "running") {
       if (run.nextNode) applyNextNodeToStage(run.nextNode);
+      refreshInsightPane().catch(() => {});
       if (!logStream) {
         // SSE 未连接 -> 用 API 轮询作为日志 fallback
         setRunLogPreview(run);
@@ -1245,6 +1284,7 @@ async function restoreActiveRunFromDisk() {
         pollTimer = window.setTimeout(pollCurrentRun, 2000);
       }
       showToast(`已接回任务：${payload.out} (${payload.how || "auto"})`);
+      startInsightPolling();
     } else {
       handleRunEnd(run);
       showToast(`已加载最近任务：${payload.out} · ${run.status}`);
@@ -1271,6 +1311,7 @@ api("/api/health")
     } else {
       showToast(`已连接项目：${health.fixtures} 个示例题`);
       await restoreActiveRunFromDisk();
+      startInsightPolling();
     }
   })
   .catch((error) => showToast(`项目 API 未连接：${error.message}`));

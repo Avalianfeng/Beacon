@@ -32,10 +32,25 @@ Web UI 刷新后通过 `GET /api/active-run` 用同一套规则接回任务（�
 
 ## 终态提示
 
-面板在 `paused` / `blocked` / `completed` / `degraded` / `rejected` / `stale` 时给出**下一步 CLI 文案**，但不代为执行。  
-可选 `--follow-exit`：在 completed/degraded/rejected/blocked 时自动结束观察。
+面板在 `paused` / `stopped` / `blocked` / `completed` / `degraded` / `rejected` / `stale` 时给出**下一步 CLI 文案**，但不代为执行。  
+`stopped` 表示图已走到 END（例如质量门禁未过），不是人审暂停，也不是 crash；不要对这类目录反复 recover。  
+可选 `--follow-exit`：在 completed/degraded/rejected/blocked/stopped 时自动结束观察。
 
 ## 事件文件
 
 `out/progress.jsonl` 为 append-only 事件流（节点进出、LLM 统计、run_boundary、error）。
 `--force` 会截断并写入新的边界事件。写入失败不影响主流程；不记录完整 prompt 或附件内容。
+
+## 机制快照（正文窗口）
+
+节点级监视（`watch` / 运行日志）只保留进出与耗时。critic、模型—代码一致性、代码校验失败原因等**正文**落到：
+
+- `out/insights/<node>.md`：该节点最近一次快照
+- `out/insights/latest.md` / `latest.json`：当前最新一份（含一行 headline）
+
+Web 产物区下方的「机制快照」只读这些文件，不把长文打进命令行。`watch` 面板最多显示 headline 和路径。`--force` 会删除 `insights/` 与 `steps/`。
+
+每次 LLM 成功/空 content，以及每个节点返回值，还会按顺序写入：
+
+- `out/steps/index.jsonl`：序号、节点、headline、目录
+- `out/steps/0007_coder_generate_20260817-194612/`：`meta.json` + `output.json`（生成正文/解析结果；不含完整 prompt。重打靠时间戳分子目录）

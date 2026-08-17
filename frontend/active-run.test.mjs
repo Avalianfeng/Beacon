@@ -26,6 +26,7 @@ test("reconcile marks expired heartbeat as stale", () => {
 test("mapSupervisorToUiStatus covers blocked", () => {
   assert.equal(mapSupervisorToUiStatus({ status: "blocked" }), "blocked");
   assert.equal(mapSupervisorToUiStatus({ status: "starting" }), "running");
+  assert.equal(mapSupervisorToUiStatus({ status: "stopped" }), "stopped");
 });
 
 test("resolveActiveRun prefers running supervisor", async () => {
