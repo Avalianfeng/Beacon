@@ -105,6 +105,8 @@ Web 高级选项中两个开关彼此独立：
   8 篇获奖论文对比和剩余差距。
 - [`plan-c-runbook.md`](plan-c-runbook.md)：RAG、benchmark 和错误处理的历史运维快照；
   运行参数仍以 `.env.example` 和代码为准。
+- [`2026-08-18-mcm51-issue-report.md`](2026-08-18-mcm51-issue-report.md)：MCM-51 锚杆题
+  运行问题汇报（P01–P10 问题清单与已落地解决方案、观察项、commit 对照；供项目方跟进）。
 
 ## 待确认 / 愿景设计（非现行实现说明）
 
