@@ -488,6 +488,26 @@ def test_data_hint_uses_safe_windows_paths_and_real_columns():
     assert "单个反斜杠结尾" in hint
 
 
+def test_data_hint_bans_raw_nan_print_and_column_name_mixing():
+    """r7 批次1 三连死于打印含 NaN 原始数据；批次4 死于列名清理后混用两种写法。"""
+    from math_agent.prompts._data_hint import build_data_hint
+    from math_agent.state import DataFileInfo
+
+    hint = build_data_hint(
+        r"C:\题目\附件",
+        [DataFileInfo(
+            filename="A-附件.xlsx", file_type="xlsx", path="A-附件.xlsx",
+            summary={"sheets": [{"name": "Sheet1_标准实验数据"}]},
+        )],
+    )
+
+    assert "禁止把清理前的原始 DataFrame 直接 print" in hint
+    assert "非有限数值" in hint
+    assert "ffill" in hint
+    assert "清理后的实际列名" in hint
+    assert "混用清理前/后" in hint
+
+
 def test_data_hint_profiles_actual_dtypes_and_samples(workdir):
     from math_agent.prompts._data_hint import build_data_hint
     from math_agent.state import DataFileInfo
