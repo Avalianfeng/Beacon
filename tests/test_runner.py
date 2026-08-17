@@ -628,6 +628,39 @@ def test_run_python_auto_fixes_literal_backslash_n(workdir):
     assert any(str(p).endswith("fig.png") for p in result.artifact_paths)
 
 
+def test_runner_detects_overwritten_same_name_file_in_reused_workdir(workdir):
+    """跨批次复用的 attempt 目录中，覆盖同名产物也必须被检测（r10 冤杀根因）。"""
+    from math_agent.tools.runner import run_python
+
+    code = (
+        "import matplotlib; matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "plt.savefig('torque_force_regression.png')\n"
+    )
+    first = run_python(code, workdir=workdir)
+    assert any(str(p).endswith("torque_force_regression.png") for p in first.artifact_paths)
+
+    # 第二次同一目录、同名保存（覆盖旧文件）——必须仍被检测到
+    second = run_python(code, workdir=workdir)
+    assert any(str(p).endswith("torque_force_regression.png") for p in second.artifact_paths)
+
+
+def test_runner_detects_figure_saved_in_subdirectory(workdir):
+    """保存到子目录的图也必须被检测（rglob 递归快照）。"""
+    from math_agent.tools.runner import run_python
+
+    code = (
+        "import os\n"
+        "import matplotlib; matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "os.makedirs('figs', exist_ok=True)\n"
+        "plt.savefig('figs/plot.png')\n"
+    )
+    result = run_python(code, workdir=workdir)
+    assert result.success is True
+    assert any(str(p).replace("\\", "/").endswith("figs/plot.png") for p in result.artifact_paths)
+
+
 def test_runner_end_to_end_no_hang_from_plt_show(workdir):
     """端到端：含 plt.show() 的代码在 run_python 中不阻塞，正常完成。"""
     code = (

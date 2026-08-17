@@ -345,6 +345,25 @@ def _process_tree_rss(pid: int) -> int:
     return total
 
 
+def _snapshot_files(workdir: Path) -> dict[str, int]:
+    """递归快照 workdir 下全部文件 {绝对路径: mtime_ns}。
+
+    用于产物检测：attempt 目录跨批次复用（每批 attempt 从 0 重新计数），模型常把
+    图存为同名文件（如 torque_force_regression.png）覆盖旧文件；旧实现只比较
+    iterdir 顶层文件名集合差集，覆盖场景 after-before 为空 → artifact_paths=[]
+    → P12 误判“未产出图片”（r10 最后 3 批同因冤杀，stall=true）。
+    mtime 比较能识别“新文件/覆盖同名文件/子目录内文件”，且未触碰的旧文件不误报。
+    """
+    snapshot: dict[str, int] = {}
+    for path in workdir.rglob("*"):
+        if path.is_file():
+            try:
+                snapshot[str(path)] = path.stat().st_mtime_ns
+            except OSError:
+                pass
+    return snapshot
+
+
 def run_python(
     code: str,
     *,
@@ -368,7 +387,7 @@ def run_python(
     expected_paths = [Path(path) for path in (expected_input_paths or [])]
     script.write_text(_input_audit_prefix(expected_paths, audit_log) + code, encoding="utf-8")
 
-    before = {p.name for p in workdir.iterdir()}
+    before = _snapshot_files(workdir)
 
     if memory_limit_mb is None:
         try:
@@ -426,13 +445,20 @@ def run_python(
             read_paths=_read_audited_paths(audit_log),
         )
 
-    after = {p.name for p in workdir.iterdir()}
-    new_files = sorted(after - before - {"_run.py", "_input_reads.jsonl"})
+    after = _snapshot_files(workdir)
+    new_files = sorted(
+        path for path, mtime in after.items()
+        if before.get(path, -1) < mtime
+    )
+    new_files = [
+        path for path in new_files
+        if not path.endswith(("_run.py", "_input_reads.jsonl"))
+    ]
     return RunResult(
         success=proc.returncode == 0,
         stdout=stdout or "",
         stderr=stderr or "",
-        artifact_paths=[str(workdir / n) for n in new_files],
+        artifact_paths=new_files,
         read_paths=_read_audited_paths(audit_log),
         error_kind="" if proc.returncode == 0 else "runtime",
     )
