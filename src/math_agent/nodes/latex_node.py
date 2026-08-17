@@ -31,10 +31,12 @@ def _formal_figures(
     state: MathModelingState, sensitivity_runs: list[SensitivityRun]
 ) -> list[FigureArtifact]:
     """Select figures backed by the current formal evidence set."""
+    green = _has_green_safe_solver(state)
     artifact_paths = {
         str(Path(path).resolve())
         for artifact in state.latest_code_artifacts()
-        if artifact.success and artifact.evidence_role == "primary"
+        if artifact.success
+        and (artifact.evidence_role == "primary" or (not green and artifact.evidence_role == "supporting"))
         for path in artifact.artifact_paths
     }
     sensitivity_history_paths = {

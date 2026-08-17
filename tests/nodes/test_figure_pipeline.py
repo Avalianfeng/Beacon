@@ -129,6 +129,8 @@ def test_collect_pngs_rejects_supporting_figure_with_stale_primary_metrics():
 
 
 def test_collect_pngs_excludes_supporting_figure_even_when_total_matches():
+    # 物流题（主方案为绿色物流安全求解器）：supporting 图即使 RESULT 与主方案
+    # 完全一致也不进入视觉流水线（防止 supporting 自行补数）。
     from math_agent.nodes.figure_pipeline import _collect_pngs
     state = MathModelingState(problem="p", code_artifacts=[
         CodeArtifact(
@@ -137,8 +139,9 @@ def test_collect_pngs_excludes_supporting_figure_even_when_total_matches():
             stdout="RESULT: baseline=ours total_cost=100 vehicles=10",
         ),
         CodeArtifact(
-            purpose="main", code="", success=True, batch=3,
-            evidence_role="primary", artifact_paths=["main.png"],
+            purpose="main", code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+            success=True, batch=3, evidence_role="primary",
+            artifact_paths=["main.png"],
             stdout="RESULT: baseline=ours total_cost=100 vehicles=10",
         ),
     ])
@@ -189,3 +192,99 @@ def test_pipeline_uses_figure_model_for_critic_and_analyst(mocker, workdir):
     assert critic_model == MODEL_ROUTING["figure_critic"]
     assert analyst_model == MODEL_ROUTING["figure_analyst"]
     assert critic_model == MODEL_ROUTING["figure_analyst"]  # 同为 FIGURE_MODEL
+
+
+def test_collect_pngs_accepts_supporting_figure_on_generic_problem():
+    """非物流题：supporting 图与主方案同源同批，应进入论文视觉流水线。"""
+    from math_agent.nodes.figure_pipeline import _collect_pngs
+    state = MathModelingState(problem="p", code_artifacts=[
+        CodeArtifact(
+            purpose="supporting 辅助图", code="", success=True, batch=3,
+            evidence_role="supporting", artifact_paths=["supporting.png"],
+            stdout=(
+                "RESULT: baseline=ours R²=0.958852 T_max=600.71 "
+                "T_opt=480.57 安全裕度=0.2000"
+            ),
+        ),
+        CodeArtifact(
+            purpose="main", code="", success=True, batch=3,
+            evidence_role="primary", artifact_paths=["main.png"],
+            stdout=(
+                "RESULT: baseline=ours R²=0.958852 T_max=600.71 "
+                "T_opt=480.57 安全裕度=0.2000"
+            ),
+        ),
+    ])
+
+    paths = [path for path, _, _ in _collect_pngs(state)]
+    assert set(paths) == {"main.png", "supporting.png"}
+
+
+def test_collect_pngs_rejects_drifted_supporting_figure_on_generic_problem():
+    """非物流题：supporting 图数值与主方案漂移（>20%）时拒绝，防口径污染。"""
+    from math_agent.nodes.figure_pipeline import _collect_pngs
+    state = MathModelingState(problem="p", code_artifacts=[
+        CodeArtifact(
+            purpose="漂移图", code="", success=True, batch=3,
+            evidence_role="supporting", artifact_paths=["drifted.png"],
+            stdout=(
+                "RESULT: baseline=ours R²=0.958852 T_max=347.04 "
+                "T_opt=277.63 安全裕度=0.2000"
+            ),
+        ),
+        CodeArtifact(
+            purpose="main", code="", success=True, batch=3,
+            evidence_role="primary", artifact_paths=["main.png"],
+            stdout=(
+                "RESULT: baseline=ours R²=0.958852 T_max=600.71 "
+                "T_opt=480.57 安全裕度=0.2000"
+            ),
+        ),
+    ])
+
+    assert [path for path, _, _ in _collect_pngs(state)] == ["main.png"]
+
+
+def test_collect_pngs_rejects_catastrophic_supporting_figure_on_generic_problem():
+    """非物流题：supporting 图输出灾难值（R²=0 / T_max 数量级错误）时拒绝。"""
+    from math_agent.nodes.figure_pipeline import _collect_pngs
+    state = MathModelingState(problem="p", code_artifacts=[
+        CodeArtifact(
+            purpose="灾难图", code="", success=True, batch=3,
+            evidence_role="supporting", artifact_paths=["bad.png"],
+            stdout=(
+                "RESULT: baseline=ours R²=0.000000 T_max=0.08 "
+                "T_opt=0.06 安全裕度=0.2000"
+            ),
+        ),
+        CodeArtifact(
+            purpose="main", code="", success=True, batch=3,
+            evidence_role="primary", artifact_paths=["main.png"],
+            stdout=(
+                "RESULT: baseline=ours R²=0.958852 T_max=600.71 "
+                "T_opt=480.57 安全裕度=0.2000"
+            ),
+        ),
+    ])
+
+    assert [path for path, _, _ in _collect_pngs(state)] == ["main.png"]
+
+
+def test_collect_pngs_green_problem_still_excludes_supporting():
+    """物流题（绿色物流主方案）保持原行为：supporting 图一律不进视觉流水线。"""
+    from math_agent.nodes.figure_pipeline import _collect_pngs
+    state = MathModelingState(problem="p", code_artifacts=[
+        CodeArtifact(
+            purpose="supporting", code="", success=True, batch=3,
+            evidence_role="supporting", artifact_paths=["supporting.png"],
+            stdout="RESULT: baseline=ours total_cost=100 vehicles=10",
+        ),
+        CodeArtifact(
+            purpose="main", code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+            success=True, batch=3, evidence_role="primary",
+            artifact_paths=["main.png"],
+            stdout="RESULT: baseline=ours total_cost=100 vehicles=10",
+        ),
+    ])
+
+    assert [path for path, _, _ in _collect_pngs(state)] == ["main.png"]

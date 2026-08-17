@@ -76,11 +76,37 @@ def _figure_purpose_and_context(path: str, artifact) -> tuple[str, str]:
     return purpose, "\n".join(lines[:8])
 
 
+_GENERIC_EVIDENCE_KEYS = (
+    "R²", "R2", "T_max", "Tmax", "T_opt", "Topt", "安全裕度",
+)
+
+
+def _extract_generic_metrics(stdout: str) -> dict[str, float]:
+    """从 stdout 提取通用指标（R²/T_max/T_opt/安全裕度）作为一致性键。
+
+    物流题指标（total_cost 等）走 _FIGURE_EVIDENCE_KEYS；本题型指标走
+    这里的通用键。任一字段解析失败则跳过该键，避免键缺失误杀。
+    """
+    emitted = extract_numeric_results(stdout).get("ours", {})
+    generic: dict[str, float] = {}
+    for key in _GENERIC_EVIDENCE_KEYS:
+        value = emitted.get(key)
+        if isinstance(value, (int, float)) and value == value and value not in (float("inf"), float("-inf")):
+            generic[key] = float(value)
+    return generic
+
+
 def _matches_primary_evidence(stdout: str, primary: dict[str, float]) -> bool:
-    """拒绝仍携带旧主方案口径的补充图，避免图说污染正式论文。"""
+    """拒绝仍携带旧主方案口径的补充图，避免图说污染正式论文。
+
+    物流题（total_cost 等）走 _FIGURE_EVIDENCE_KEYS；其他题型用主方案
+    RESULT 的通用键（R²/T_max/T_opt/安全裕度）做偏差校验，>20% 视为漂移。
+    任一指标存在数量级灾难值（与主方案相差 10 倍以上）也拒绝。
+    """
     emitted = extract_numeric_results(stdout).get("ours", {})
     if not primary or not emitted:
         return True
+    # 物流题专用键（绿色物流主方案）
     for key in _FIGURE_EVIDENCE_KEYS:
         if key not in primary or key not in emitted:
             continue
@@ -89,6 +115,23 @@ def _matches_primary_evidence(stdout: str, primary: dict[str, float]) -> bool:
         tolerance = max(abs(expected) * 0.2, 0.1 if "rate" in key or "ratio" in key else 1e-6)
         if abs(observed - expected) > tolerance:
             return False
+    # 通用键（本题型 R²/T_max/T_opt/安全裕度）
+    generic_primary = _extract_generic_metrics(
+        "RESULT: baseline=ours " + " ".join(f"{k}={v}" for k, v in primary.items())
+    )
+    generic_emitted = _extract_generic_metrics(stdout)
+    for key, expected in generic_primary.items():
+        observed = generic_emitted.get(key)
+        if observed is None:
+            continue
+        if abs(expected) < 1e-12:
+            if abs(observed) > 1e-6:
+                return False
+            continue
+        if abs(observed) > abs(expected) * 10 or abs(expected) > abs(observed) * 10:
+            return False  # 数量级灾难
+        if abs(observed - expected) > abs(expected) * 0.2:
+            return False  # 口径漂移
     return True
 
 
@@ -107,17 +150,29 @@ def _collect_pngs(state: MathModelingState) -> list[tuple[str, str, str]]:
         extract_numeric_results(primary_artifact.stdout).get("ours", {})
         if primary_artifact is not None else {}
     )
+    is_green = any(
+        "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in (artifact.code or "")
+        for artifact in state.latest_code_artifacts()
+    )
     for art in state.latest_code_artifacts():
         # baseline 会从安全主求解器派生整套诊断图；这些图保留在磁盘作为
         # 可复核证据，但论文视觉流水线只审主方案/辅助图，避免同版式重复 3 次。
-        # 自由生成的 supporting 图即使 RESULT 总数接近主方案，也可能在未输出的
-        # 分场景明细（如车型结构、成本分解）上自行补数。正式论文只采用主求解器
-        # 同次运行生成的图；敏感性图由下方独立、已校验的 sensitivity_runs 提供。
-        if (
-            not art.success
-            or art.evidence_role != "primary"
-            or not _matches_primary_evidence(art.stdout, primary_metrics)
-        ):
+        # 物流题：自由生成的 supporting 图即使 RESULT 总数接近主方案，也可能在
+        # 未输出的分场景明细（如车型结构、成本分解）上自行补数，正式论文只采用
+        # 主求解器同次运行生成的图。
+        # 非物流题：supporting 图与主方案同批同源（coder 工作队列正式产物），
+        # 接受但要通过数值一致性校验（R²/T_max/T_opt/安全裕度偏差>20%或灾难
+        # 值拒绝），防止漂移/坏图混入（r11 fig_1 曾输出 R²=0.000000/T_max=0.08
+        # 灾难值仍 success=true）。
+        # 敏感性图由下方独立、已校验的 sensitivity_runs 提供。
+        if not art.success:
+            continue
+        if is_green:
+            if art.evidence_role != "primary":
+                continue
+        elif art.evidence_role not in {"primary", "supporting"}:
+            continue
+        if not _matches_primary_evidence(art.stdout, primary_metrics):
             continue
         for p in art.artifact_paths:
             if p.lower().endswith(".png") and p not in seen:
