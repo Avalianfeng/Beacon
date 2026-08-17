@@ -41,6 +41,8 @@ class CompletionResponse:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     model: str = ""
+    reasoning_content: str = ""
+    thinking_off: str = ""
 
     @classmethod
     def from_wire(cls, d: dict) -> "CompletionResponse":
@@ -49,6 +51,8 @@ class CompletionResponse:
             prompt_tokens=d.get("prompt_tokens", 0),
             completion_tokens=d.get("completion_tokens", 0),
             model=d.get("model", ""),
+            reasoning_content=str(d.get("reasoning_content") or ""),
+            thinking_off=str(d.get("thinking_off") or ""),
         )
 
 

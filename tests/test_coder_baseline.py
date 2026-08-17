@@ -35,57 +35,66 @@ def test_baseline_prompt_contains_output_contract():
     assert "JSON" in prompt
 
 
-def test_coder_node_produces_baseline_artifacts(monkeypatch):
-    """coder_node 应在主方案后追加 3 个 category='baseline:...' 的 artifacts。"""
+def test_coder_node_skips_logistics_baselines_without_green_attachments(monkeypatch):
+    """非物流附件不得强制 no_schedule/simple_pred/greedy。"""
     from math_agent.nodes.coder import coder_node, CoderDraft
     from math_agent.state import MathModelingState, ModelVersion
     from math_agent.tools.runner import RunResult
 
-    s = MathModelingState(problem="test", output_dir="/tmp/test_coder_baseline")
+    s = MathModelingState(problem="锚杆预紧", output_dir="/tmp/test_coder_baseline")
     s.model_versions.append(ModelVersion(
         stage="final", description="test model",
         variables={"x": "v"}, figure_purposes=["plot1"],
     ))
 
-    call_count = {"n": 0}
     def mock_complete(prompt, *, schema=None, **kw):
-        call_count["n"] += 1
-        if call_count["n"] <= 1:
-            return CoderDraft(
-                purpose="main plot",
-                code="print('RESULT: baseline=ours total_cost=80.0 service_rate=0.95')",
-            )
-        specs = ["no_schedule", "simple_pred", "greedy"]
-        idx = call_count["n"] - 2
         return CoderDraft(
-            purpose=f"baseline {specs[idx]}",
-            code=f"print('RESULT: baseline={specs[idx]} total_cost=100.0 service_rate=0.9')",
+            purpose="main plot",
+            code="print('RESULT: baseline=ours T_max=80.0 K=0.18')",
         )
 
     def mock_run(code, *, workdir, timeout=60, **kw):
-        return RunResult(success=True, stdout=code.replace("print(", "").replace("')", "").replace("'", ""),
-                         artifact_paths=[])
+        return RunResult(
+            success=True,
+            stdout="RESULT: baseline=ours T_max=80.0 K=0.18",
+            artifact_paths=[],
+        )
 
     monkeypatch.setattr("math_agent.nodes.coder.complete", mock_complete)
     monkeypatch.setattr("math_agent.nodes.coder.run_python", mock_run)
 
     result = coder_node(s)
     artifacts = result["code_artifacts"]
-    assert len(artifacts) == 4  # 1 主方案 + 3 对照方案
-    baseline_arts = [a for a in artifacts if a.category.startswith("baseline:")]
-    assert len(baseline_arts) == 3
-    categories = [a.category for a in baseline_arts]
-    assert "baseline:no_schedule" in categories
-    assert "baseline:simple_pred" in categories
-    assert "baseline:greedy" in categories
+    assert len(artifacts) == 1
+    assert not any(a.category.startswith("baseline:") for a in artifacts)
+
+
+def test_missing_baseline_items_only_for_green_logistics():
+    from math_agent.nodes.coder import _missing_baseline_items
+    from math_agent.state import DataFileInfo, MathModelingState
+
+    empty = MathModelingState(problem="锚杆预紧")
+    assert _missing_baseline_items(empty, []) == []
+
+    green = MathModelingState(problem="城市物流")
+    green.data_files = [
+        DataFileInfo(filename=name, file_type="xlsx", path=name)
+        for name in ("订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx")
+    ]
+    items = _missing_baseline_items(green, [])
+    assert {item["category"] for item in items} == {"no_schedule", "simple_pred", "greedy"}
 
 
 def test_main_figure_prompt_includes_ours_result_contract():
     """I1 回归：主方案 prompt 必须要求输出 RESULT: baseline=ours，否则对比表缺本文方案行。"""
     from math_agent.prompts.coder_figure_one import build_prompt_figure_one
-    from math_agent.state import ModelVersion
+    from math_agent.state import DataFileInfo, ModelVersion
     m = ModelVersion(stage="final", description="test", variables={"x": "v"})
-    prompt = build_prompt_figure_one(m, "plot1")
+    green_files = [
+        DataFileInfo(filename=name, file_type="xlsx", path=name)
+        for name in ("订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx")
+    ]
+    prompt = build_prompt_figure_one(m, "plot1", data_files=green_files)
     assert "RESULT: baseline=ours" in prompt
     assert "O(n^2)" in prompt
     assert "内存不超过 1 GB" in prompt
@@ -94,15 +103,36 @@ def test_main_figure_prompt_includes_ours_result_contract():
     assert "read_only" in prompt
 
 
-def test_supporting_figure_prompt_reuses_canonical_evidence():
+def test_generic_figure_prompt_forbids_logistics_metrics():
     from math_agent.prompts.coder_figure_one import build_prompt_figure_one
     from math_agent.state import ModelVersion
 
+    prompt = build_prompt_figure_one(
+        ModelVersion(stage="final", description="锚杆预紧"),
+        "主图",
+    )
+    assert "RESULT: baseline=ours" in prompt
+    assert "total_cost" in prompt
+    assert "禁止输出与本题无关的物流指标" in prompt
+    assert "while unserved" not in prompt
+    assert "Branch-and-Cut" not in prompt
+    assert "Excel 附件必须遍历全部工作表" in prompt
+
+
+def test_supporting_figure_prompt_reuses_canonical_evidence():
+    from math_agent.prompts.coder_figure_one import build_prompt_figure_one
+    from math_agent.state import DataFileInfo, ModelVersion
+
     model = ModelVersion(stage="final", description="test")
+    green_files = [
+        DataFileInfo(filename=name, file_type="xlsx", path=name)
+        for name in ("订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx")
+    ]
     prompt = build_prompt_figure_one(
         model,
         "补充图",
         canonical_evidence="RESULT: baseline=ours total_cost=100 service_rate=0.95",
+        data_files=green_files,
     )
 
     assert "唯一主方案证据" in prompt

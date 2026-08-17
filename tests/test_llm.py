@@ -61,6 +61,76 @@ def test_complete_retries_on_invalid_json(fake_transport, monkeypatch):
     assert out.score == 1
 
 
+def test_empty_structured_content_fails_over_without_json_repair(
+    fake_transport, monkeypatch,
+):
+    monkeypatch.setattr(llm_mod, "_DEFAULT_VALIDATION_REPAIRS", 4)
+    fake_transport.enqueue_ok("")
+    fake_transport.enqueue_ok('{"summary":"ok","score":7}')
+
+    out = llm_mod.complete(
+        "x", schema=_Answer, model="primary", fallback_models=["backup"],
+    )
+
+    assert out.score == 7
+    assert [call.model for call in fake_transport.calls] == ["primary", "backup"]
+    assert len(fake_transport.calls[1].messages) == 1
+
+
+def test_empty_structured_content_on_all_models_does_not_burn_repairs(
+    fake_transport, monkeypatch,
+):
+    from math_agent.errors import LLMEmptyContentError
+
+    monkeypatch.setattr(llm_mod, "_DEFAULT_VALIDATION_REPAIRS", 4)
+    fake_transport.enqueue_ok("  \n")
+    fake_transport.enqueue_ok("")
+
+    with pytest.raises(LLMEmptyContentError):
+        llm_mod.complete(
+            "x", schema=_Answer, model="primary", fallback_models=["backup"],
+        )
+
+    assert [call.model for call in fake_transport.calls] == ["primary", "backup"]
+
+
+def test_empty_structured_content_retries_same_model_with_higher_max_tokens(
+    fake_transport, monkeypatch,
+):
+    monkeypatch.setattr(llm_mod, "_DEFAULT_VALIDATION_REPAIRS", 4)
+    fake_transport.enqueue_ok("")
+    fake_transport.enqueue_ok('{"summary":"ok","score":8}')
+
+    out = llm_mod.complete(
+        "x", schema=_Answer, model="primary", fallback_models=["backup"],
+        max_tokens=6000,
+    )
+
+    assert out.score == 8
+    assert [call.model for call in fake_transport.calls] == ["primary", "primary"]
+    assert fake_transport.calls[0].extra["max_tokens"] == 6000
+    assert fake_transport.calls[1].extra["max_tokens"] == 12000
+    assert len(fake_transport.calls[1].messages) == 1
+
+
+def test_empty_structured_content_bumps_from_coder_limit_to_cap(
+    fake_transport, monkeypatch,
+):
+    monkeypatch.setattr(llm_mod, "_DEFAULT_VALIDATION_REPAIRS", 4)
+    fake_transport.enqueue_ok("")
+    fake_transport.enqueue_ok('{"summary":"ok","score":8}')
+
+    out = llm_mod.complete(
+        "x", schema=_Answer, model="primary", fallback_models=["backup"],
+        max_tokens=12000,
+    )
+
+    assert out.score == 8
+    assert [call.model for call in fake_transport.calls] == ["primary", "primary"]
+    assert fake_transport.calls[0].extra["max_tokens"] == 12000
+    assert fake_transport.calls[1].extra["max_tokens"] == 16000
+
+
 def test_complete_raises_after_all_retries_exhausted(fake_transport, monkeypatch):
     monkeypatch.setattr(llm_mod, "_DEFAULT_VALIDATION_REPAIRS", 1)
     fake_transport.enqueue_ok("nope")

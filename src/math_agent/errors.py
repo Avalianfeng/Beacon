@@ -5,6 +5,7 @@
     ├── LLMError
     │     ├── LLMRateLimitError       # 触发指数退避
     │     ├── LLMValidationError      # 结构化输出解析失败；可"喂回错误"重试
+    │     │     └── LLMEmptyContentError  # HTTP 成功但 content 为空；切模型，不喂空 JSON
     │     └── LLMTransportError       # 网络/超时；短间隔重试
     ├── RunnerError                   # 对应 tools/runner.py 的 subprocess 执行错误
     │     ├── RunnerTimeoutError
@@ -69,6 +70,10 @@ class LLMBudgetExceededError(LLMError):
 
 class LLMValidationError(LLMError):
     """结构化输出解析失败，进入 JSON 修复流程。"""
+
+
+class LLMEmptyContentError(LLMValidationError):
+    """HTTP 成功但 message.content 为空。应立即切模型，不应把空正文喂回 JSON 修复。"""
 
 
 class RunnerError(MathAgentError):

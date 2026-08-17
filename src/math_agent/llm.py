@@ -23,11 +23,13 @@ from math_agent.errors import (
     LLMRateLimitError,
     LLMServerError,
     LLMTimeoutError,
+    LLMEmptyContentError,
     LLMValidationError,
     MathAgentError,
     classify_exception,
 )
 from math_agent.tracing import get_current as _get_tracer
+from math_agent.tracing import get_last_node as _get_last_node
 from math_agent.transport import (
     CompletionRequest,
     CompletionResponse,
@@ -75,18 +77,18 @@ _DEFAULT_TOTAL_TIMEOUT = _float_env(
 # standard 故意使用上面的两个默认值，便于测试和运行时诊断覆盖；长文本和视觉
 # 画像在此单独配置。
 _PROFILE_ATTEMPT_TIMEOUT = {
-    "code": _float_env("MATH_AGENT_LLM_CODE_ATTEMPT_TIMEOUT", 90.0),
+    "code": _float_env("MATH_AGENT_LLM_CODE_ATTEMPT_TIMEOUT", 180.0),
     "long": _float_env("MATH_AGENT_LLM_LONG_ATTEMPT_TIMEOUT", 300.0),
     "vision": _float_env("MATH_AGENT_LLM_VISION_ATTEMPT_TIMEOUT", _DEFAULT_ATTEMPT_TIMEOUT),
 }
 _PROFILE_TOTAL_TIMEOUT = {
-    "code": _float_env("MATH_AGENT_LLM_CODE_TOTAL_TIMEOUT", 240.0),
+    "code": _float_env("MATH_AGENT_LLM_CODE_TOTAL_TIMEOUT", 420.0),
     "long": _float_env("MATH_AGENT_LLM_LONG_TOTAL_TIMEOUT", 420.0),
     "vision": _float_env("MATH_AGENT_LLM_VISION_TOTAL_TIMEOUT", _DEFAULT_TOTAL_TIMEOUT),
 }
 _PROFILE_FALLBACK_RESERVE = {
     "standard": _float_env("MATH_AGENT_LLM_FALLBACK_RESERVE", 120.0),
-    "code": _float_env("MATH_AGENT_LLM_CODE_FALLBACK_RESERVE", 120.0),
+    "code": _float_env("MATH_AGENT_LLM_CODE_FALLBACK_RESERVE", 180.0),
     "long": _float_env("MATH_AGENT_LLM_LONG_FALLBACK_RESERVE", 180.0),
     "vision": _float_env("MATH_AGENT_LLM_VISION_FALLBACK_RESERVE", 120.0),
 }
@@ -178,8 +180,22 @@ def _can_fail_over(error: LLMError) -> bool:
     """
     return isinstance(
         error,
-        (LLMConnectionError, LLMServerError, LLMRateLimitError),
+        (LLMConnectionError, LLMServerError, LLMRateLimitError, LLMEmptyContentError),
     )
+
+
+_EMPTY_CONTENT_TOKEN_CAP = 16000
+
+
+def _bumped_max_tokens(current: object) -> int | None:
+    """空 content 时把同一模型的 max_tokens 提到上限；已达上限则不再加。"""
+    try:
+        value = int(current)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0 or value >= _EMPTY_CONTENT_TOKEN_CAP:
+        return None
+    return min(_EMPTY_CONTENT_TOKEN_CAP, max(value * 2, value + 4000))
 
 
 def _order_candidates_by_health(
@@ -391,6 +407,7 @@ def complete(
     )
     preferred_model = candidates[0]
     successful_model = preferred_model
+    token_bumped: set[str] = set()
 
     for validation_round in range(repairs + 1):
         msgs = list(messages)
@@ -496,6 +513,53 @@ def complete(
                 elapsed_ms = int(
                     max(0.0, clock.monotonic() - attempt_started) * 1000
                 )
+                _observe_llm_response(tracer, response, model=active_model)
+                raw_content = response.content or ""
+                if schema is not None and not str(raw_content).strip():
+                    error = LLMEmptyContentError(
+                        "LLM 返回空 content，无法解析结构化 JSON"
+                    )
+                    if tracer is not None:
+                        tracer.end_attempt(
+                            model=active_model,
+                            status="failure",
+                            latency_ms=elapsed_ms,
+                            error_kind=type(error).__name__,
+                        )
+                    bumped = _bumped_max_tokens(kwargs.get("max_tokens"))
+                    if active_model not in token_bumped and bumped is not None:
+                        token_bumped.add(active_model)
+                        kwargs["max_tokens"] = bumped
+                        continue
+                    _mark_model_unhealthy(active_model, now=clock.monotonic())
+                    failure_counts[active_model] = (
+                        failure_counts.get(active_model, 0) + 1
+                    )
+                    if candidate_index + 1 < len(ordered_candidates):
+                        nxt = ordered_candidates[candidate_index + 1]
+                        failover_line = f"[llm] failover {active_model}→{nxt}"
+                        print(failover_line, flush=True)
+                        if tracer is not None:
+                            try:
+                                from math_agent.progress import append_supervisor_log
+                                append_supervisor_log(tracer.out_dir, failover_line)
+                            except Exception:
+                                pass
+                        candidate_index += 1
+                        continue
+                    _record_llm_step(
+                        tracer,
+                        model=active_model,
+                        content=raw_content,
+                        parsed=None,
+                        schema=getattr(schema, "__name__", "") if schema is not None else "",
+                        prompt=prompt,
+                        prompt_tokens=getattr(response, "prompt_tokens", 0),
+                        completion_tokens=getattr(response, "completion_tokens", 0),
+                        status="empty_content",
+                        response=response,
+                    )
+                    raise error
                 if tracer is not None:
                     tracer.end_attempt(
                         model=active_model, status="success", latency_ms=elapsed_ms
@@ -515,6 +579,17 @@ def complete(
                     completion_tokens=response.completion_tokens,
                     latency_ms=int(max(0.0, clock.monotonic() - started) * 1000),
                 )
+            _record_llm_step(
+                tracer,
+                model=successful_model,
+                content=content,
+                parsed=None,
+                schema="",
+                prompt=prompt,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                response=response,
+            )
             return content
         # LLM 在 JSON 字符串里输出 LaTeX 命令 \beta/\big/\tau/\text/\top 时，
         # \b \t \f 都是合法 JSON 转义（backspace/tab/formfeed）。
@@ -536,6 +611,17 @@ def complete(
                     completion_tokens=response.completion_tokens,
                     latency_ms=int(max(0.0, clock.monotonic() - started) * 1000),
                 )
+            _record_llm_step(
+                tracer,
+                model=successful_model,
+                content=content,
+                parsed=parsed,
+                schema=getattr(schema, "__name__", str(schema)),
+                prompt=prompt,
+                prompt_tokens=response.prompt_tokens,
+                completion_tokens=response.completion_tokens,
+                response=response,
+            )
             return parsed
         # 直接解析失败——回退到反斜杠双写后重试
         # P1: 双写所有非法 JSON 转义（\h \s \m \S \l 等，排除合法的 \b \f \n \r \t \u \" \\ \/）
@@ -552,11 +638,80 @@ def complete(
                         completion_tokens=response.completion_tokens,
                         latency_ms=int(max(0.0, clock.monotonic() - started) * 1000),
                     )
+                _record_llm_step(
+                    tracer,
+                    model=successful_model,
+                    content=patched,
+                    parsed=parsed,
+                    schema=getattr(schema, "__name__", str(schema)),
+                    prompt=prompt,
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    response=response,
+                )
                 return parsed
         last_validation_error = LLMValidationError(parse_err or "JSON 解析失败")
         parse_feedback = (content, parse_err or "JSON 解析失败")
 
     raise last_validation_error or LLMValidationError("JSON 解析失败")
+
+
+def _observe_llm_response(tracer, response, *, model: str) -> None:
+    """把 thinking 关闭方式与 reasoning 是否占满预算写进 supervisor.log。"""
+    reasoning = str(getattr(response, "reasoning_content", "") or "")
+    thinking_off = str(getattr(response, "thinking_off", "") or "")
+    line = (
+        f"[llm] thinking_off={thinking_off or 'unset'} "
+        f"reasoning_chars={len(reasoning)} "
+        f"content_chars={len(str(getattr(response, 'content', '') or ''))} "
+        f"completion_tokens={getattr(response, 'completion_tokens', 0)} "
+        f"model={model}"
+    )
+    print(line, flush=True)
+    if tracer is None:
+        return
+    try:
+        from math_agent.progress import append_supervisor_log
+        append_supervisor_log(tracer.out_dir, line)
+    except Exception:
+        return
+
+
+def _record_llm_step(
+    tracer,
+    *,
+    model: str,
+    content: str,
+    parsed: Any,
+    schema: str,
+    prompt: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    status: str = "ok",
+    response: Any = None,
+) -> None:
+    if tracer is None:
+        return
+    try:
+        from math_agent.insight import record_llm_result
+        reasoning = str(getattr(response, "reasoning_content", "") or "") if response else ""
+        thinking_off = str(getattr(response, "thinking_off", "") or "") if response else ""
+        record_llm_result(
+            tracer.out_dir,
+            node=_get_last_node(),
+            model=model,
+            content=content,
+            parsed=parsed,
+            schema=schema,
+            prompt_chars=len(prompt or ""),
+            prompt_tokens=int(prompt_tokens or 0),
+            completion_tokens=int(completion_tokens or 0),
+            status=status,
+            reasoning_chars=len(reasoning),
+            thinking_off=thinking_off,
+        )
+    except Exception:
+        return
 
 
 _THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)

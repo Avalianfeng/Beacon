@@ -70,14 +70,16 @@ def _worker_main(conn) -> None:
                 ):
                     return
             else:
-                resp = litellm.completion(**_to_litellm_kwargs(req))
-                content = resp.choices[0].message.content or ""
+                resp = _litellm_completion(_to_litellm_kwargs(req))
+                content, reasoning = _message_text(resp)
                 usage = getattr(resp, "usage", None)
                 payload = {
                     "content": content,
+                    "reasoning_content": reasoning,
                     "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
                     "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
                     "model": req.get("model", ""),
+                    "thinking_off": getattr(resp, "_beacon_thinking_off", "") or "",
                 }
                 if not _safe_send(conn, {"type": "ok", "payload": payload}):
                     return
@@ -97,6 +99,15 @@ def _safe_send(conn, payload: dict) -> bool:
         return False
 
 
+# 结构化输出时必须关 thinking。不同网关字段不同；被拒时换写法，不要直接去掉
+# 关闭参数（去掉后会回到默认 thinking，reasoning 占满 max_tokens，content 变空）。
+_THINKING_OFF_BODIES: tuple[dict, ...] = (
+    {"thinking": {"type": "disabled"}},
+    {"enable_thinking": False},
+    {"chat_template_kwargs": {"enable_thinking": False}},
+)
+
+
 def _to_litellm_kwargs(req: dict) -> dict:
     """把 IPC request dict 转为 litellm.completion 入参。"""
     kw = {
@@ -108,10 +119,143 @@ def _to_litellm_kwargs(req: dict) -> dict:
     }
     if req.get("response_format"):
         kw["response_format"] = req["response_format"]
-    # extra 透传（timeout, max_tokens 等）
-    for k, v in (req.get("extra") or {}).items():
+    extra = dict(req.get("extra") or {})
+    extra_body = dict(extra.pop("extra_body", None) or {})
+    if req.get("response_format"):
+        extra_body = {
+            **extra_body,
+            **_THINKING_OFF_BODIES[0],
+            "reasoning_effort": "none",
+        }
+    if extra_body:
+        extra["extra_body"] = extra_body
+    for k, v in extra.items():
         kw[k] = v
     return kw
+
+
+def _thinking_kwarg_rejected(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    if "thinking" not in msg and "reasoning" not in msg:
+        return False
+    return (
+        "unexpected keyword argument" in msg
+        or "unknown parameter" in msg
+        or "unknown argument" in msg
+        or "invalid parameter" in msg
+        or "unrecognized request argument" in msg
+    )
+
+
+def _with_thinking_body(kwargs: dict, body: dict) -> dict:
+    patched = dict(kwargs)
+    extra_body = dict(patched.get("extra_body") or {})
+    extra_body.pop("thinking", None)
+    extra_body.pop("enable_thinking", None)
+    extra_body.pop("chat_template_kwargs", None)
+    extra_body.update(body)
+    extra_body["reasoning_effort"] = "none"
+    patched["extra_body"] = extra_body
+    patched.pop("thinking", None)
+    patched.pop("enable_thinking", None)
+    patched.pop("reasoning_effort", None)
+    return patched
+
+
+def _drop_thinking(kwargs: dict) -> dict:
+    stripped = dict(kwargs)
+    stripped.pop("thinking", None)
+    stripped.pop("enable_thinking", None)
+    stripped.pop("reasoning_effort", None)
+    stripped.pop("reasoning_effort", None)
+    extra_body = stripped.get("extra_body")
+    if isinstance(extra_body, dict):
+        body = {
+            k: v for k, v in extra_body.items()
+            if k not in {"thinking", "enable_thinking", "chat_template_kwargs", "reasoning_effort"}
+        }
+        if body:
+            stripped["extra_body"] = body
+        else:
+            stripped.pop("extra_body", None)
+    return stripped
+
+
+def _thinking_off_label(kwargs: dict) -> str:
+    extra_body = kwargs.get("extra_body") or {}
+    parts: list[str] = []
+    if extra_body.get("thinking") == {"type": "disabled"}:
+        parts.append("extra_body.thinking=disabled")
+    if extra_body.get("enable_thinking") is False:
+        parts.append("extra_body.enable_thinking=false")
+    chat = extra_body.get("chat_template_kwargs") or {}
+    if isinstance(chat, dict) and chat.get("enable_thinking") is False:
+        parts.append("chat_template_kwargs.enable_thinking=false")
+    if extra_body.get("reasoning_effort") == "none" or kwargs.get("reasoning_effort") == "none":
+        parts.append("reasoning_effort=none")
+    if parts:
+        return "+".join(parts)
+    if "thinking" not in extra_body and "enable_thinking" not in extra_body:
+        return "removed_after_reject"
+    return "unknown"
+
+
+def _message_text(resp) -> tuple[str, str]:
+    choice0 = resp.choices[0]
+    message = getattr(choice0, "message", None)
+    if message is None and isinstance(choice0, dict):
+        message = choice0.get("message")
+    content = _field(message, "content") or ""
+    reasoning = (
+        _field(message, "reasoning_content")
+        or _field(message, "reasoning")
+        or ""
+    )
+    return str(content or ""), str(reasoning or "")
+
+
+def _field(obj, name: str):
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(name)
+    extra = getattr(obj, "model_extra", None)
+    if isinstance(extra, dict) and extra.get(name):
+        return extra.get(name)
+    return getattr(obj, name, None)
+
+
+def _litellm_completion(kwargs: dict):
+    attempts = [_with_thinking_body(kwargs, body) for body in _THINKING_OFF_BODIES]
+    if kwargs.get("response_format"):
+        attempts.append(_drop_thinking(kwargs))
+    else:
+        attempts = [kwargs]
+    last_error: BaseException | None = None
+    for index, attempt in enumerate(attempts):
+        try:
+            resp = litellm.completion(**attempt)
+            try:
+                setattr(resp, "_beacon_thinking_off", _thinking_off_label(attempt))
+            except Exception:
+                pass
+            if index:
+                print(
+                    f"[llm_worker] thinking 被拒后改用 {_thinking_off_label(attempt)}",
+                    flush=True,
+                )
+            return resp
+        except BaseException as e:
+            last_error = e
+            if kwargs.get("response_format") and _thinking_kwarg_rejected(e):
+                print(
+                    f"[llm_worker] thinking 参数被拒，尝试下一写法: {e}",
+                    flush=True,
+                )
+                continue
+            raise
+    assert last_error is not None
+    raise last_error
 
 
 def _serialize_error(e: BaseException) -> dict:
