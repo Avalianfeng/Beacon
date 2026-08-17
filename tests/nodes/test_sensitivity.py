@@ -1,5 +1,5 @@
 from pathlib import Path
-from math_agent.state import MathModelingState, ModelVersion, Assumption, SensitivityRun
+from math_agent.state import MathModelingState, ModelVersion, Assumption, SensitivityRun, CodeArtifact
 from math_agent.nodes.sensitivity import (
     sensitivity_node, SensitivityPlan, SensitivityCode, Interpretations,
     sensitivity_interpret_node,
@@ -503,3 +503,108 @@ def test_data_hint_profiles_actual_dtypes_and_samples(workdir):
     assert "11:33" in hint
     assert "HH:MM" in hint
     assert "customer_id" in hint
+
+
+def test_data_hint_lists_all_excel_sheets(workdir):
+    import pandas as pd
+    from math_agent.prompts._data_hint import build_data_hint
+    from math_agent.state import DataFileInfo
+
+    path = workdir / "A-附件.xlsx"
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame({"直径": [16, 18]}).to_excel(writer, sheet_name="表1", index=False)
+        pd.DataFrame({"力矩": [100, 120]}).to_excel(writer, sheet_name="表2", index=False)
+    hint = build_data_hint(str(workdir), [DataFileInfo(
+        filename=path.name, file_type="xlsx", path=path.name,
+        summary={"sheets": [{"name": "表1"}, {"name": "表2"}]},
+    )])
+
+    assert "表1" in hint
+    assert "表2" in hint
+    assert "禁止只读默认第一张表" in hint
+    assert "直径" in hint
+    assert "力矩" in hint
+
+
+def _primary_state(workdir, code: str) -> MathModelingState:
+    state = _ok_state(workdir)
+    state.code_artifacts.append(CodeArtifact(
+        purpose="主图",
+        code=code,
+        success=True,
+        category="figure",
+        evidence_role="primary",
+        stdout="RESULT: baseline=ours T_max=24.98 K=0.18",
+    ))
+    return state
+
+
+def test_generate_uses_llm_when_primary_exists_but_plan_is_not_green(mocker, workdir):
+    from math_agent.nodes.sensitivity import sensitivity_code_generate_node
+
+    state = _primary_state(workdir, "K = 0.18\nf = 5.0\ne = 5.0\nprint('RESULT: T_max=1')\n")
+    state.sensitivity_plan_dump = SensitivityPlan(runs=[
+        {"parameter": "K", "values": [0.12, 0.18, 0.24], "metric": "T_max"},
+        {"parameter": "f", "values": [2, 5, 8], "metric": "T_opt"},
+        {"parameter": "e", "values": [0.005, 0.01, 0.02], "metric": "T_max"},
+    ]).model_dump()
+    spy = mocker.patch(
+        "math_agent.nodes.sensitivity.complete",
+        return_value=SensitivityCode(code="print('scan')"),
+    )
+
+    delta = sensitivity_code_generate_node(state)
+
+    spy.assert_called_once()
+    assert "unsupported sensitivity parameter" not in delta["sensitivity_pending_code"]
+    assert delta["sensitivity_pending_code"] == "print('scan')"
+    prompt = spy.call_args.args[0]
+    assert "禁止套用 SPEED_SCALE" in prompt
+    assert "K = 0.18" in prompt
+
+
+def test_generate_uses_canonical_replay_for_green_solver(mocker, workdir):
+    from math_agent.nodes.sensitivity import sensitivity_code_generate_node
+
+    state = _primary_state(
+        workdir,
+        "BEACON_GREEN_LOGISTICS_SAFE_SOLVER\nSPEED_SCALE = 1.0\n"
+        "print('RESULT: baseline=ours total_cost=1')\n",
+    )
+    state.sensitivity_plan_dump = SensitivityPlan(runs=[{
+        "parameter": "速度比例×限行开始时刻二维组合编码",
+        "values": [8007, 10008, 12009],
+        "metric": "Z",
+    }]).model_dump()
+    spy = mocker.patch("math_agent.nodes.sensitivity.complete")
+
+    delta = sensitivity_code_generate_node(state)
+
+    spy.assert_not_called()
+    assert "def perturb(" in delta["sensitivity_pending_code"]
+    assert "二维组合编码" in delta["sensitivity_pending_code"]
+
+
+def test_generate_falls_back_to_llm_after_replay_error(mocker, workdir):
+    from math_agent.nodes.sensitivity import sensitivity_code_generate_node
+
+    state = _primary_state(
+        workdir,
+        "BEACON_GREEN_LOGISTICS_SAFE_SOLVER\nSPEED_SCALE = 1.0\n"
+        "print('RESULT: baseline=ours total_cost=1')\n",
+    )
+    state.sensitivity_plan_dump = SensitivityPlan(runs=[{
+        "parameter": "速度比例×限行开始时刻二维组合编码",
+        "values": [8007, 10008, 12009],
+        "metric": "Z",
+    }]).model_dump()
+    state.sensitivity_code_error = "unsupported sensitivity parameter: K"
+    spy = mocker.patch(
+        "math_agent.nodes.sensitivity.complete",
+        return_value=SensitivityCode(code="print('repaired')"),
+    )
+
+    delta = sensitivity_code_generate_node(state)
+
+    spy.assert_called_once()
+    assert delta["sensitivity_pending_code"] == "print('repaired')"

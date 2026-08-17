@@ -16,12 +16,12 @@ from math_agent.state import MathModelingState, ModelVersion, DerivationStep
 logger = logging.getLogger(__name__)
 
 _STAGE_MAX_TOKENS = {
-    "basic": 2600,
-    "improved": 3800,
-    # 目标赛题的 final JSON 含 20+ 方程、三问映射和图表任务；5000 token
-    # 已在真实运行中截断于字符串中部。6000 仍显著低于早期 6400 的超时风险，
-    # 同时给结构化 JSON 留出完整闭合空间。
-    "final": 6000,
+    # basic/improved 均含 10+ 条 LaTeX 方程；关 thinking 后原上限仍易空 JSON/截断。
+    "basic": 8000,
+    "improved": 8000,
+    # final JSON 含 20+ 方程、三问映射和图表任务。improved 真实运行已用到
+    # 7418 completion tokens；6000 会让 DeepSeek 返回空 content。
+    "final": 10000,
 }
 
 
