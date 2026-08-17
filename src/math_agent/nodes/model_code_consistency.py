@@ -7,7 +7,25 @@ from math_agent.llm import complete
 from math_agent.config import MODEL_ROUTING
 from math_agent.prompts.model_code_consistency import SYSTEM, build_prompt
 from math_agent.state import MathModelingState, ModelCodeConsistencyReport
-from math_agent.tools.runner import extract_valid_result_lines, infer_entity_upper_bound
+from math_agent.tools.runner import (
+    extract_valid_result_lines,
+    infer_entity_upper_bound,
+    structured_evidence_lines,
+)
+
+
+def _curate_review_stdout(artifact, limit: int = 2000) -> str:
+    """评审证据优先展示结构化行（Q<id>/RESULT/LIMITATION），避免被调试打印淹没。
+
+    r9 曾用 ``a.stdout[:1000]``：stdout 开头 1100+ 字符全是列名/head 等调试打印，
+    Q2.2/RESULT 数值行到不了评审，产生“stdout 未输出 Tmax 具体数值”的误判与
+    无效反馈（与 P09 证据白名单同类缺陷，此处为一致性评审侧）。
+    """
+    structured = structured_evidence_lines(artifact.stdout)
+    text = "\n".join(structured) if structured else artifact.stdout
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n……（已截断）"
 
 
 def _numeric_evidence_lines(stdout: str, label: str) -> list[dict[str, float]]:
@@ -440,10 +458,11 @@ def model_code_consistency_node(state: MathModelingState) -> dict:
         for a in main_artifacts
     )
     main_stdout = "\n---\n".join(
-        f"[{a.purpose}]\n{a.stdout[:1000]}" for a in main_artifacts if a.stdout
+        f"[{a.purpose}]\n{_curate_review_stdout(a)}" for a in main_artifacts if a.stdout
     ) or "（无 stdout）"
     baseline_stdout = "\n---\n".join(
-        f"[{a.category}]\n{a.stdout[:500]}" for a in baseline_artifacts if a.stdout
+        f"[{a.category}]\n{_curate_review_stdout(a, limit=1200)}"
+        for a in baseline_artifacts if a.stdout
     ) or "（无 baseline stdout）"
     failed_stderr = "\n---\n".join(
         f"[{a.category or 'figure'}]\n{a.stderr[:300]}" for a in failed_artifacts if a.stderr

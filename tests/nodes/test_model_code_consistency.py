@@ -207,6 +207,27 @@ def test_consistency_prompt_includes_numeric_sanity_rule():
     assert "100-500 N·m" in prompt
 
 
+def test_consistency_review_stdout_prioritizes_structured_evidence(mocker):
+    """评审必须看到 Q<id>/RESULT 数值行，而不是被调试打印淹没（r9 误判根因）。"""
+    spy = mocker.patch(
+        "math_agent.nodes.model_code_consistency.complete",
+        return_value=ModelCodeConsistencyReport(score=9, approved=True),
+    )
+    state = _state_with_model_and_code()
+    state.code_artifacts[0].stdout = (
+        "调试信息" * 400  # 1100+ 字符的调试打印，r9 中会挤掉 Q 行
+        + "\nQ2.2: Tmax_A=368.08 N·m 工况B Tmax_B=514.10 N·m\n"
+        "RESULT: baseline=ours R²=0.9825 Tmax=368.08\n"
+    )
+
+    model_code_consistency_node(state)
+
+    prompt = spy.call_args.args[0]
+    assert "Q2.2: Tmax_A=368.08" in prompt
+    assert "RESULT: baseline=ours" in prompt
+    assert "调试信息" not in prompt
+
+
 def test_consistency_prompt_includes_constraints_after_old_2000_char_cutoff(mocker):
     spy = mocker.patch(
         "math_agent.nodes.model_code_consistency.complete",
