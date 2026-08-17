@@ -18,6 +18,11 @@
 | r4 `...-r4` | stopped | paper_critic 5/10 未通过（证据链不足） | 门禁 6 轮内 8/10 通过并前进；中途 references 截断熔断，修复后 recover 完成全部章节 |
 | r5 `...-r5` | stopped | 无主证据轮次达到上限（6） | 六轮失败根因同一：stdout 出现非有限数值 + RESULT 指标契约违反 |
 | r6 `...-r6` | stopped（03:34:51） | paper_critic 4/10 未通过 | 一致性门禁 8/10 通过后前进至 writer；中途 worker 恢复 2 次（flash 截断 JSON）；暴露 P09–P14 |
+| r7 `...-r7` | stopped | 无主证据轮次达到上限（6） | 六轮根因同一：字符串外字面量 `\n` 吞语句（注释与代码空间均有），同一失败原因连续 5 次；修复：P15 fail-fast（d07a3ac）+ L2 自动修复（36c7dc5）。另暴露 r7 批1 NaN 误报（head() 打印）与批4 列名清理不一致，修复见 86731db |
+| r8 `...-r8` | stopped | 无主证据轮次达到上限（6） | 修复后的代码未加载进运行中 worker（旧轮次循环）；批1 主证据成功并获首次真实评审 3/10（K 回归方向转录错误，O08）；批2–5 仍死于 `\n`（修复 36c7dc5 在 r9 前才随新 run 生效） |
+| r9 `...-r9` | stopped | 低分修复轮 3/3 耗尽，final 4/10 | 真实数学缺陷（安全裕度公式无物理意义、T_c 硬编码 150、钢带判据 Tmax>0、Q4 简化）；L3 低分 3 轮内未收敛 → r10 起环境参数 `MATH_AGENT_MAX_CODE_VERIFY_ITERATIONS=5` |
+| r10 `...-r10` | stopped | 无主证据轮次达到上限（6） | **P12 误报复发**：attempt 目录跨批次复用 + 同名 png 覆盖 → 名称集 diff 为空 → 误判"figure 无 png"。修复 `c855485`（mtime 递归快照检测） |
+| r11 `...-r11` | stopped（已人工接管） | paper_critic 6/10（7→6） | **首个完整走通主链的 run**：一致性 9/10 通过（低分修复仅 1/5 轮），writer→paper_critic 全程完成。失败模式从机械故障转为内容质量：P17 契约放行、P18 sensitivity 口径错配、P19 图收集系统性缺陷、P20 writer 修复轮无效。经 `math-agent review` 人工接管至 human_review |
 
 ---
 
@@ -197,6 +202,36 @@
 - **落地案例**：L2 的 `\n` 自动修复（`36c7dc5`）——r8"同一失败原因连续 4 次"的成因，词法替换后该类别从"每轮烧一次生成+失败"变为"毫秒级修复"。
 - **commit**：`36c7dc5`（L2 案例）；本分级文档即设计逻辑的一部分。
 
+### P17 一致性评审自认契约未实现却放行（r11）
+
+- **现象**：r11 一致性评审 9/10 通过，但 issues 原文自认"代码中未实现分段线性回归求临界预紧力矩 T_crit，而是直接取 T_max_A 作为临界值，但 blueprint 中问题1.2 的 pass_criteria 是分段拟合显著优于整体线性拟合，代码未做此验证……不构成严重不一致"；同时放行 T_max_A=600.71 超出 blueprint validation_mapping 100–500 N·m 范围（"同数量级"）。
+- **根因（事实）**：`_apply_numeric_fatal_backstop` 关键词（严重不符/数量级错误/编造等）被"不构成严重不一致"类委婉措辞绕过；评审对"自认缺失但给出开脱理由"的 issue 无强制拦截。
+- **后果**：问题1.2 表2/表3 利用从未实现 → paper_critic 两次扣分（摘要+模型两处）。
+- **解决方案**：**未落地**（列入待办：backstop 扩展"未实现/未做/直接取"+"pass_criteria/题目要求"组合强制不通过）。r11 论文已人工将三处"利用表2/表3"不实表述改为诚实声明。
+- **commit**：`f703e8a` 仅含表述修正（非机制修复）。
+
+### P18 sensitivity 口径错配导致三次重试全败（r11）
+
+- **现象**：sensitivity 三次 attempt 同一错误："敏感性基准点口径不一致：f 的中心值 169.614，但正式主方案 T_opt=480.57"。
+- **根因（事实）**：敏感性代码自写 `E_f = f*1e9` 映射（LLM 编造），主方案实际用 E=15GPa；blueprint_critic 早已建议"明确 f 与 E 的经验关系"但主方案未定义 → 中心对齐校验正确拦截，但 LLM 无法修复（无 f↔E 映射可对齐）。sensitivity_runs 为空 → 论文敏感性只能定性 → paper_critic 扣分。
+- **解决方案**：**未落地**（列入待办：sensitivity 计划参数必须存在于主方案代码，否则跳过中心对齐或改扫 E；code prompt 注入主方案参数清单）。
+- **commit**：无。
+
+### P19 figure_pipeline 只收 primary 图，supporting 图全部误杀（r11，系统性）
+
+- **现象**：论文全文仅 1 张图（fig_0 primary）；磁盘上 fig_1（分段拟合）、fig_2（T_max-e）、sensitivity 3 张全部有效但未进论文。
+- **根因（事实）**：`figure_pipeline._collect_pngs` 为绿色物流题设计只收 `evidence_role == "primary"`（防 supporting 补数），本题 supporting 图与主方案同批同源却被全部过滤；且 supporting 图无任何数值把关（r11 fig_1 batch2 输出"分段拟合 R²=0.000000, T_max 范围: 0.08"灾难值仍 success=true 溜过）。
+- **解决方案（已落地）**：`009053b`——非物流题（无绿色求解器）接受 primary+supporting；`_matches_primary_evidence` 泛化新增通用键 R²/T_max/T_opt/安全裕度，偏差 >20% 或数量级灾难（10 倍）拒绝；`latex_node._formal_figures` 同步纳入 supporting 路径。
+- **验证**：新增 4 个测试（接受/漂移拒绝/灾难拒绝/物流题仍排除），全量 708 passed / 4 skipped。
+- **commit**：`009053b`
+
+### P20 writer 修复轮对证据缺失类问题无效甚至有害（r11）
+
+- **现象**：r11 paper_critic 第一次 7/10 → writer 修复轮 → 第二次 6/10（下降）。第二次新增"摘要声称 e=0 退化一致性但无数值验证"扣分。
+- **根因（事实）**：修复轮无法补证据（1.2 表2/3 利用、敏感性定量、图表均需上游重跑），只改写文字；且修复 prompt 未禁止"证据列表外的新增断言"，writer 写了无证据的"数值验证表明"。
+- **解决方案**：**部分落地**——`f703e8a` 打通人工接管通道（review 命令），证据缺失类问题由人工整体评估兜底；writer 修复 prompt 禁止无证据断言**未落地**（列入待办）。
+- **commit**：`f703e8a`
+
 ---
 
 ## 三、遗留风险与观察项（未决）
@@ -212,7 +247,8 @@
 | O07 | worker 恢复机制成本 | 已修复 | r6 两次恢复均为 P13 根因（flash 截断），修复后预计不再触发；恢复机制本身工作正常（checkpoint 无损续跑），保留观察。 |
 | O08 | 转录性方向错误（L3 类） | 观察中 | r8 批1 评审 3/10：代码把 K 回归方向写反（X=T·d、y=P·d，slope=ΣXy/ΣX² → K=277、R²=-1563），与模型方程 E2 不符。属 LLM 转录性错误（r6 同型公式写对、r8 写反），**非完全偶发**但会以一定概率复发；由 L3 低分通道定向修复处理，无需新机制。同类风险：公式轴交换、单位约定混用。 |
 | O09 | r8 低分预算收敛性 | 观察中 | r8 批1 已能产出可执行主证据并获真实评审（3/10），批2–5 全灭于 `\n`（已由 36c7dc5 自动修复消除）。待 r9 观察：主证据数值能否在低分 3 轮内收敛到 ≥8。 |
-| O10 | 功能缺口：门禁停止后的"预算重置续跑"（resume-with-reset） | **未实现** | 门禁型停止 = 图正常走完（路由返回 stop），checkpoint 无待续节点，`recover` 是空操作；预算计数持久化在 state 中也不会重置。因此每轮都需全新起跑（重复 analyst→modeler→coder 前端，约 10 分钟 / 10 万 tokens）。**待设计**：从 checkpoint 载入 blueprint + final model，显式重置 coder 预算后续跑（人工授权，不绕过门禁阈值）；或新 run 注入上一轮 blueprint 作为种子（消除 analyst 随机性）。落地前需设计滥用边界与 checkpoint 兼容性测试。 |
+| O10 | 功能缺口：门禁停止后的"预算重置续跑"（resume-with-reset） | **部分实现（窄化版）** | 门禁型停止 = 图正常走完（路由返回 stop），checkpoint 无待续节点，`recover` 是空操作；预算计数持久化在 state 中也不会重置。因此每轮都需全新起跑（重复 analyst→modeler→coder 前端，约 10 分钟 / 10 万 tokens）。**待设计**：从 checkpoint 载入 blueprint + final model，显式重置 coder 预算后续跑（人工授权，不绕过门禁阈值）；或新 run 注入上一轮 blueprint 作为种子（消除 analyst 随机性）。落地前需设计滥用边界与 checkpoint 兼容性测试。 |
+  **2026-08-18 更新**：`f703e8a` 落地"人工接管"窄化版——paper_critic 未过但论文关键 section 完整时，routing 返回 `advance_review` 移交 human_review（原 stop）；新增 `math-agent review` 命令，可从已停止的 checkpoint 以 `as_node=paper_critic` 重新路由到 table_assembler→evaluation→human_review，人工批准后产出（degraded 状态，质量警告如实写入 completion.json）。通用 resume-with-reset（重置 coder 预算续跑）仍**未实现**。
 
 ---
 
@@ -232,8 +268,14 @@
 | `d07a3ac` | fix(coder)：字面量 `\n` fail-fast 检测 + 注释纪律提示词（P15） |
 | `86731db` | fix(data-hint)：禁止打印含 NaN 原始数据 + 列名清理后按实际名引用 |
 | `36c7dc5` | feat(coder)：字面量 `\n` 词法级自动修复（L2，P16 分级设计落地） |
+| `4795f03` | docs(issue-report)：P16 分级设计 + O08/O09 观察项 |
+| `d36b414` | fix(consistency)：评审证据优先展示结构化行（Q<id>/RESULT/LIMITATION） |
+| `c855485` | fix(runner)：mtime 递归快照产物检测（P12 误报修复） |
+| `cc1bfe1` | docs(issue-report)：O10 功能缺口标注未实现 |
+| `f703e8a` | feat(review)：paper_critic 未过但论文完整时移交 human_review + review 命令（O10 窄化版） |
+| `009053b` | fix(figure_pipeline)：非物流题接受 supporting 图并做数值一致性校验（P19） |
 
-测试基线：修复后全量回归 `697 passed / 4 skipped`（排除本环境无法运行的 subprocess 相关测试）。
+测试基线：修复后全量回归 `708 passed / 4 skipped`（排除本环境无法运行的 subprocess 相关测试）。
 
 ---
 
