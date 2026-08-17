@@ -17,7 +17,11 @@ from pydantic import BaseModel
 
 from math_agent.state import CriticIssue, MathModelingState
 from math_agent.nodes.sensitivity import formal_sensitivity_runs
-from math_agent.tools.runner import extract_valid_result_lines, infer_entity_upper_bound
+from math_agent.tools.runner import (
+    extract_valid_result_lines,
+    infer_entity_upper_bound,
+    structured_evidence_lines,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +241,11 @@ def _compact_code_artifacts(state: MathModelingState):
         )
         if not result_lines:
             continue
-        evidence_lines = result_lines + _depth_evidence_lines(a)
+        # 结构化证据 = RESULT 行 + 逐问输出行（Q<id>:，r6 曾因只保留 RESULT 行
+        # 导致 writer 拿不到逐问数值而编造细节）+ LIMITATION 声明 + 绿色深度行。
+        evidence_lines = list(dict.fromkeys(
+            structured_evidence_lines(a.stdout) + _depth_evidence_lines(a)
+        ))
         code_limit = 14000 if a.evidence_role == "primary" else 1000
         compact.append(a.model_copy(update={
             "purpose": _compact_text(a.purpose, 120),
@@ -269,6 +277,13 @@ def _extract_available_numbers(state: MathModelingState) -> str:
             expected_identifier=expected,
             max_entity_count=upper_bound,
         ):
+            lines.append(f"  [{a.purpose}] {line}")
+        # 逐问输出行（Q<id>:）与 LIMITATION 声明同样可引用，writer 不得编造
+        # 清单之外的任何数值（r6：writer 把 RESULT 的 Tmax=0.37 扩散到
+        # Q1.2/Q2.1/Q3.2 等从未输出的字段）。
+        for line in structured_evidence_lines(a.stdout):
+            if line.startswith("RESULT:"):
+                continue  # 已在上方以原始 RESULT 行加入
             lines.append(f"  [{a.purpose}] {line}")
         for line in _depth_evidence_lines(a):
             lines.append(f"  [{a.purpose}] {line}")
@@ -377,6 +392,15 @@ def build_section_prompt(
     numbers = view["available_numbers"]
     if numbers:
         rendered = rendered + "\n\n---\n## 可引用的数值清单（只能用以下数值，不得使用其他数值）\n" + numbers
+        rendered += (
+            "\n\n## 数值溯源硬约束\n"
+            "- 正文出现的每个具体数值必须逐字来自上述清单（含 Q<id> 行与 RESULT 行）。\n"
+            "- 禁止用某一行的数值推断/填充其他字段：例如不得用 RESULT 行的 Tmax 去写"
+            "临界预紧力矩、Tmax(e) 或 Topt 的具体数值。\n"
+            "- 声称“代码输出显示 X=…”时，X 必须能在清单中找到完全一致的行；找不到就改写为"
+            "“待验证”或删除，绝不编造。\n"
+            "- 单位必须与清单一致（如清单无单位则正文不写死单位，或统一按题面单位说明来源）。\n"
+        )
         if "SCENARIO_Q1:" in numbers and "RESULT: baseline=ours" in numbers:
             rendered += (
                 "\n\n## 场景身份硬约束\n"

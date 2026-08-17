@@ -10,8 +10,11 @@ SYSTEM = (
     "核心变量、目标函数和约束，以及代码输出的指标是否与 blueprint 中的 metrics 对齐。"
     "只有存在【严重不一致】时才 approved=False。"
     "严重不一致 = 代码缺少模型核心变量、目标函数未实现、关键约束被忽略、"
-    "stdout 没有输出 blueprint 要求的关键指标、baseline 与主方案使用了不同的指标名。"
-    "approved=True 需要 score >= 7。"
+    "stdout 没有输出 blueprint 要求的关键指标、baseline 与主方案使用了不同的指标名、"
+    "【数值与工程合理范围严重不符】（如 blueprint validation pass_criteria 给出的合理区间"
+    "100-500 N·m 而输出 0.37 N·m，或同一次运行内部自相矛盾：T_y_shank=928611 而 Tmax=0.37）。"
+    "注意：数值严重不符（数量级错误）即使代码结构完整也必须 approved=False，且 score 不得超过 5。"
+    "approved=True 需要 score >= 8。"
 )
 
 
@@ -30,7 +33,11 @@ def build_prompt(blueprint_json: str, model_json: str,
         f"2. 目标函数是否在代码中实现（implemented_objectives / missing_objectives）\n"
         f"3. 约束是否在代码中实现（implemented_constraints / missing_constraints）\n"
         f"4. stdout 输出的指标是否与 blueprint.metrics 对齐（output_metric_alignment）\n"
-        f"5. baseline 与主方案是否使用相同指标名\n\n"
+        f"5. baseline 与主方案是否使用相同指标名\n"
+        f"6. 【数值合理性】对照 blueprint.validation_mapping 中各 pass_criteria 的合理区间"
+        f"（如“结果在合理范围（如 100-500 N·m）”）与工程常识检查 stdout 数值的数量级："
+        f"数量级错误（如 Tmax 应为数百 N·m 却输出 0.37）、同一次运行内部数值自相矛盾、"
+        f"或与 blueprint 指标单位不符，均属于严重不一致，必须 approved=False 且 score <= 5。\n\n"
         f"请输出 JSON：{{"
         f"\"score\": int,  # 0-10"
         f"\"approved\": bool,"

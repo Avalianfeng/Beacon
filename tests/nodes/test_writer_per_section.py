@@ -399,6 +399,30 @@ def test_writer_retry_reuses_first_outline(mocker):
     assert WriterOutline not in calls
 
 
+def test_available_numbers_keeps_subquestion_and_limitation_lines():
+    """逐问输出行（Q<id>:）与 LIMITATION 必须进入可引用数值清单（r6 编造根因）。"""
+    from math_agent.prompts.writer_section import _extract_available_numbers
+    from math_agent.state import CodeArtifact
+
+    s = _rich_state()
+    s.code_artifacts = [CodeArtifact(
+        purpose="主方案", code="", success=True, evidence_role="primary",
+        stdout=(
+            "0       18.0             50       12.68\n"
+            "Q1.1: 直径=18.0mm, K=0.162, R²=0.9663\n"
+            "Q2.2: 工况A Tmax=368.08 N·m\n"
+            "LIMITATION: Q3.2 当 e>10mm 时 P_ecc 公式根号内为负，模型不可用。\n"
+            "RESULT: baseline=ours R²=0.9825 Tmax=368.08\n"
+        ),
+    )]
+    numbers = _extract_available_numbers(s)
+    assert "Q1.1:" in numbers
+    assert "Q2.2:" in numbers
+    assert "LIMITATION:" in numbers
+    assert "RESULT:" in numbers
+    assert "18.0             50" not in numbers
+
+
 def test_available_numbers_ignores_non_result_debug_values():
     from math_agent.prompts.writer_section import _extract_available_numbers
     from math_agent.state import CodeArtifact

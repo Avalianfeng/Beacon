@@ -2694,12 +2694,13 @@ _CODER_GENERATE_MAX_TOKENS = 12000
 
 
 def _supporting_figure_model() -> str:
-    """补充图改用强模型；若 STRONG 与 coder 相同，则改走 failover 里的下一档。"""
-    if STRONG_MODEL != CODER_MODEL:
-        return STRONG_MODEL
-    for candidate in LLM_FALLBACK_MODELS:
-        if candidate != CODER_MODEL:
-            return candidate
+    """补充图与主图一致使用强模型（STRONG_MODEL）。
+
+    曾经在 STRONG==CODER 时退到 failover 里的 flash 省 token，但 flash 生成
+    含 previous_code 的完整草稿时频繁在 12000 token 上限处截断 JSON，导致
+    CoderDraft 校验失败 → supervisor 恢复循环（r6 两次崩溃，每次浪费约 5 分钟
+    与 2×12k tokens）。强模型在同等预算下不截断，总成本反而更低。
+    """
     return STRONG_MODEL
 
 
@@ -2777,19 +2778,43 @@ def coder_generate_node(state: MathModelingState) -> dict:
                     else _local_repair_draft(item, previous_code, state)
                 )
             if draft is None:
-                draft = complete(
-                    build_prompt_figure_one(
-                        model, item["purpose"], feedback,
-                        failure_kind, blueprint=state.problem_blueprint,
-                        data_dir=state.data_dir, data_files=state.data_files,
-                        canonical_evidence=primary.stdout if primary else "",
-                        previous_code=previous_code,
-                    ),
-                    schema=CoderDraft, system=SYSTEM,
-                    model=_supporting_figure_model() if is_supporting else MODEL_ROUTING["coder"],
-                    profile="code", temperature=0.1,
-                    max_tokens=_CODER_GENERATE_MAX_TOKENS,
-                )
+                try:
+                    draft = complete(
+                        build_prompt_figure_one(
+                            model, item["purpose"], feedback,
+                            failure_kind, blueprint=state.problem_blueprint,
+                            data_dir=state.data_dir, data_files=state.data_files,
+                            canonical_evidence=primary.stdout if primary else "",
+                            previous_code=previous_code,
+                        ),
+                        schema=CoderDraft, system=SYSTEM,
+                        model=_supporting_figure_model() if is_supporting else MODEL_ROUTING["coder"],
+                        profile="code", temperature=0.1,
+                        max_tokens=_CODER_GENERATE_MAX_TOKENS,
+                    )
+                except Exception as exc:
+                    # LLM 输出截断/JSON 无效（r6 中 flash 在 12000 token 上限处
+                    # 截断 JSON，CoderDraft 校验失败直接炸掉 worker 触发 supervisor
+                    # 恢复，恢复后同 prompt 重试再次截断）。这里在节点内先做有界
+                    # 重试：把“输出被截断，请精简”作为反馈送回生成，预算耗尽才上抛。
+                    if item["attempt"] < MAX_CODE_RETRIES:
+                        item.update(
+                            attempt=item["attempt"] + 1,
+                            prev_err=(
+                                "LLM 生成的代码 JSON 被截断或无效："
+                                f"{str(exc)[:200]}。请显著精简代码与注释，"
+                                "不要复述 previous_code 全文，确保输出完整闭合。"
+                            ),
+                            prev_kind="generation",
+                        )
+                        queue[0] = item
+                        return {
+                            "coder_work_queue": queue,
+                            "coder_work_artifacts": list(state.coder_work_artifacts),
+                            "coder_pending_draft": {},
+                            "coder_phase": "generate",
+                        }
+                    raise
     else:
         main_code = _current_primary_code(state)
         try:
@@ -2862,6 +2887,22 @@ def coder_execute_node(state: MathModelingState) -> dict:
             state, item, result, code=draft.code,
             require_data_usage=bool(state.data_files) and evidence_target == "primary",
         )
+        # 绘图任务必须真的产出图片（r6 批次 7 三个 figure artifact 全部
+        # artifact_paths=[]，执行成功但没有图，导致 figure_pipeline 空转、
+        # 论文图表数为 0、paper_critic 扣分）。没有 png 的 figure 视为执行失败，
+        # 反馈给模型重试而不是放行。
+        if effective_success and item["kind"] == "figure":
+            png_paths = [
+                p for p in (result.artifact_paths or [])
+                if str(p).lower().endswith(".png")
+            ]
+            if not png_paths:
+                effective_success = False
+                validation_reason = (
+                    "figure 任务未产出图片文件：代码执行成功但工作目录没有任何 .png。"
+                    "必须调用 plt.savefig(...) 把核心证据图保存为 .png 后再结束脚本。"
+                )
+                error_kind = "output_validation"
         evidence_role = (
             "primary" if effective_success and evidence_target == "primary"
             else "supporting" if effective_success and evidence_target == "supporting" and has_primary

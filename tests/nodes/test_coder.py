@@ -12,7 +12,9 @@ def test_coder_runs_code_and_records_artifact(mocker, workdir):
         "math_agent.nodes.coder.complete",
         return_value=CoderDraft(
             purpose="solve",
-            code="print('hello'); print('RESULT: baseline=ours T_max=10 K=0.18')",
+            code=("import matplotlib; matplotlib.use('Agg'); "
+                  "import matplotlib.pyplot as plt; plt.savefig('fig.png'); "
+                  "print('hello'); print('RESULT: baseline=ours T_max=10 K=0.18')"),
         ),
     )
     s = MathModelingState(problem="p", output_dir=str(workdir))
@@ -92,7 +94,9 @@ def test_coder_retries_once_on_failure(mocker, workdir):
         CoderDraft(purpose="solve", code="raise RuntimeError('x')"),
         CoderDraft(
             purpose="solve",
-            code="print('ok'); print('RESULT: baseline=ours T_max=10 K=0.18')",
+            code=("import matplotlib; matplotlib.use('Agg'); "
+                  "import matplotlib.pyplot as plt; plt.savefig('fig.png'); "
+                  "print('ok'); print('RESULT: baseline=ours T_max=10 K=0.18')"),
         ),
     ]
     mocker.patch("math_agent.nodes.coder.complete", side_effect=drafts)
@@ -147,6 +151,7 @@ def test_coder_prompt_on_timeout_asks_to_shrink_scale(mocker, workdir):
             RunResult(
                 success=True,
                 stdout="RESULT: baseline=ours T_max=10 K=0.18",
+                artifact_paths=["fig.png"],
                 error_kind="",
             ),
         ],
@@ -182,6 +187,7 @@ def test_coder_prompt_on_runtime_asks_to_fix_via_stderr(mocker, workdir):
             RunResult(
                 success=True,
                 stdout="RESULT: baseline=ours T_max=10 K=0.18",
+                artifact_paths=["fig.png"],
                 error_kind="",
             ),
         ],
@@ -222,6 +228,7 @@ def test_coder_applies_safe_local_repair_without_second_llm_call(mocker, workdir
             RunResult(
                 success=True,
                 stdout="RESULT: baseline=ours T_max=10 K=0.18",
+                artifact_paths=["fig.png"],
             ),
         ],
     )
@@ -792,7 +799,9 @@ def test_coder_retries_when_exit_zero_stdout_reports_failure(mocker, workdir):
         ),
         CoderDraft(
             purpose="solve",
-            code="print('RESULT: baseline=ours T_max=2470.93 K=0.18 T_crit=80 R2=0.99')",
+            code=("import matplotlib; matplotlib.use('Agg'); "
+                  "import matplotlib.pyplot as plt; plt.savefig('fig.png'); "
+                  "print('RESULT: baseline=ours T_max=2470.93 K=0.18 T_crit=80 R2=0.99')"),
         ),
     ]
     mocker.patch("math_agent.nodes.coder.complete", side_effect=drafts)
@@ -822,6 +831,8 @@ def test_coder_rejects_impossible_vehicle_count_using_input_scale(mocker, workdi
         CoderDraft(
             purpose="solve",
             code=(f"open({str(input_path)!r}, 'rb').read(1)\n"
+                  "import matplotlib; matplotlib.use('Agg'); "
+                  "import matplotlib.pyplot as plt; plt.savefig('fig.png')\n"
                   "T_max = 2470.93\nT_crit = 80\nK = 0.18\nR2 = 0.99\n"
                   "print(f'RESULT: baseline=ours T_max={T_max} T_crit={T_crit} "
                   "K={K} R2={R2}')"),
@@ -858,6 +869,8 @@ def test_coder_rejects_plausible_but_hardcoded_primary_results(mocker, workdir):
         CoderDraft(
             purpose="real",
             code=(f"open({str(input_path)!r}, 'rb').read(1)\n"
+                  "import matplotlib; matplotlib.use('Agg'); "
+                  "import matplotlib.pyplot as plt; plt.savefig('fig.png')\n"
                   "T_max = len(open(" + repr(str(input_path)) + ", 'rb').read()) + 46749\n"
                   "T_crit = 80\nK = 0.18\nR2 = 0.88\n"
                   "print(f'RESULT: baseline=ours T_max={T_max} T_crit={T_crit} "

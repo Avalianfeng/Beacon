@@ -11,28 +11,29 @@ from math_agent.prompts.paper_critic import SYSTEM, build_prompt
 from math_agent.state import CriticIssue, CriticReport, MathModelingState
 from math_agent.nodes.table_assembler import _find_internal_terms
 from math_agent.nodes.paper_evidence import offline_evidence_issues
-from math_agent.tools.runner import extract_valid_result_lines, infer_entity_upper_bound
+from math_agent.tools.runner import (
+    extract_valid_result_lines,
+    infer_entity_upper_bound,
+    structured_evidence_lines,
+)
 
 
 def _last_successful_stdout(state: MathModelingState) -> str:
-    """汇总主求解器完整结构化证据及基线 RESULT，确保评审与 writer 同源。"""
+    """汇总主求解器完整结构化证据及基线 RESULT，确保评审与 writer 同源。
+
+    与 writer 共用 runner.structured_evidence_lines：白名单含既有 SCENARIO_*/
+    RESULT: 前缀、逐子问题输出行（``Q<id>:``）与 LIMITATION 声明行。此前
+    白名单只含车辆路径模板前缀，MCM 题的全部 Q 行被剥掉，评审只见 RESULT
+    一行，导致把有据可查的数值误判为编造，也让 LIMITATION 协议在论文评审
+    环节失效。
+    """
     lines: list[str] = []
     upper_bound = infer_entity_upper_bound(state.data_files)
     for art in state.latest_code_artifacts():
         if not art.success or art.evidence_role not in {"primary", "baseline"}:
             continue
         if art.evidence_role == "primary":
-            prefixes = (
-                "SCENARIO_BEGIN:", "SCENARIO_Q1:", "RESULT:", "BREAKDOWN:",
-                "DATA_PROFILE:", "DYNAMIC_STRESS:", "ALGORITHM_SEARCH:",
-                "DEPARTURE_SEARCH:", "CROSS_ROUTE_SEARCH:", "ROBUSTNESS:",
-                "SERVICE_DIAGNOSTICS:", "DYNAMIC_EVENTS:", "SCENARIO_END:",
-            )
-            lines.extend(
-                line.strip()
-                for line in art.stdout.splitlines()
-                if line.strip().startswith(prefixes)
-            )
+            lines.extend(structured_evidence_lines(art.stdout))
             continue
         expected = art.category.split(":", 1)[1] if art.category.startswith("baseline:") else None
         lines.extend(extract_valid_result_lines(

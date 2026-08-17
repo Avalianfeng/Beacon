@@ -14,6 +14,9 @@ from math_agent.state import MathModelingState
 SYSTEM = (
     "你是国赛 O 奖论文主笔。严格遵守用户消息中的 IRON RULES 与字数预算。"
     "禁止编造数据；禁止占位符；每段必须有可被证伪的论点。"
+    "数值溯源：正文每个具体数值必须逐字来自给定 stdout/Q<id> 行/RESULT 行；"
+    "禁止用某行数值推断其他字段（如用 RESULT 的 Tmax 写临界预紧力矩或 Tmax(e)）；"
+    "声称“代码输出显示”的数值必须在证据行中逐字可查，查不到就写“待验证”，绝不编造。"
     "输出严格的 JSON，键名与给定 schema 完全一致，不得增减键。"
 )
 

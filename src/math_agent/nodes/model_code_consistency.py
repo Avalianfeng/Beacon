@@ -457,5 +457,36 @@ def model_code_consistency_node(state: MathModelingState) -> dict:
         prompt, schema=ModelCodeConsistencyReport, system=SYSTEM,
         model=MODEL_ROUTING["model_critic"],
     )
+    out = _apply_numeric_fatal_backstop(out)
     _write_gate_diagnostics(state, out, has_primary=True)
     return _consistency_delta(state, out, has_primary=True)
+
+
+# 评审自身已认定致命数值缺陷却仍放行的兜底（r6 曾以 8/10 放行“与工程经验
+# 严重不符”的 Tmax=0.37）。评审模型可能按“结构实现完整”给分而忽略自己
+# 列出的数量级错误；这里把这类自认的致命缺陷强制转为不通过。
+_NUMERIC_FATAL_PATTERNS = (
+    "严重不符", "明显不合理", "数量级错误", "严重错误", "编造", "伪造",
+)
+
+
+def _apply_numeric_fatal_backstop(
+    report: ModelCodeConsistencyReport,
+) -> ModelCodeConsistencyReport:
+    if not report.approved or not report.issues:
+        return report
+    fatal = [
+        issue for issue in report.issues
+        if any(pattern in issue for pattern in _NUMERIC_FATAL_PATTERNS)
+    ]
+    if not fatal:
+        return report
+    report.approved = False
+    report.score = min(report.score, 5)
+    report.issues = [
+        *fatal,
+        "（确定性兜底）评审已认定数值严重不符/明显不合理，按致命缺陷强制不通过，"
+        "需修正单位或数量级后重试。",
+        *[i for i in report.issues if i not in fatal],
+    ]
+    return report

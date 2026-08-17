@@ -169,6 +169,44 @@ def test_consistency_increments_iteration(mocker):
     assert delta["code_verify_iteration"] == 2
 
 
+def test_numeric_fatal_backstop_blocks_approval():
+    """评审已认定数值严重不符却仍批准时，兜底强制不通过（r6 8/10 放行 0.37 事件）。"""
+    from math_agent.nodes.model_code_consistency import _apply_numeric_fatal_backstop
+
+    report = ModelCodeConsistencyReport(
+        score=8, approved=True,
+        issues=["Tmax 计算结果异常偏小（0.37 N·m），与工程经验值（100-500 N·m）严重不符。"],
+    )
+    out = _apply_numeric_fatal_backstop(report)
+    assert out.approved is False
+    assert out.score <= 5
+    assert "确定性兜底" in "".join(out.issues)
+
+
+def test_numeric_fatal_backstop_preserves_clean_report():
+    """无致命数值关键词的报告原样保留。"""
+    from math_agent.nodes.model_code_consistency import _apply_numeric_fatal_backstop
+
+    report = ModelCodeConsistencyReport(
+        score=9, approved=True, issues=["K 值回归与模型一致，R²=0.98 在合理范围。"],
+    )
+    out = _apply_numeric_fatal_backstop(report)
+    assert out.approved is True
+    assert out.score == 9
+    assert len(out.issues) == 1
+
+
+def test_consistency_prompt_includes_numeric_sanity_rule():
+    """评审 prompt 必须要求数值数量级自检并禁止带病批准。"""
+    from math_agent.prompts.model_code_consistency import SYSTEM, build_prompt
+
+    assert "数量级错误" in SYSTEM
+    assert "approved=False" in SYSTEM
+    prompt = build_prompt("{}", "{}", "code", "stdout", "base", "err")
+    assert "数值合理性" in prompt
+    assert "100-500 N·m" in prompt
+
+
 def test_consistency_prompt_includes_constraints_after_old_2000_char_cutoff(mocker):
     spy = mocker.patch(
         "math_agent.nodes.model_code_consistency.complete",

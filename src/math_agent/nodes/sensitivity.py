@@ -698,7 +698,12 @@ def sensitivity_code_generate_node(state: MathModelingState) -> dict:
                     main_code=main_code,
                     canonical_metrics=primary_metrics,
                 ),
-                schema=None,
+                # schema=None 时不会走 _THINKING_OFF_BODIES（llm_worker 仅在
+                # response_format 存在时关 thinking），deepseek 默认 thinking 会把
+                # 6000 token 预算全部烧在 reasoning 上，返回空 content（r6 三次
+                # 静默失败根因）。改用结构化 schema：关闭 thinking + 获得 JSON
+                # 修复轮，代码字段经 JSON 往返还原换行。
+                schema=SensitivityCode,
                 system=CODE_SYSTEM,
                 model=MODEL_ROUTING.get("coder"),
                 profile="code",

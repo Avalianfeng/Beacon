@@ -490,6 +490,45 @@ def test_strip_dangerous_calls_preserves_savefig():
     assert "auto-removed" not in stripped
 
 
+def test_structured_evidence_lines_keeps_q_and_limitation():
+    """论文证据行必须保留逐问输出（Q<id>:）与 LIMITATION 声明，丢弃调试行。"""
+    from math_agent.tools.runner import structured_evidence_lines
+
+    stdout = (
+        "工作表列表: ['Sheet1_标准实验数据']\n"
+        "0       18.0             50       12.68\n"
+        "Q1.1: 直径=18.0mm, 扭矩系数K=0.162, R²=0.9663\n"
+        "Q2.2: 工况A Tmax=368.08 N·m\n"
+        "LIMITATION: Q3.2 当 e>10mm 时 P_ecc 公式根号内为负，模型不可用。\n"
+        "RESULT: baseline=ours R²=0.9825 Tmax=368.08\n"
+    )
+    lines = structured_evidence_lines(stdout)
+    assert lines == [
+        "Q1.1: 直径=18.0mm, 扭矩系数K=0.162, R²=0.9663",
+        "Q2.2: 工况A Tmax=368.08 N·m",
+        "LIMITATION: Q3.2 当 e>10mm 时 P_ecc 公式根号内为负，模型不可用。",
+        "RESULT: baseline=ours R²=0.9825 Tmax=368.08",
+    ]
+
+
+def test_structured_evidence_lines_keeps_scenario_prefixes():
+    """车辆路径模板的既有证据前缀不受影响。"""
+    from math_agent.tools.runner import structured_evidence_lines
+
+    stdout = (
+        "SCENARIO_BEGIN: baseline=no_policy\n"
+        "RESULT: baseline=ours total_cost=1245.3\n"
+        "SCENARIO_END:\n"
+        "saved figure to C:/tmp/x.png\n"
+    )
+    lines = structured_evidence_lines(stdout)
+    assert lines == [
+        "SCENARIO_BEGIN: baseline=no_policy",
+        "RESULT: baseline=ours total_cost=1245.3",
+        "SCENARIO_END:",
+    ]
+
+
 def test_runner_end_to_end_no_hang_from_plt_show(workdir):
     """端到端：含 plt.show() 的代码在 run_python 中不阻塞，正常完成。"""
     code = (

@@ -264,7 +264,41 @@ def build_prompt_figure_one(model, purpose: str, prev_failure=None, prev_error_k
         f"{no_masking_hint}"
         f"{_result_format_hint(blueprint, green)}"
         f"{_result_common_hint(green)}"
+        f"{_unit_sanity_hint(blueprint)}"
         f"请输出 JSON：{{\"purpose\": str, \"code\": str}}，code 字段是完整的 Python 源码。"
+    )
+
+
+def _unit_sanity_hint(blueprint) -> str:
+    """数值数量级自检：把 blueprint 的校验标准与单位约定变成硬性要求。
+
+    r6 根因之一：代码把 P 从 kN 换算成 N 后，K 回归与 Tmax 计算混用两套单位，
+    输出 Tmax=0.37 N·m（工程合理范围 100-500 N·m，blueprint validation_plan
+    的 pass_criteria 白纸黑字），且同一次运行内 T_y_shank=928611 与 Tmax=0.37
+    自相矛盾——一致性评审放行后，错误数值一路流进论文。
+    """
+    criteria: list[str] = []
+    if blueprint is not None:
+        plan = getattr(blueprint, "validation_plan", None) or []
+        for item in plan:
+            pc = str(getattr(item, "pass_criteria", "") or "").strip()
+            if pc and pc not in criteria:
+                criteria.append(pc)
+        for metric in getattr(blueprint, "metrics", None) or []:
+            unit = str(getattr(metric, "unit", "") or "").strip()
+            name = str(getattr(metric, "name", "") or "").strip()
+            if unit and name:
+                criteria.append(f"{name} 的单位应为 {unit}")
+    if not criteria:
+        return ""
+    bullets = "\n".join(f"- {c}" for c in criteria[:6])
+    return (
+        "\n# 数值数量级自检（硬性要求）\n"
+        f"blueprint 的校验标准（必须逐条满足，否则视为执行失败）：\n{bullets}\n"
+        "输出 RESULT 行前必须做单位自检：若任一数值偏离工程合理数量级"
+        "（如力矩应为数百 N·m 却算出 0.37，或 K 与常规量级差 1000 倍），"
+        "说明单位换算错误（kN↔N、mm↔m、MPa↔Pa），修正公式后再输出；"
+        "同一次运行内部数值必须自洽（约束上限与最终 Tmax 不可能相差 10^6 倍）。\n"
     )
 
 

@@ -57,7 +57,7 @@ def test_coder_node_skips_logistics_baselines_without_green_attachments(monkeypa
         return RunResult(
             success=True,
             stdout="RESULT: baseline=ours T_max=80.0 K=0.18",
-            artifact_paths=[],
+            artifact_paths=["torque_force_regression.png"],
         )
 
     monkeypatch.setattr("math_agent.nodes.coder.complete", mock_complete)
@@ -215,6 +215,36 @@ def test_main_figure_prompt_metric_contract_exact_names():
     assert "R² 不得写成 R_squared" in prompt
     assert "禁止只输出其中一部分" in prompt
     assert "禁止新增未要求的指标字段" in prompt
+
+
+def test_main_figure_prompt_includes_unit_sanity_hint():
+    """blueprint 校验标准与单位必须注入为数量级自检硬要求（r6 单位混乱根因）。"""
+    from math_agent.prompts.coder_figure_one import build_prompt_figure_one
+    from math_agent.state import (
+        MetricSpec, ModelVersion, ProblemBlueprint, ValidationPlanItem,
+    )
+
+    bp = ProblemBlueprint(
+        core_task="锚杆预紧",
+        metrics=[MetricSpec(
+            name="最大允许预紧力矩 Tmax", meaning="各约束下的最大允许预紧力矩",
+            unit="N·m",
+        )],
+        validation_plan=[
+            ValidationPlanItem(
+                target="问题2.2 Tmax 计算",
+                method="数值验证",
+                pass_criteria="结果在合理范围（如 100-500 N·m）",
+            ),
+        ],
+    )
+    prompt = build_prompt_figure_one(
+        ModelVersion(stage="final", description="锚杆预紧模型"), "主图", blueprint=bp,
+    )
+    assert "数值数量级自检" in prompt
+    assert "结果在合理范围（如 100-500 N·m）" in prompt
+    assert "最大允许预紧力矩 Tmax 的单位应为 N·m" in prompt
+    assert "单位换算错误" in prompt
 
 
 def test_supporting_figure_prompt_reuses_canonical_evidence():

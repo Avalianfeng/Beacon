@@ -399,6 +399,36 @@ _NONFINITE_OUTPUT_RE = _re.compile(
     r"(?<![A-Za-z0-9_])(?:nan|[+-]?inf)(?![A-Za-z0-9_])",
     _re.IGNORECASE,
 )
+# 论文评审/writer 的结构化证据行白名单。除车辆路径模板的 SCENARIO_*/RESULT: 等
+# 前缀外，必须保留逐子问题输出行（Q<id>:，与 coder prompt 的 _subquestions_output_hint
+# 对应）与 LIMITATION 声明行（fc1874f 协议）。曾经只有 VRP 前缀，导致 MCM 题的
+# Q 行被剥掉、评审只见 RESULT 一行，把有据可查的数值误判为编造（r6 paper_critic
+# 4/10 的直接原因之一），也让 LIMITATION 协议在论文环节失效。
+_STRUCTURED_EVIDENCE_PREFIXES = (
+    "SCENARIO_BEGIN:", "SCENARIO_Q1:", "RESULT:", "BREAKDOWN:",
+    "DATA_PROFILE:", "DYNAMIC_STRESS:", "ALGORITHM_SEARCH:",
+    "DEPARTURE_SEARCH:", "CROSS_ROUTE_SEARCH:", "ROBUSTNESS:",
+    "SERVICE_DIAGNOSTICS:", "DYNAMIC_EVENTS:", "SCENARIO_END:",
+    "LIMITATION:",
+)
+_STRUCTURED_EVIDENCE_LINE_RE = _re.compile(r"^Q\d")
+
+
+def structured_evidence_lines(stdout: str) -> list[str]:
+    """从 stdout 提取论文可引用的结构化证据行（模板无关）。
+
+    白名单：既有 VRP 证据前缀 + ``Q<id>:`` 逐问输出行 + ``LIMITATION:`` 声明行。
+    writer 与 paper_critic 必须同源使用本函数，避免“评审能看、writer 看不到”
+    或反之造成的编造/误判。
+    """
+    return [
+        line.strip()
+        for line in (stdout or "").splitlines()
+        if (
+            line.strip().startswith(_STRUCTURED_EVIDENCE_PREFIXES)
+            or _STRUCTURED_EVIDENCE_LINE_RE.match(line.strip())
+        )
+    ]
 # 模型适用边界的合法声明行：LIMITATION: <问题id> <具体数学原因>
 # 与 nan/inf 不同，这是"数学模型在参数域内不可用"的显式标注，允许 RESULT
 # 指标缺口被豁免；空洞声明（过短/无实质内容）不计入。

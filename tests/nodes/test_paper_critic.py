@@ -181,6 +181,37 @@ def test_paper_critic_node_passes_primary_depth_evidence(mocker):
     assert "CROSS_ROUTE_SEARCH: improvement=9" in captured["prompt"]
 
 
+def test_paper_critic_keeps_q_and_limitation_evidence(mocker):
+    """MCM 题逐问输出行（Q<id>:）与 LIMITATION 声明必须送达评审（r6 曾被剥掉）。"""
+    captured = {}
+
+    def _capture(prompt, **kw):
+        captured["prompt"] = prompt
+        return CriticReport(target="paper", score=7, issues=[], suggestions=[], approved=False)
+
+    mocker.patch("math_agent.nodes.paper_critic.complete", side_effect=_capture)
+    s = MathModelingState(problem="p")
+    s.paper = _paper_with_numbers()
+    s.code_artifacts.append(CodeArtifact(
+        purpose="主方案", code="...", success=True, evidence_role="primary",
+        stdout=(
+            "print(df1.head())\n"
+            "0       18.0             50       12.68\n"
+            "Q1.1: 直径=18.0mm, 扭矩系数K=0.162, R²=0.9663\n"
+            "Q2.2: 工况A Tmax=368.08 N·m\n"
+            "LIMITATION: Q3.2 当 e>10mm 时 P_ecc 公式根号内为负，模型不可用。\n"
+            "RESULT: baseline=ours R²=0.9825 Tmax=368.08\n"
+        ),
+    ))
+
+    paper_critic_node(s)
+
+    assert "Q1.1: 直径=18.0mm" in captured["prompt"]
+    assert "Q2.2: 工况A Tmax=368.08" in captured["prompt"]
+    assert "LIMITATION: Q3.2" in captured["prompt"]
+    assert "df1.head()" not in captured["prompt"]
+
+
 def test_paper_critic_deterministically_rejects_internal_runtime_terms(mocker):
     fake = CriticReport(target="paper", score=9, issues=[], suggestions=[], approved=True)
     mocker.patch("math_agent.nodes.paper_critic.complete", return_value=fake)
