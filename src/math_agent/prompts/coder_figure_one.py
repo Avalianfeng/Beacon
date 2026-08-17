@@ -120,11 +120,15 @@ def _result_format_hint(blueprint, green: bool) -> str:
         )
     pairs = metric_vars(blueprint.metrics)
     fields = " ".join(f"{name}={{{var}}}" for name, var in pairs)
+    names = "、".join(m.name for m in blueprint.metrics)
     return (
         "脚本末尾必须用 print 输出 RESULT 行，格式严格为：\n"
         f"print(f'RESULT: baseline=ours {fields}')\n"
-        "（示例变量名可自取，但 RESULT 行里的指标名必须与上面 Blueprint 指标"
-        "一字不差。）\n"
+        "（f-string 里的数值变量名（如 m0/m1）可替换为你的变量名；"
+        "但 RESULT 行里的指标标签名必须与 Blueprint 指标一字不差，"
+        f"共 {len(blueprint.metrics)} 个：{names}。\n"
+        "禁止改名（如 R² 不得写成 R_squared、安全裕度不得写成 safety_margin）、"
+        "禁止只输出其中一部分、禁止新增未要求的指标字段。）\n"
         + _forbidden_green_metrics_hint()
     )
 
@@ -269,6 +273,10 @@ def _result_common_hint(green: bool) -> str:
     lines = [
         "stdout 不允许只输出自然语言总结，必须包含 RESULT: 行并带具体数值。\n\n",
         "发生数据读取或求解异常时必须 raise 并以非零状态退出，不能打印错误后继续输出 RESULT。\n",
+        "stdout 全部输出（含调试 print、Q<id> 行、图表标题标签）都不得出现 nan 或 inf 字样；"
+        "对不存在/无约束的项（如无偏心距时的 P_ecc）禁止用 np.inf 或 np.nan 占位，"
+        "应改用条件分支跳过该项输出，或用有限数值（如极大有限值）并在文本中说明，"
+        "或直接输出“无该项约束”的文字。所有打印数值必须是有限数。\n",
     ]
     if green:
         lines.append(

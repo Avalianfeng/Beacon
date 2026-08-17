@@ -167,6 +167,43 @@ def test_main_figure_prompt_forbids_masking_negative_margins():
     assert "安全裕度为负表示超限" in prompt
 
 
+def test_main_figure_prompt_forbids_nan_inf_output():
+    """stdout 任何输出（含调试/图表标签）不得出现 nan/inf；无约束项禁止 np.inf 占位。"""
+    from math_agent.prompts.coder_figure_one import build_prompt_figure_one
+    from math_agent.state import ModelVersion
+
+    prompt = build_prompt_figure_one(ModelVersion(stage="final", description="锚杆预紧"), "主图")
+    assert "不得出现 nan 或 inf 字样" in prompt
+    assert "禁止用 np.inf 或 np.nan 占位" in prompt
+    assert "所有打印数值必须是有限数" in prompt
+
+
+def test_main_figure_prompt_metric_contract_exact_names():
+    """RESULT 指标标签必须与 blueprint 一字不差：禁止改名、只输出部分、增删字段。"""
+    from math_agent.prompts.coder_figure_one import build_prompt_figure_one
+    from math_agent.state import ModelVersion, MetricSpec, ProblemBlueprint
+
+    bp = ProblemBlueprint(
+        core_task="锚杆预紧",
+        metrics=[
+            MetricSpec(name="R²", meaning="拟合优度"),
+            MetricSpec(name="RMSE", meaning="均方根误差"),
+            MetricSpec(name="Tmax", meaning="最大允许预紧力矩"),
+            MetricSpec(name="安全裕度", meaning="安全裕度"),
+        ],
+    )
+    prompt = build_prompt_figure_one(
+        ModelVersion(stage="final", description="锚杆预紧模型"), "主图", blueprint=bp,
+    )
+    # 模板直接给出完整 RESULT 行，指标标签原样出现
+    assert "RESULT: baseline=ours R²={m0} RMSE={m1} Tmax={m2} 安全裕度={m3}" in prompt
+    assert "共 4 个：R²、RMSE、Tmax、安全裕度" in prompt
+    assert "禁止改名" in prompt
+    assert "R² 不得写成 R_squared" in prompt
+    assert "禁止只输出其中一部分" in prompt
+    assert "禁止新增未要求的指标字段" in prompt
+
+
 def test_supporting_figure_prompt_reuses_canonical_evidence():
     from math_agent.prompts.coder_figure_one import build_prompt_figure_one
     from math_agent.state import DataFileInfo, ModelVersion
