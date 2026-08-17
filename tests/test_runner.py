@@ -529,6 +529,44 @@ def test_structured_evidence_lines_keeps_scenario_prefixes():
     ]
 
 
+def test_detect_literal_backslash_n_flags_comment_and_code_escapes():
+    """字面量 \\n 的两种实测形态都必须命中：注释内吞语句（r6 批5）、代码区（r7 首轮）。"""
+    from math_agent.tools.runner import detect_literal_backslash_n
+
+    comment_case = (
+        "# 钢带必要性判断。\nuse_steel_A = (min_idx_A == 3)  # 索引3为围岩压陷"
+        "\\nuse_steel_B = (min_idx_B == 3)\nprint('x')"
+    )
+    assert detect_literal_backslash_n(comment_case) != ""
+
+    code_case = (
+        "control_B = '压陷' if Tmax_B == T_bearing_B else '屈服'"
+        "\\nuse_steel_A = control_A == '压陷'"
+    )
+    assert detect_literal_backslash_n(code_case) != ""
+
+
+def test_detect_literal_backslash_n_ignores_strings_and_clean_code():
+    """字符串内的 \\n（如列名 '锚杆直径\\n/mm'）与正常代码不得误报。"""
+    from math_agent.tools.runner import detect_literal_backslash_n
+
+    clean = (
+        "df1['锚杆直径\\n/mm'] = df1['锚杆直径\\n/mm'].ffill()\n"
+        "# 前向填充直径\n"
+        "print('x')  # 正常行内注释\n"
+    )
+    assert detect_literal_backslash_n(clean) == ""
+
+    hash_in_string = "print('# 锚杆直径\\n/mm')"
+    assert detect_literal_backslash_n(hash_in_string) == ""
+
+    triple = "'''# 注释样例\\n 换行'''\nx = 1"
+    assert detect_literal_backslash_n(triple) == ""
+
+    line_continuation = "x = 1 + \\\n    2"
+    assert detect_literal_backslash_n(line_continuation) == ""
+
+
 def test_runner_end_to_end_no_hang_from_plt_show(workdir):
     """端到端：含 plt.show() 的代码在 run_python 中不阻塞，正常完成。"""
     code = (

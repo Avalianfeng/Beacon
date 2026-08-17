@@ -247,6 +247,28 @@ def test_main_figure_prompt_includes_unit_sanity_hint():
     assert "单位换算错误" in prompt
 
 
+def test_main_figure_prompt_enforces_comment_discipline():
+    """注释纪律（无行内注释、禁止字面量 \\n）必须织入主图提示词。"""
+    from math_agent.prompts.coder_figure_one import build_prompt_figure_one
+    from math_agent.state import ModelVersion
+
+    prompt = build_prompt_figure_one(
+        ModelVersion(stage="final", description="锚杆预紧"), "主图",
+    )
+    assert "无需任何行内注释" in prompt
+    assert "禁止出现字面量" in prompt
+    assert "真正的换行" in prompt
+
+
+def test_coder_system_enforces_comment_discipline():
+    """coder SYSTEM 同样携带注释纪律（覆盖 baseline 等路径）。"""
+    from math_agent.prompts.coder import SYSTEM
+
+    assert "注释纪律" in SYSTEM
+    assert "行内注释" in SYSTEM
+    assert "禁止出现字面量" in SYSTEM
+
+
 def test_supporting_figure_prompt_reuses_canonical_evidence():
     from math_agent.prompts.coder_figure_one import build_prompt_figure_one
     from math_agent.state import DataFileInfo, ModelVersion

@@ -26,6 +26,8 @@ from math_agent.prompts.coder_figure_one import (
 from math_agent.prompts.coder_baseline import BASELINE_SPECS, build_baseline_prompt
 from math_agent.state import MathModelingState, CodeArtifact
 from math_agent.tools.runner import (
+    RunResult,
+    detect_literal_backslash_n,
     infer_entity_upper_bound,
     run_python,
     validate_code_data_usage,
@@ -2876,12 +2878,22 @@ def coder_execute_node(state: MathModelingState) -> dict:
     artifacts = list(state.coder_work_artifacts)
 
     if item["kind"] == "figure":
-        result = run_python(
-            draft.code,
-            workdir=workdir / f"fig_{item['index']}_attempt_{item['attempt']}",
-            timeout=_code_timeout_seconds(),
-            expected_input_paths=_input_paths(state),
-        )
+        # fail-fast：字符串之外出现字面量 \n（注释内吞语句 r6 批5 NameError、
+        # 代码区 r7 首轮 SyntaxError 均为该成因）。命中直接拒绝并带反馈重试，
+        # 不进入执行。
+        comment_escape_reason = detect_literal_backslash_n(draft.code)
+        if comment_escape_reason:
+            result = RunResult(
+                success=False, stdout="", stderr=comment_escape_reason,
+                error_kind="generation",
+            )
+        else:
+            result = run_python(
+                draft.code,
+                workdir=workdir / f"fig_{item['index']}_attempt_{item['attempt']}",
+                timeout=_code_timeout_seconds(),
+                expected_input_paths=_input_paths(state),
+            )
         has_primary = _has_primary_for_current_batch(state, artifacts)
         effective_success, validation_reason, error_kind = _validated_execution(
             state, item, result, code=draft.code,

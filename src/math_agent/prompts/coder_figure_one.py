@@ -261,6 +261,9 @@ def build_prompt_figure_one(model, purpose: str, prev_failure=None, prev_error_k
         )
         + "请直接输出正常的多行 Python 源码，不要把整段 code 写成带字面量 \\n 的转义字符串。\n"
         f"若标题、注释、docstring 里需要反斜杠或 LaTeX 记号，请使用原始字符串或双反斜杠，避免非法转义。\n"
+        f"注释纪律：代码无需任何行内注释；如需说明，只能在功能块上方写一行中文注释；"
+        f"注释内禁止出现字面量 \\n、\\t 等转义序列——需要换行就写真正的换行，"
+        f"否则 # 之后同一行的语句会被吞进注释导致 NameError/SyntaxError。\n"
         f"{no_masking_hint}"
         f"{_result_format_hint(blueprint, green)}"
         f"{_result_common_hint(green)}"

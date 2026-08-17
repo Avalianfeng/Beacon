@@ -429,6 +429,63 @@ def structured_evidence_lines(stdout: str) -> list[str]:
             or _STRUCTURED_EVIDENCE_LINE_RE.match(line.strip())
         )
     ]
+
+
+def detect_literal_backslash_n(code: str) -> str:
+    """fail-fast 检测字符串字面量之外的字面量 ``\\n``（反斜杠+n 两个字符）。
+
+    模型生成代码时偶尔把换行写成字面量 ``\\n``，两种实测形态：
+    - 注释内（r6 批 5）：``# ...必须加钢带。\\nuse_steel_A = (min_idx_A == 3)``
+      → ``#`` 之后的语句被吞进注释 → ``NameError: name 'use_steel_A' is not defined``；
+    - 代码区（r7 首轮）：``control_B = '压陷' if ... else '粘结')\\nuse_steel_A = ...``
+      → ``SyntaxError``。
+
+    在 Python 源码里，字符串之外出现 ``\\`` + ``n`` 永远是非法字符（字符串内的
+    ``'锚杆直径\\n/mm'`` 属正常转义，不受影响）。本函数做最小词法扫描（识别
+    单/双/三引号字符串），命中即返回具体原因，由调用方拒绝该 artifact 并带
+    反馈重试，而不是静默改写。
+    """
+    in_string = None  # None | "'" | '"' | "'''" | '"""'
+    i = 0
+    n = len(code)
+    while i < n:
+        ch = code[i]
+        if in_string is None:
+            if ch in ("'", '"'):
+                if code.startswith(ch * 3, i):
+                    in_string = ch * 3
+                    i += 3
+                    continue
+                in_string = ch
+                i += 1
+                continue
+            if ch == "\\" and i + 1 < n and code[i + 1] == "n":
+                return (
+                    "代码（含注释）中出现字面量 \\n（反斜杠+n 两个字符）："
+                    "Python 会将其视为非法字符（注释内则会吞掉 # 之后的语句），"
+                    "导致 NameError/SyntaxError。请使用真正的换行，不要写 \\n 转义。"
+                )
+            i += 1
+        else:
+            if ch == "\\":
+                i += 2
+                continue
+            if in_string in ("'", '"'):
+                if code.startswith(in_string * 3, i):
+                    in_string = None
+                    i += 3
+                    continue
+                if ch == in_string:
+                    in_string = None
+                    i += 1
+                    continue
+            else:  # 三引号字符串
+                if code.startswith(in_string, i):
+                    i += len(in_string)
+                    in_string = None
+                    continue
+            i += 1
+    return ""
 # 模型适用边界的合法声明行：LIMITATION: <问题id> <具体数学原因>
 # 与 nan/inf 不同，这是"数学模型在参数域内不可用"的显式标注，允许 RESULT
 # 指标缺口被豁免；空洞声明（过短/无实质内容）不计入。

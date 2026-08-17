@@ -89,6 +89,31 @@ def test_supporting_figure_uses_strong_model_without_primary_source(mocker, work
     assert complete.call_args.kwargs["model"] == _supporting_figure_model()
 
 
+def test_coder_rejects_literal_backslash_n_without_running(mocker, workdir):
+    """字符串之外的字面量 \\n 在进入 subprocess 前即被拒绝（r7 首轮 SyntaxError 形态）。"""
+    from math_agent.nodes.coder import coder_node, CoderDraft
+
+    mocker.patch(
+        "math_agent.nodes.coder.complete",
+        return_value=CoderDraft(
+            purpose="solve",
+            code=("control_B = '压陷' if Tmax_B == T_bearing_B else '屈服'"
+                  "\\nuse_steel_A = control_A == '压陷'\n"
+                  "print('RESULT: baseline=ours T_max=10 K=0.18')"),
+        ),
+    )
+    spy_run = mocker.patch("math_agent.nodes.coder.run_python")
+    s = MathModelingState(problem="p", output_dir=str(workdir))
+    s.model_versions.append(ModelVersion(stage="final", description="d"))
+
+    delta = coder_node(s)
+
+    figures = [a for a in delta["code_artifacts"] if a.category == "figure"]
+    assert figures[0].success is False
+    assert "字面量 \\n" in figures[0].stderr
+    spy_run.assert_not_called()
+
+
 def test_coder_retries_once_on_failure(mocker, workdir):
     drafts = [
         CoderDraft(purpose="solve", code="raise RuntimeError('x')"),
