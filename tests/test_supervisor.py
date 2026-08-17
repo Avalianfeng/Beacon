@@ -1,10 +1,11 @@
 import json
+import os
 import sys
 import time
 
 import pytest
 
-from math_agent.errors import LLMValidationError
+from math_agent.errors import LLMEmptyContentError, LLMValidationError
 from math_agent.supervisor import (
     FailureRecord,
     RunInspection,
@@ -13,9 +14,34 @@ from math_agent.supervisor import (
     run_process_supervisor,
     supervise_loop,
     start_detached_supervisor,
+    _atomic_json,
+    _merge_gate_diagnostics,
     _process_worker,
     failure_record_for_exception,
 )
+
+
+def test_merge_gate_diagnostics_into_state(tmp_path):
+    """心跳合并：gate_diagnostics.json 存在时进入 state["gate"]，删除后移除。"""
+    (tmp_path / "gate_diagnostics.json").write_text(
+        json.dumps({"code_verify_iteration": 5, "stall": True}),
+        encoding="utf-8",
+    )
+    state: dict = {}
+    _merge_gate_diagnostics(state, tmp_path)
+    assert state["gate"]["code_verify_iteration"] == 5
+    assert state["gate"]["stall"] is True
+
+    (tmp_path / "gate_diagnostics.json").unlink()
+    _merge_gate_diagnostics(state, tmp_path)
+    assert "gate" not in state
+
+
+def test_merge_gate_diagnostics_ignores_bad_payload(tmp_path):
+    (tmp_path / "gate_diagnostics.json").write_text("{not-json", encoding="utf-8")
+    state: dict = {"gate": {"old": 1}}
+    _merge_gate_diagnostics(state, tmp_path)
+    assert "gate" not in state
 
 
 def test_supervisor_recovers_retriable_502_then_completes():
@@ -144,6 +170,24 @@ def test_supervisor_reports_degraded_terminal_state():
         sleep=lambda _: None,
     )
     assert result.status == "degraded"
+
+
+def test_supervisor_treats_empty_next_as_stopped_without_recover():
+    calls = []
+    inspections = iter([
+        RunInspection(checkpoint_exists=False),
+        RunInspection(checkpoint_exists=True),
+    ])
+
+    result = supervise_loop(
+        worker=lambda mode: calls.append(mode) or WorkerResult(0),
+        inspect=lambda: next(inspections),
+        policy=SupervisorPolicy(base_delay=0),
+        sleep=lambda _: None,
+    )
+
+    assert result.status == "stopped"
+    assert calls == ["run"]
 
 
 def test_detached_supervisor_redirects_logs_and_records_pid(mocker, tmp_path):
@@ -286,3 +330,30 @@ def test_failure_record_marks_validation_error_retriable():
     record = failure_record_for_exception("analyst", LLMValidationError("bad json"))
     assert record.retriable is True
     assert record.node == "analyst"
+
+
+def test_failure_record_marks_empty_content_retriable():
+    record = failure_record_for_exception(
+        "modeler", LLMEmptyContentError("LLM 返回空 content，无法解析结构化 JSON"),
+    )
+    assert record.retriable is True
+    assert record.kind == "LLMEmptyContentError"
+    assert record.node == "modeler"
+
+
+def test_atomic_json_retries_windows_replace_permission(monkeypatch, tmp_path):
+    target = tmp_path / "supervisor.json"
+    calls = {"n": 0}
+    original = os.replace
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(5, "拒绝访问。")
+        return original(src, dst)
+
+    monkeypatch.setattr("math_agent.supervisor.os.replace", flaky_replace)
+    monkeypatch.setattr("math_agent.supervisor.time.sleep", lambda _: None)
+    _atomic_json(target, {"status": "running"})
+    assert json.loads(target.read_text(encoding="utf-8"))["status"] == "running"
+    assert calls["n"] == 3

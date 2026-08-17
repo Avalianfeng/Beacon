@@ -12,7 +12,7 @@ def test_coder_runs_code_and_records_artifact(mocker, workdir):
         "math_agent.nodes.coder.complete",
         return_value=CoderDraft(
             purpose="solve",
-            code="print('hello'); print('RESULT: baseline=ours total_cost=10 service_rate=0.9')",
+            code="print('hello'); print('RESULT: baseline=ours T_max=10 K=0.18')",
         ),
     )
     s = MathModelingState(problem="p", output_dir=str(workdir))
@@ -55,12 +55,44 @@ def test_consistency_retry_reuses_committed_primary_code_and_feedback(mocker, wo
     assert delta["coder_phase"] == "execute"
 
 
+def test_supporting_figure_uses_strong_model_without_primary_source(mocker, workdir):
+    from math_agent.nodes.coder import _supporting_figure_model, coder_generate_node
+
+    primary_code = "print('previous-primary-sentinel')\n" * 40
+    state = MathModelingState(problem="p", output_dir=str(workdir))
+    state.model_versions.append(ModelVersion(stage="final", description="d"))
+    state.coder_work_artifacts = [
+        CodeArtifact(
+            purpose="primary", code=primary_code, success=True,
+            category="figure", evidence_role="primary", batch=1,
+            stdout="RESULT: baseline=ours total_cost=100 service_rate=0.95 vehicles=3",
+        )
+    ]
+    state.coder_phase = "generate"
+    state.coder_work_queue = [{
+        "kind": "figure", "id": "figure:1", "index": 1,
+        "purpose": "补充图", "attempt": 0, "prev_err": "", "prev_kind": "",
+        "evidence_target": "supporting",
+    }]
+    complete = mocker.patch(
+        "math_agent.nodes.coder.complete",
+        return_value=CoderDraft(purpose="fig", code="print(1)"),
+    )
+
+    coder_generate_node(state)
+
+    prompt = complete.call_args.args[0]
+    assert "previous-primary-sentinel" not in prompt
+    assert "total_cost=100" in prompt
+    assert complete.call_args.kwargs["model"] == _supporting_figure_model()
+
+
 def test_coder_retries_once_on_failure(mocker, workdir):
     drafts = [
         CoderDraft(purpose="solve", code="raise RuntimeError('x')"),
         CoderDraft(
             purpose="solve",
-            code="print('ok'); print('RESULT: baseline=ours total_cost=10 service_rate=0.9')",
+            code="print('ok'); print('RESULT: baseline=ours T_max=10 K=0.18')",
         ),
     ]
     mocker.patch("math_agent.nodes.coder.complete", side_effect=drafts)
@@ -114,7 +146,7 @@ def test_coder_prompt_on_timeout_asks_to_shrink_scale(mocker, workdir):
             RunResult(success=False, stderr="timeout after 300s", error_kind="timeout"),
             RunResult(
                 success=True,
-                stdout="RESULT: baseline=ours total_cost=10 service_rate=0.9",
+                stdout="RESULT: baseline=ours T_max=10 K=0.18",
                 error_kind="",
             ),
         ],
@@ -138,7 +170,7 @@ def test_coder_prompt_on_runtime_asks_to_fix_via_stderr(mocker, workdir):
         CoderDraft(purpose="s", code="raise ValueError('boom')"),
         CoderDraft(
             purpose="s",
-            code="print('RESULT: baseline=ours total_cost=10 service_rate=0.9')",
+            code="print('RESULT: baseline=ours T_max=10 K=0.18')",
         ),
     ]
     spy_complete = mocker.patch("math_agent.nodes.coder.complete", side_effect=drafts)
@@ -149,7 +181,7 @@ def test_coder_prompt_on_runtime_asks_to_fix_via_stderr(mocker, workdir):
                       error_kind="runtime"),
             RunResult(
                 success=True,
-                stdout="RESULT: baseline=ours total_cost=10 service_rate=0.9",
+                stdout="RESULT: baseline=ours T_max=10 K=0.18",
                 error_kind="",
             ),
         ],
@@ -176,7 +208,7 @@ def test_coder_applies_safe_local_repair_without_second_llm_call(mocker, workdir
         return_value=CoderDraft(
             purpose="plot",
             code=("import matplotlib.rcparams as rc\n"
-                  "print('RESULT: baseline=ours total_cost=10 service_rate=0.9')"),
+                  "print('RESULT: baseline=ours T_max=10 K=0.18')"),
         ),
     )
     spy_run = mocker.patch(
@@ -189,7 +221,7 @@ def test_coder_applies_safe_local_repair_without_second_llm_call(mocker, workdir
             ),
             RunResult(
                 success=True,
-                stdout="RESULT: baseline=ours total_cost=10 service_rate=0.9",
+                stdout="RESULT: baseline=ours T_max=10 K=0.18",
             ),
         ],
     )
@@ -756,11 +788,11 @@ def test_coder_retries_when_exit_zero_stdout_reports_failure(mocker, workdir):
         CoderDraft(
             purpose="solve",
             code=("print(\"Error during execution: '纬度'\")\n"
-                  "print('RESULT: baseline=ours total_cost=0 service_rate=0')"),
+                  "print('RESULT: baseline=ours T_max=0 K=0')"),
         ),
         CoderDraft(
             purpose="solve",
-            code="print('RESULT: baseline=ours total_cost=2470.93 vehicles=7 service_rate=1.0')",
+            code="print('RESULT: baseline=ours T_max=2470.93 K=0.18 T_crit=80 R2=0.99')",
         ),
     ]
     mocker.patch("math_agent.nodes.coder.complete", side_effect=drafts)
@@ -784,16 +816,15 @@ def test_coder_rejects_impossible_vehicle_count_using_input_scale(mocker, workdi
     drafts = [
         CoderDraft(
             purpose="solve",
-            code=("print('RESULT: baseline=ours total_cost=4812127.99 "
-                  "veh_count=19011 service_rate=0.92 total_carbon=100')"),
+            code=("print('RESULT: baseline=ours T_max=4812127.99 "
+                  "veh_count=19011 T_crit=80 K=0.18 R2=0.92')"),
         ),
         CoderDraft(
             purpose="solve",
             code=(f"open({str(input_path)!r}, 'rb').read(1)\n"
-                  "total_cost = 2470.93\nvehicles = 7\nservice_rate = 1.0\n"
-                  "total_carbon = 96.41\n"
-                  "print(f'RESULT: baseline=ours total_cost={total_cost} vehicles={vehicles} "
-                  "service_rate={service_rate} total_carbon={total_carbon}')"),
+                  "T_max = 2470.93\nT_crit = 80\nK = 0.18\nR2 = 0.99\n"
+                  "print(f'RESULT: baseline=ours T_max={T_max} T_crit={T_crit} "
+                  "K={K} R2={R2}')"),
         ),
     ]
     mocker.patch("math_agent.nodes.coder.complete", side_effect=drafts)
@@ -821,16 +852,16 @@ def test_coder_rejects_plausible_but_hardcoded_primary_results(mocker, workdir):
     drafts = [
         CoderDraft(
             purpose="fake",
-            code=("print('RESULT: baseline=ours total_cost=46750 vehicles=18 "
-                  "service_rate=0.88 total_carbon=850')"),
+            code=("print('RESULT: baseline=ours T_max=46750 T_crit=80 "
+                  "K=0.18 R2=0.88')"),
         ),
         CoderDraft(
             purpose="real",
             code=(f"open({str(input_path)!r}, 'rb').read(1)\n"
-                  "total_cost = len(open(" + repr(str(input_path)) + ", 'rb').read()) + 46749\n"
-                  "vehicles = 18\nservice_rate = 0.88\ntotal_carbon = 850\n"
-                  "print(f'RESULT: baseline=ours total_cost={total_cost} vehicles={vehicles} "
-                  "service_rate={service_rate} total_carbon={total_carbon}')"),
+                  "T_max = len(open(" + repr(str(input_path)) + ", 'rb').read()) + 46749\n"
+                  "T_crit = 80\nK = 0.18\nR2 = 0.88\n"
+                  "print(f'RESULT: baseline=ours T_max={T_max} T_crit={T_crit} "
+                  "K={K} R2={R2}')"),
         ),
     ]
     mocker.patch("math_agent.nodes.coder.complete", side_effect=drafts)
@@ -872,6 +903,31 @@ def test_green_logistics_primary_rejects_low_service_coverage(workdir):
 
     assert valid is False
     assert "service_rate=0.0307" in reason
+    assert kind == "output_validation"
+
+
+def test_non_logistics_primary_rejects_green_metric_leak(workdir):
+    from math_agent.nodes.coder import _validated_execution
+    from math_agent.state import DataFileInfo
+    from math_agent.tools.runner import RunResult
+
+    state = MathModelingState(
+        problem="锚杆预紧力矩", data_dir=str(workdir), output_dir=str(workdir),
+        data_files=[DataFileInfo(filename="A-附件.xlsx", file_type="xlsx", path="A-附件.xlsx")],
+    )
+    result = RunResult(
+        success=True,
+        stdout=("RESULT: baseline=ours total_cost=10 vehicles=3 service_rate=0.95 "
+                "total_carbon=1 avg_delivery_time=2"),
+    )
+
+    valid, reason, kind = _validated_execution(
+        state, {"kind": "figure"}, result, code="print(1)", require_data_usage=False,
+    )
+
+    assert valid is False
+    assert "非物流题禁止输出物流指标" in reason
+    assert "total_cost" in reason
     assert kind == "output_validation"
 
 

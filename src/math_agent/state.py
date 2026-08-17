@@ -337,7 +337,10 @@ class MathModelingState(BaseModel):
     # Problem Blueprint（覆盖语义；analyst 每次 retry 整体替换）
     problem_blueprint: ProblemBlueprint | None = None
     blueprint_iteration: int = 0    # blueprint_critic 评估次数（首次 + 最多一次 retry）
-    code_verify_iteration: int = 0  # model_code_consistency 评估次数
+    code_verify_iteration: int = 0  # model_code_consistency 无主证据轮次计数（兼总轮次）
+    # 有主证据但分数低于门禁的“定向修复”轮次计数：与无主证据预算分开，
+    # 避免无主证据轮次把低分修复预算提前耗尽（r3 曾因此拿到证据后立即停机）。
+    code_verify_low_score_iteration: int = 0
 
     # writer 子流程状态（覆盖语义）。队列空 = 本轮写完。
     # ponytail: 队列即进度，不需要 completed_groups/current_group/pending_rewrite。

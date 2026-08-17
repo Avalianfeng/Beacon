@@ -1,4 +1,7 @@
+import json
 import re
+from datetime import datetime, timezone
+from pathlib import Path
 
 from math_agent.llm import complete
 from math_agent.config import MODEL_ROUTING
@@ -265,6 +268,91 @@ def _verified_green_contract_report(model, main_artifacts, baseline_artifacts):
     )
 
 
+def _consistency_delta(
+    state: MathModelingState, report: ModelCodeConsistencyReport, has_primary: bool,
+) -> dict:
+    """构造节点返回：总轮次 +（有主证据但未达门禁时）低分修复轮次计数。
+
+    两个预算分开计：无主证据轮次用 code_verify_iteration（上限
+    MAX_CODE_NO_PRIMARY_ITERATIONS），有主证据但低分的定向修复轮次用
+    code_verify_low_score_iteration（上限 MAX_CODE_VERIFY_ITERATIONS），
+    避免无主证据轮次提前耗尽修复预算。
+    """
+    from math_agent.config import MIN_MODEL_CODE_SCORE
+    delta = {
+        "model_code_reports": [report],
+        "code_verify_iteration": state.code_verify_iteration + 1,
+    }
+    passed = bool(report.approved and report.score >= MIN_MODEL_CODE_SCORE)
+    if has_primary and not passed:
+        delta["code_verify_low_score_iteration"] = (
+            state.code_verify_low_score_iteration + 1
+        )
+    return delta
+
+
+def _write_gate_diagnostics(
+    state: MathModelingState, report: ModelCodeConsistencyReport, has_primary: bool,
+) -> None:
+    """把一致性门禁当前值写到 run 目录，供 supervisor/watch 观察与死循环提示。
+
+    节点与 supervisor 是不同进程，直接写 supervisor.json 会与心跳竞争，因此节点
+    写独立侧车文件 gate_diagnostics.json，由 supervisor 心跳合并进
+    supervisor.json["gate"]；watch 也会直接读本文件兜底。
+    """
+    out_dir = getattr(state, "output_dir", None)
+    if not out_dir:
+        return
+    try:
+        from math_agent.config import (
+            MAX_CODE_VERIFY_ITERATIONS, MAX_CODE_NO_PRIMARY_ITERATIONS,
+            MIN_MODEL_CODE_SCORE,
+        )
+        issues = list(report.issues or [])
+        latest_issue = issues[0] if issues else ""
+        consecutive = 1 if latest_issue else 0
+        if latest_issue:
+            for prev in reversed(state.model_code_reports or []):
+                prev_first = (list(prev.issues or []) or [""])[0]
+                if prev_first == latest_issue:
+                    consecutive += 1
+                else:
+                    break
+        iteration = state.code_verify_iteration + 1
+        passed = bool(report.approved and report.score >= MIN_MODEL_CODE_SCORE)
+        low_score_iteration = state.code_verify_low_score_iteration + (
+            1 if (has_primary and not passed) else 0
+        )
+        cap = (
+            MAX_CODE_NO_PRIMARY_ITERATIONS if not has_primary
+            else MAX_CODE_VERIFY_ITERATIONS
+        )
+        budget = iteration if not has_primary else low_score_iteration
+        payload = {
+            "node": "model_code_consistency",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "code_verify_iteration": iteration,
+            "code_verify_low_score_iteration": low_score_iteration,
+            "max_code_verify_iterations": MAX_CODE_VERIFY_ITERATIONS,
+            "max_code_no_primary_iterations": MAX_CODE_NO_PRIMARY_ITERATIONS,
+            "min_model_code_score": MIN_MODEL_CODE_SCORE,
+            "has_primary": bool(has_primary),
+            "approved": bool(report.approved),
+            "score": report.score,
+            "latest_issue": latest_issue[:240],
+            "consecutive_same_issue": consecutive,
+            "stall": consecutive >= 3,
+            "over_limit": budget >= cap,
+        }
+        path = Path(out_dir) / "gate_diagnostics.json"
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        # 诊断信息写入失败不影响门禁本身
+        pass
+
+
 def model_code_consistency_node(state: MathModelingState) -> dict:
     blueprint = state.problem_blueprint
     model = state.latest_model()
@@ -274,8 +362,8 @@ def model_code_consistency_node(state: MathModelingState) -> dict:
             score=0, approved=False,
             issues=["model_code_consistency: 没有 model_versions，无法审查"],
         )
-        return {"model_code_reports": [report],
-                "code_verify_iteration": state.code_verify_iteration + 1}
+        _write_gate_diagnostics(state, report, has_primary=False)
+        return _consistency_delta(state, report, has_primary=False)
 
     # 只看最新批次的 artifact（batch 递增机制保证 retry 不产生脏数据）
     max_batch = max((a.batch for a in state.code_artifacts), default=0)
@@ -309,23 +397,36 @@ def model_code_consistency_node(state: MathModelingState) -> dict:
     ]
 
     if not main_artifacts:
-        # 没有成功主方案代码 -> 直接未通过
+        # 没有成功主方案代码 -> 直接未通过。把最近一批失败原因带进报告，
+        # 让 insight/watch 一眼看到真正卡点，而不是只看到泛化的 0 分。
+        reasons: list[str] = []
+        seen: set[str] = set()
+        for artifact in state.latest_code_artifacts():
+            reason = (artifact.stderr or "").strip()
+            if not reason or reason in seen:
+                continue
+            seen.add(reason)
+            label = artifact.category or "figure"
+            reasons.append(f"[{label}] {reason[:240]}")
+            if len(reasons) >= 3:
+                break
+        issue = "model_code_consistency: 没有成功的主方案代码 artifact，无法审查一致性"
+        if reasons:
+            issue += "（最近失败：" + "；".join(reasons) + "）"
         report = ModelCodeConsistencyReport(
             score=0, approved=False,
             missing_variables=list(model.variables.keys()),
-            issues=["model_code_consistency: 没有成功的主方案代码 artifact，无法审查一致性"],
+            issues=[issue],
         )
-        return {"model_code_reports": [report],
-                "code_verify_iteration": state.code_verify_iteration + 1}
+        _write_gate_diagnostics(state, report, has_primary=False)
+        return _consistency_delta(state, report, has_primary=False)
 
     verified_report = _verified_green_contract_report(
         model, main_artifacts, baseline_artifacts,
     )
     if verified_report is not None:
-        return {
-            "model_code_reports": [verified_report],
-            "code_verify_iteration": state.code_verify_iteration + 1,
-        }
+        _write_gate_diagnostics(state, verified_report, has_primary=True)
+        return _consistency_delta(state, verified_report, has_primary=True)
 
     # 构造审查输入
     blueprint_json = blueprint.model_dump_json(indent=2) if blueprint else "（无 blueprint）"
@@ -356,7 +457,5 @@ def model_code_consistency_node(state: MathModelingState) -> dict:
         prompt, schema=ModelCodeConsistencyReport, system=SYSTEM,
         model=MODEL_ROUTING["model_critic"],
     )
-    return {
-        "model_code_reports": [out],
-        "code_verify_iteration": state.code_verify_iteration + 1,
-    }
+    _write_gate_diagnostics(state, out, has_primary=True)
+    return _consistency_delta(state, out, has_primary=True)

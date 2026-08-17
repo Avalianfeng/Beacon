@@ -133,6 +133,100 @@ def test_assemble_watch_view_paused_hint(tmp_path: Path):
     assert "--approve" in view.next_hint
 
 
+def test_assemble_watch_view_stopped_hint(tmp_path: Path):
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "supervisor.json").write_text(json.dumps({
+        "status": "stopped",
+        "supervisor_pid": None,
+        "attempt": 1,
+        "recoveries": 0,
+        "heartbeat_at": "2026-08-04T00:00:00+00:00",
+    }), encoding="utf-8")
+    with patch(
+        "math_agent.watch.inspect_checkpoint",
+        return_value=RunInspection(True, next_node="", final_status=""),
+    ), patch("math_agent.watch.load_verified_completion", return_value=None):
+        view = assemble_watch_view(out, "default")
+    assert view.status == "stopped"
+    assert "不要 recover" in view.next_hint
+    assert "supervise-resume" not in view.next_hint
+
+
+def test_watch_surfaces_gate_diagnostics_and_stall_warning(tmp_path: Path):
+    """supervisor.json["gate"] 里的轮次/上限/死循环标记要在观察面可见。"""
+    out = tmp_path / "run"
+    out.mkdir()
+    gate = {
+        "node": "model_code_consistency",
+        "code_verify_iteration": 12,
+        "max_code_verify_iterations": 3,
+        "max_code_no_primary_iterations": 6,
+        "min_model_code_score": 8,
+        "has_primary": False,
+        "approved": False,
+        "score": 0,
+        "latest_issue": "没有成功的主方案代码 artifact",
+        "consecutive_same_issue": 9,
+        "stall": True,
+        "over_limit": True,
+    }
+    (out / "supervisor.json").write_text(json.dumps({
+        "status": "running",
+        "supervisor_pid": None,
+        "attempt": 1,
+        "recoveries": 0,
+        "heartbeat_at": "2026-08-04T00:00:00+00:00",
+        "gate": gate,
+    }, ensure_ascii=False), encoding="utf-8")
+    with patch(
+        "math_agent.watch.inspect_checkpoint",
+        return_value=RunInspection(True, next_node="coder_generate"),
+    ), patch("math_agent.watch.load_verified_completion", return_value=None):
+        view = assemble_watch_view(out, "default")
+    assert view.gate == gate
+    text = format_watch_text(view, include_logs=False)
+    assert "一致性轮次 12 次" in text
+    assert "无主证据上限 6" in text
+    assert "已超限" in text
+    assert "疑似死循环" in text
+    assert "连续 9 次" in text
+
+
+def test_watch_falls_back_to_gate_diagnostics_sidecar(tmp_path: Path):
+    """supervisor.json 未合并时，watch 直接读 gate_diagnostics.json 兜底。"""
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "supervisor.json").write_text(json.dumps({
+        "status": "stopped",
+        "supervisor_pid": None,
+        "attempt": 1,
+        "recoveries": 0,
+        "heartbeat_at": "2026-08-04T00:00:00+00:00",
+    }), encoding="utf-8")
+    (out / "gate_diagnostics.json").write_text(json.dumps({
+        "code_verify_iteration": 3,
+        "code_verify_low_score_iteration": 2,
+        "max_code_verify_iterations": 3,
+        "max_code_no_primary_iterations": 6,
+        "has_primary": True,
+        "consecutive_same_issue": 3,
+        "stall": True,
+        "over_limit": False,
+    }, ensure_ascii=False), encoding="utf-8")
+    with patch(
+        "math_agent.watch.inspect_checkpoint",
+        return_value=RunInspection(True, next_node="", final_status=""),
+    ), patch("math_agent.watch.load_verified_completion", return_value=None):
+        view = assemble_watch_view(out, "default")
+    assert view.gate is not None
+    assert view.gate["code_verify_iteration"] == 3
+    text = format_watch_text(view, include_logs=False)
+    assert "一致性轮次 3 次" in text
+    assert "低分修复 2/3" in text
+    assert "疑似死循环" in text
+
+
 def test_assemble_watch_view_blocked_hint(tmp_path: Path):
     out = tmp_path / "run"
     out.mkdir()
@@ -266,6 +360,20 @@ def test_format_watch_text_mentions_quit():
     view = WatchView(out=Path("runs/x"), thread="default", status="running")
     text = format_watch_text(view)
     assert "does not kill task" in text or "quit" in text.lower()
+
+
+def test_format_watch_text_includes_insight_headline():
+    view = WatchView(
+        out=Path("runs/x"),
+        thread="default",
+        status="running",
+        insight_headline="coder_execute · 执行失败/回修",
+        insight_path="insights/coder_execute.md",
+    )
+    text = format_watch_text(view)
+    assert "coder_execute · 执行失败/回修" in text
+    assert "insights/coder_execute.md" in text
+    assert "ValueError" not in text
 
 
 def test_format_heartbeat_to_seconds_plus8():

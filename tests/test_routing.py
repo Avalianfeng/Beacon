@@ -133,7 +133,8 @@ def test_consistency_retries_when_approved_but_low_score():
 def test_consistency_stops_at_cap():
     from math_agent.config import MAX_CODE_VERIFY_ITERATIONS
     from math_agent.state import CodeArtifact
-    s = _state_with_consistency_report(approved=False, score=4, iteration=MAX_CODE_VERIFY_ITERATIONS)
+    s = _state_with_consistency_report(approved=False, score=4, iteration=1)
+    s.code_verify_low_score_iteration = MAX_CODE_VERIFY_ITERATIONS
     s.code_artifacts.append(CodeArtifact(
         purpose="primary", code="print(1)", success=True,
         evidence_role="primary", batch=1,
@@ -141,10 +142,35 @@ def test_consistency_stops_at_cap():
     assert after_model_code_consistency(s) == "stop"
 
 
-def test_consistency_never_advances_without_primary_even_at_cap():
-    from math_agent.config import MAX_CODE_VERIFY_ITERATIONS
+def test_consistency_low_score_budget_separate_from_no_primary_budget():
+    """有主证据时只消耗低分预算：即使总轮次已超无主证据上限，低分轮未达上限仍 retry。"""
+    from math_agent.config import MAX_CODE_NO_PRIMARY_ITERATIONS, MAX_CODE_VERIFY_ITERATIONS
+    from math_agent.state import CodeArtifact
     s = _state_with_consistency_report(
-        approved=False, score=0, iteration=MAX_CODE_VERIFY_ITERATIONS,
+        approved=True, score=5, iteration=MAX_CODE_NO_PRIMARY_ITERATIONS,
+    )
+    s.code_verify_low_score_iteration = MAX_CODE_VERIFY_ITERATIONS - 1
+    s.code_artifacts.append(CodeArtifact(
+        purpose="primary", code="print(1)", success=True,
+        evidence_role="primary", batch=1,
+    ))
+    assert after_model_code_consistency(s) == "retry_coder"
+
+
+def test_consistency_stops_without_primary_at_no_primary_cap():
+    """无主证据不再无限重试：达到专门上限后 stop（仍绝不 advance 进 sensitivity）。"""
+    from math_agent.config import MAX_CODE_NO_PRIMARY_ITERATIONS
+    s = _state_with_consistency_report(
+        approved=False, score=0, iteration=MAX_CODE_NO_PRIMARY_ITERATIONS,
+    )
+    assert after_model_code_consistency(s) == "stop"
+
+
+def test_consistency_retries_without_primary_below_cap():
+    """无主证据在专门上限之内仍继续 retry_coder。"""
+    from math_agent.config import MAX_CODE_NO_PRIMARY_ITERATIONS
+    s = _state_with_consistency_report(
+        approved=False, score=0, iteration=MAX_CODE_NO_PRIMARY_ITERATIONS - 1,
     )
     assert after_model_code_consistency(s) == "retry_coder"
 

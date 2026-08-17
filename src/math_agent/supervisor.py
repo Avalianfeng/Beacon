@@ -64,7 +64,7 @@ class SupervisorPolicy:
 
 @dataclass(frozen=True)
 class SupervisorResult:
-    status: Literal["completed", "degraded", "paused", "rejected", "blocked"]
+    status: Literal["completed", "degraded", "paused", "rejected", "blocked", "stopped"]
     attempts: int = 0
     recoveries: int = 0
     last_node: str = ""
@@ -76,8 +76,9 @@ def _terminal(inspection: RunInspection, *, auto_approve: bool = False) -> str:
     if inspection.next_node == "human_review" and not auto_approve:
         return "paused"
     if inspection.checkpoint_exists and not inspection.next_node:
-        if inspection.final_status in {"completed", "degraded", "rejected"}:
+        if inspection.final_status in {"completed", "degraded", "rejected", "stopped"}:
             return inspection.final_status
+        return "stopped"
     return ""
 
 
@@ -161,9 +162,24 @@ def supervise_loop(
 def _atomic_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
     try:
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, path)
+        tmp.write_text(text, encoding="utf-8")
+        last_error: OSError | None = None
+        for attempt in range(8):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError as exc:
+                # Windows：前端/观察面正在读 supervisor.json 时 replace 需要 DELETE 共享。
+                last_error = exc
+                time.sleep(0.05 * (attempt + 1))
+        try:
+            path.write_text(text, encoding="utf-8")
+        except OSError:
+            if last_error is not None:
+                raise last_error
+            raise
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -315,6 +331,24 @@ def inspect_checkpoint(out: str | Path, thread: str) -> RunInspection:
     return RunInspection(True, next_node=next_node, final_status=final_status)
 
 
+def _merge_gate_diagnostics(state: dict, out: Path) -> None:
+    """把 pipeline 写入的 gate_diagnostics.json 合并进 supervisor.json 的 gate 字段。
+
+    节点与 supervisor 是不同进程，直接写 supervisor.json 会与心跳竞争；因此节点写
+    独立侧车文件，心跳时合并。观察面（watch / GUI / status）读 supervisor.json["gate"]。
+    """
+    path = out / "gate_diagnostics.json"
+    try:
+        if path.is_file():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                state["gate"] = payload
+                return
+        state.pop("gate", None)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        state.pop("gate", None)
+
+
 def _process_worker(
     *,
     mode: WorkerMode,
@@ -366,6 +400,7 @@ def _process_worker(
         while proc.poll() is None:
             state["worker_pid"] = proc.pid
             state["heartbeat_at"] = _now()
+            _merge_gate_diagnostics(state, Path(out))
             _atomic_json(out / "supervisor.json", state)
             try:
                 proc.wait(timeout=heartbeat_seconds)

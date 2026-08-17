@@ -34,7 +34,7 @@ _PANEL_VIEWS: tuple[PanelView, ...] = ("overview", "history", "log")
 _CST = timezone(timedelta(hours=8))
 
 _TERMINAL_EXIT_STATUSES = frozenset({
-    "completed", "degraded", "rejected", "blocked",
+    "completed", "degraded", "rejected", "blocked", "stopped",
 })
 
 
@@ -103,6 +103,10 @@ class WatchView:
     completion_tokens: int = 0
     progress_attempt: int | None = None
     progress_epoch: int | None = None
+    insight_headline: str = ""
+    insight_path: str = ""
+    # model_code_consistency 门禁诊断（来自 supervisor.json["gate"] 或 gate_diagnostics.json）
+    gate: dict | None = None
 
 
 def load_recover_marker(out: str | Path) -> tuple[str, int]:
@@ -322,6 +326,11 @@ def build_next_hint(view: WatchView) -> str:
             f"         拒绝：uv run math-agent supervise-resume "
             f"--out {out} --thread {thread} --no-approve"
         )
+    if status == "stopped":
+        return (
+            f"流程在质量门禁或图终点结束，未进入人审。不要 recover；"
+            f"查看 insight 后新开 run。详见 {out / 'insights'}"
+        )
     if status == "blocked":
         return _blocked_hint(view)
     if status == "stale":
@@ -391,6 +400,11 @@ def assemble_watch_view(
         view.stale_reason = str(supervisor.get("stale_reason", "") or "")
         if supervisor.get("effective_status"):
             view.effective_status = str(supervisor["effective_status"])
+        view.gate = supervisor.get("gate") if isinstance(supervisor.get("gate"), dict) else None
+
+    # supervisor 心跳合并前（或非监督模式）直接读侧车文件兜底
+    if not view.gate:
+        view.gate = _load_json(out / "gate_diagnostics.json")
 
     if (
         supervisor
@@ -436,6 +450,15 @@ def assemble_watch_view(
     if view.failure is None:
         view.failure = _latest_unresolved_error(events)
     _suppress_stale_failure_alerts(view)
+
+    try:
+        from math_agent.insight import read_latest_meta
+        meta = read_latest_meta(out)
+        if meta:
+            view.insight_headline = str(meta.get("headline") or "")
+            view.insight_path = str(meta.get("path") or "")
+    except Exception:
+        pass
 
     view.next_hint = build_next_hint(view)
     return view
@@ -489,6 +512,27 @@ def _suppress_stale_failure_alerts(view: WatchView) -> None:
         view.recover_marker_count = 0
 
 
+def _format_gate(view: WatchView) -> tuple[str, str]:
+    """从 gate 诊断生成 (计数行, 警告行或空串)。"""
+    gate = view.gate or {}
+    iteration = gate.get("code_verify_iteration")
+    if iteration is None:
+        return "", ""
+    if gate.get("has_primary"):
+        low = gate.get("code_verify_low_score_iteration")
+        cap = gate.get("max_code_verify_iterations")
+        counters = f"一致性轮次 {iteration} 次（低分修复 {low}/{cap}）"
+    else:
+        cap = gate.get("max_code_no_primary_iterations")
+        counters = f"一致性轮次 {iteration} 次（无主证据上限 {cap}）"
+    if gate.get("over_limit"):
+        counters += " · 已超限"
+    warn = ""
+    if gate.get("stall"):
+        warn = f"⚠ 疑似死循环：同一失败原因连续 {gate.get('consecutive_same_issue')} 次"
+    return counters, warn
+
+
 def format_watch_text(
     view: WatchView,
     *,
@@ -525,6 +569,12 @@ def format_watch_text(
             f"recover_fuse: {view.recover_marker_node or '?'} × "
             f"{view.recover_marker_count}"
         )
+    if view.insight_headline:
+        where = view.insight_path or "insights/latest.md"
+        lines.append(f"insight: {view.insight_headline}  ({where})")
+    counters, warn = _format_gate(view)
+    if counters:
+        lines.append(f"gate: {counters}" + (f"  {warn}" if warn else ""))
     if view.next_hint:
         lines.append(f"下一步: {view.next_hint}")
     lines.append("f switch view  q / Ctrl+C quit (does not kill task)")
@@ -591,6 +641,19 @@ def _status_block(view: WatchView) -> Text:
             f"{view.recover_marker_count}\n",
             style="yellow",
         )
+    if view.insight_headline:
+        body.append("insight: ", style="bold")
+        body.append(view.insight_headline)
+        if view.insight_path:
+            body.append(f"  ({view.insight_path})", style="dim")
+        body.append("\n")
+    counters, warn = _format_gate(view)
+    if counters:
+        over = bool(view.gate and view.gate.get("over_limit"))
+        body.append(f"gate: {counters}", style="yellow" if over else "cyan")
+        if warn:
+            body.append(f"\n{warn}", style="yellow")
+        body.append("\n")
     return Text.assemble(header, "\n\n", body)
 
 

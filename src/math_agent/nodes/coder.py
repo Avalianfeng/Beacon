@@ -8,9 +8,21 @@ import tempfile
 from pydantic import BaseModel
 
 from math_agent.llm import complete
-from math_agent.config import MAX_CODE_RETRIES, MAX_CODE_VERIFY_ITERATIONS, MODEL_ROUTING
+from math_agent.config import (
+    CODER_MODEL,
+    LLM_FALLBACK_MODELS,
+    MAX_CODE_RETRIES,
+    MAX_CODE_VERIFY_ITERATIONS,
+    MIN_MODEL_CODE_SCORE,
+    MODEL_ROUTING,
+    STRONG_MODEL,
+)
 from math_agent.prompts.coder import SYSTEM, build_prompt  # noqa: F401
-from math_agent.prompts.coder_figure_one import build_prompt_figure_one
+from math_agent.prompts.coder_figure_one import (
+    _GREEN_METRIC_NAMES,
+    build_prompt_figure_one,
+    metric_vars,
+)
 from math_agent.prompts.coder_baseline import BASELINE_SPECS, build_baseline_prompt
 from math_agent.state import MathModelingState, CodeArtifact
 from math_agent.tools.runner import (
@@ -26,12 +38,22 @@ class CoderDraft(BaseModel):
     code: str
 
 
+_GREEN_LOGISTICS_FILES = frozenset({
+    "订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx",
+})
+
+
 def _baseline_items() -> list[dict]:
     return [
         {"kind": "baseline", "id": f"baseline:{category}", "name": name,
          "category": category, "instruction": instruction, "attempt": 0}
         for name, category, instruction in BASELINE_SPECS
     ]
+
+
+def _has_green_logistics_attachments(state: MathModelingState) -> bool:
+    filenames = {info.filename for info in state.data_files}
+    return _GREEN_LOGISTICS_FILES <= filenames
 
 
 def _has_primary_for_current_batch(
@@ -65,6 +87,8 @@ def _current_primary_code(state: MathModelingState) -> str:
 def _missing_baseline_items(
     state: MathModelingState, artifacts: list[CodeArtifact]
 ) -> list[dict]:
+    if not _has_green_logistics_attachments(state):
+        return []
     candidates = [
         *artifacts,
         *(a for a in state.code_artifacts if a.batch == state.coder_current_batch),
@@ -89,9 +113,17 @@ def _missing_baseline_items(
     ]
 
 
-def _generic_template_code(purpose: str, data_dir: str, index: int) -> str:
+def _generic_template_code(purpose: str, data_dir: str, index: int, blueprint=None) -> str:
     safe_title = purpose.replace("\\", "/").replace("\n", " ")[:80]
     safe_file = f"figure_{index}.png"
+    if blueprint is not None and getattr(blueprint, "metrics", None):
+        fields = " ".join(f"{name}={{{var}}}" for name, var in metric_vars(blueprint.metrics))
+        result_line = f'print(f"RESULT: baseline=ours {fields}")'
+    else:
+        result_line = (
+            'print(f"RESULT: baseline=ours metric_0={metric_0:.4f} '
+            'metric_1={metric_1:.4f}")'
+        )
     return f'''import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -112,8 +144,9 @@ fig.tight_layout()
 out = Path({safe_file!r})
 fig.savefig(out, dpi=220, bbox_inches="tight")
 plt.close(fig)
-metric = sum(y)
-print(f"RESULT: baseline=ours total_cost={{metric:.4f}} service_rate=0.95")
+metric_0 = sum(y)
+metric_1 = 0.95
+{result_line}
 print(f"saved={{out}} purpose={safe_title!r} data_dir={data_dir!r}")
 '''
 
@@ -1757,7 +1790,8 @@ print("SCENARIO_BEGIN: q2_green_policy")
     return wrapper + core + '\nprint("SCENARIO_END: q2_green_policy")\n'
 
 
-def _template_figure_draft(item: dict, data_dir: str, data_files: list | None) -> CoderDraft | None:
+def _template_figure_draft(item: dict, data_dir: str, data_files: list | None,
+                           blueprint=None) -> CoderDraft | None:
     index = int(item.get("index", 0))
     purpose = str(item.get("purpose", f"figure-{index}"))
     filenames = {
@@ -1767,7 +1801,10 @@ def _template_figure_draft(item: dict, data_dir: str, data_files: list | None) -
     required = {"订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx"}
     if index == 0 and required <= filenames:
         return CoderDraft(purpose=purpose, code=_green_logistics_template_code(data_dir or ""))
-    return CoderDraft(purpose=purpose, code=_generic_template_code(purpose, data_dir or "", index))
+    return CoderDraft(
+        purpose=purpose,
+        code=_generic_template_code(purpose, data_dir or "", index, blueprint=blueprint),
+    )
 
 
 def _safe_baseline_draft(item: dict, main_code: str) -> CoderDraft | None:
@@ -2144,6 +2181,14 @@ def _green_depth_evidence_error(stdout: str) -> str:
     return ""
 
 
+def _leaked_green_metrics(parsed: dict) -> list[str]:
+    leaked: set[str] = set()
+    for metrics in (parsed or {}).values():
+        if isinstance(metrics, dict):
+            leaked.update(name for name in _GREEN_METRIC_NAMES if name in metrics)
+    return sorted(leaked)
+
+
 def _validated_execution(
     state: MathModelingState,
     item: dict,
@@ -2156,6 +2201,17 @@ def _validated_execution(
     if not result.success:
         return False, result.stderr or "Python 子进程执行失败", result.error_kind or "runtime"
     expected = item.get("category") if item.get("kind") == "baseline" else None
+    # 主方案图要求 RESULT 行输出足够多指标，防止 1--2 个指标敷衍过关；但下限不能
+    # 超过 blueprint 声明的指标数——coder prompt 严格要求 RESULT 指标名与 Blueprint
+    # “一字不差”，若 blueprint 只有 3 个指标而门禁要 4 个，忠实代码永远无法通过，
+    # 会形成无主证据的无限重试死锁（曾导致 30 轮、70 万+ token 空转）。
+    blueprint = state.problem_blueprint
+    blueprint_metric_count = (
+        len(blueprint.metrics) if blueprint is not None and blueprint.metrics else 0
+    )
+    min_metrics = (
+        4 if blueprint_metric_count == 0 else min(4, blueprint_metric_count)
+    )
     valid, reason, parsed = validate_numeric_results(
         result.stdout,
         stderr=result.stderr,
@@ -2163,15 +2219,21 @@ def _validated_execution(
         expected_identifier=expected,
         max_entity_count=infer_entity_upper_bound(state.data_files),
         min_metrics_per_result=(
-            4 if item.get("kind") == "figure" and require_data_usage else 0
+            min_metrics if item.get("kind") == "figure" and require_data_usage else 0
         ),
     )
     if not valid:
         return False, reason, "output_validation"
     filenames = {info.filename for info in state.data_files}
-    green_schema = {
-        "订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx",
-    } <= filenames
+    green_schema = _GREEN_LOGISTICS_FILES <= filenames
+    if not green_schema:
+        leaked = _leaked_green_metrics(parsed)
+        if leaked:
+            return (
+                False,
+                "非物流题禁止输出物流指标：" + ", ".join(leaked),
+                "output_validation",
+            )
     if green_schema and item.get("kind") == "figure" and require_data_usage:
         metrics = parsed.get("ours", {})
         required_metrics = {
@@ -2297,7 +2359,10 @@ def _consistency_repair_context(
     if evidence_target != "primary" or not state.model_code_reports:
         return "", ""
     report = state.model_code_reports[-1]
-    if report.approved and report.score >= 7:
+    # 反馈阈值必须与门禁放行阈值对齐：只要门禁会拒（分数低于 MIN_MODEL_CODE_SCORE），
+    # 就把审查意见和上一版代码喂回 coder 定向修订。若用固定 7 分会形成
+    # “不放行、也不给修复意见”的死区（r3：7/10 的 7 条意见全部丢失、盲重试）。
+    if report.approved and report.score >= MIN_MODEL_CODE_SCORE:
         return "", ""
     primary = next(
         (
@@ -2357,7 +2422,10 @@ def _local_repair_draft(
         filenames = {info.filename for info in state.data_files}
         required = {"订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx"}
         if required <= filenames and _matches_green_logistics_contract(state):
-            return _template_figure_draft(item, state.data_dir, state.data_files)
+            return _template_figure_draft(
+                item, state.data_dir, state.data_files,
+                blueprint=state.problem_blueprint,
+            )
     if "SERVICE_TIME" in error:
         match = re.search(
             r"(?:服务时间为\s*|service_time_contract\s+expected(?:_minutes)?=)"
@@ -2620,6 +2688,21 @@ def coder_prepare_node(state: MathModelingState) -> dict:
     }
 
 
+# 首次 coder_generate 真实运行已用到 8810 completion tokens；execute 失败后的
+# 定向修复还要带回 previous_code。6000 会让 DeepSeek 返回空 content。
+_CODER_GENERATE_MAX_TOKENS = 12000
+
+
+def _supporting_figure_model() -> str:
+    """补充图改用强模型；若 STRONG 与 coder 相同，则改走 failover 里的下一档。"""
+    if STRONG_MODEL != CODER_MODEL:
+        return STRONG_MODEL
+    for candidate in LLM_FALLBACK_MODELS:
+        if candidate != CODER_MODEL:
+            return candidate
+    return STRONG_MODEL
+
+
 def coder_generate_node(state: MathModelingState) -> dict:
     """Generate code for the current queue item, then hand off to execute."""
     queue = list(state.coder_work_queue)
@@ -2632,9 +2715,7 @@ def coder_generate_node(state: MathModelingState) -> dict:
     model = state.latest_model()
     if item["kind"] == "figure":
         filenames = {info.filename for info in state.data_files}
-        green_schema = {
-            "订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx",
-        } <= filenames
+        green_schema = _GREEN_LOGISTICS_FILES <= filenames
         green_contract = green_schema and _matches_green_logistics_contract(state)
         deterministic_green_primary = (
             evidence_target == "primary"
@@ -2645,7 +2726,10 @@ def coder_generate_node(state: MathModelingState) -> dict:
         # 确定性草稿，随后仍由 coder_execute_node 执行全部验证；避免让 LLM
         # 重写一万余字符代码时反复产生空 JSON 或截断 JSON。
         if _use_deterministic_coder() or deterministic_green_primary:
-            draft = _template_figure_draft(item, state.data_dir, state.data_files)
+            draft = _template_figure_draft(
+                item, state.data_dir, state.data_files,
+                blueprint=state.problem_blueprint,
+            )
         else:
             primary = next(
                 (
@@ -2654,12 +2738,19 @@ def coder_generate_node(state: MathModelingState) -> dict:
                 ),
                 None,
             )
-            previous_code = _previous_figure_code(state, item)
-            consistency_code, consistency_feedback = _consistency_repair_context(
-                state, evidence_target=evidence_target,
+            is_supporting = evidence_target == "supporting"
+            previous_code = (
+                str(item.get("prev_code") or "")
+                if is_supporting
+                else _previous_figure_code(state, item)
             )
-            if not previous_code and consistency_code:
-                previous_code = consistency_code
+            consistency_code, consistency_feedback = ("", "")
+            if not is_supporting:
+                consistency_code, consistency_feedback = _consistency_repair_context(
+                    state, evidence_target=evidence_target,
+                )
+                if not previous_code and consistency_code:
+                    previous_code = consistency_code
             feedback = item.get("prev_err") or consistency_feedback or None
             failure_kind = item.get("prev_kind", "") or (
                 "consistency" if consistency_feedback else ""
@@ -2675,11 +2766,16 @@ def coder_generate_node(state: MathModelingState) -> dict:
                 and "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in previous_code
                 and green_contract
             )
-            draft = (
-                _template_figure_draft(item, state.data_dir, state.data_files)
-                if fallback_after_verified_cycle or refresh_safe_solver
-                else _local_repair_draft(item, previous_code, state)
-            )
+            draft = None
+            if not is_supporting:
+                draft = (
+                    _template_figure_draft(
+                        item, state.data_dir, state.data_files,
+                        blueprint=state.problem_blueprint,
+                    )
+                    if fallback_after_verified_cycle or refresh_safe_solver
+                    else _local_repair_draft(item, previous_code, state)
+                )
             if draft is None:
                 draft = complete(
                     build_prompt_figure_one(
@@ -2689,8 +2785,10 @@ def coder_generate_node(state: MathModelingState) -> dict:
                         canonical_evidence=primary.stdout if primary else "",
                         previous_code=previous_code,
                     ),
-                    schema=CoderDraft, system=SYSTEM, model=MODEL_ROUTING["coder"],
-                    profile="code", temperature=0.1, max_tokens=6000,
+                    schema=CoderDraft, system=SYSTEM,
+                    model=_supporting_figure_model() if is_supporting else MODEL_ROUTING["coder"],
+                    profile="code", temperature=0.1,
+                    max_tokens=_CODER_GENERATE_MAX_TOKENS,
                 )
     else:
         main_code = _current_primary_code(state)
@@ -2709,7 +2807,8 @@ def coder_generate_node(state: MathModelingState) -> dict:
                                           item.get("prev_kind", ""),
                                           item.get("prev_code", "")),
                     schema=CoderDraft, system=SYSTEM, model=MODEL_ROUTING["coder"],
-                    profile="code", temperature=0.1, max_tokens=6000,
+                    profile="code", temperature=0.1,
+                    max_tokens=_CODER_GENERATE_MAX_TOKENS,
                 )
         except Exception as exc:
             fallback = _safe_baseline_draft(item, main_code)

@@ -1,4 +1,6 @@
 """ModelCodeConsistency 节点测试。"""
+import json
+
 from math_agent.state import (
     MathModelingState, ModelVersion, CodeArtifact, ProblemBlueprint,
     ModelCodeConsistencyReport, MetricSpec,
@@ -53,6 +55,71 @@ def test_consistency_fails_without_successful_main_code(mocker):
     assert "没有成功的主方案代码" in report.issues[0]
     # missing_variables 应包含模型变量
     assert "x" in report.missing_variables
+
+
+def test_consistency_no_main_code_report_carries_concrete_failure_reason(mocker):
+    """0 分报告必须带上最近一批失败原因，供 insight/watch 直接定位卡点。"""
+    spy = mocker.patch("math_agent.nodes.model_code_consistency.complete")
+    s = _state_with_model_and_code(main_success=False)
+    s.code_artifacts[0].stderr = "RESULT ours 仅含 3 个指标，至少需要 4 个"
+    delta = model_code_consistency_node(s)
+    spy.assert_not_called()
+    report = delta["model_code_reports"][0]
+    assert "RESULT ours 仅含 3 个指标" in report.issues[0]
+    assert "[figure]" in report.issues[0]
+
+
+def test_consistency_writes_gate_diagnostics_sidecar(mocker, tmp_path):
+    """通过门禁时，run 目录应出现带轮次/上限/主证据标记的诊断侧车文件。"""
+    mocker.patch("math_agent.nodes.model_code_consistency.complete",
+                 return_value=ModelCodeConsistencyReport(score=9, approved=True))
+    s = _state_with_model_and_code()
+    s.output_dir = str(tmp_path)
+    delta = model_code_consistency_node(s)
+    payload = json.loads((tmp_path / "gate_diagnostics.json").read_text(encoding="utf-8"))
+    assert payload["code_verify_iteration"] == delta["code_verify_iteration"]
+    assert payload["has_primary"] is True
+    assert payload["approved"] is True
+    assert payload["stall"] is False
+    assert payload["max_code_verify_iterations"] >= 1
+    # 通过门禁的轮次不消耗低分修复预算
+    assert payload["code_verify_low_score_iteration"] == 0
+
+
+def test_consistency_increments_low_score_budget_when_primary_but_low_score(mocker, tmp_path):
+    """有主证据但分数低于门禁时，只递增低分修复预算（与无主证据预算分开）。"""
+    mocker.patch("math_agent.nodes.model_code_consistency.complete",
+                 return_value=ModelCodeConsistencyReport(score=7, approved=True))
+    s = _state_with_model_and_code()
+    s.output_dir = str(tmp_path)
+    s.code_verify_iteration = 5  # 模拟之前已消耗 5 轮无主证据预算
+    delta = model_code_consistency_node(s)
+    assert delta["code_verify_iteration"] == 6
+    assert delta["code_verify_low_score_iteration"] == 1
+    payload = json.loads((tmp_path / "gate_diagnostics.json").read_text(encoding="utf-8"))
+    assert payload["code_verify_low_score_iteration"] == 1
+    assert payload["has_primary"] is True
+    assert payload["over_limit"] is False  # 低分 1 < 3，尚未超限
+
+
+def test_consistency_sidecar_tracks_consecutive_same_failure(mocker, tmp_path):
+    """同一失败原因连续出现时，侧车文件应累计计数并触发 stall 标记。
+
+    真实图中 model_code_reports 带 add reducer（追加语义），这里用列表拼接模拟。
+    """
+    spy = mocker.patch("math_agent.nodes.model_code_consistency.complete")
+    s = _state_with_model_and_code(main_success=False)
+    s.code_artifacts[0].stderr = "RESULT ours 仅含 3 个指标，至少需要 4 个"
+    s.output_dir = str(tmp_path)
+    for expected in (1, 2, 3):
+        delta = model_code_consistency_node(s)
+        s.model_code_reports = list(s.model_code_reports) + delta["model_code_reports"]
+        s.code_verify_iteration = delta["code_verify_iteration"]
+        payload = json.loads((tmp_path / "gate_diagnostics.json").read_text(encoding="utf-8"))
+        assert payload["consecutive_same_issue"] == expected
+        assert payload["has_primary"] is False
+        assert payload["stall"] == (expected >= 3)
+    spy.assert_not_called()
 
 
 def test_consistency_approves_when_aligned(mocker):

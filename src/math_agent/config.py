@@ -52,6 +52,12 @@ MAX_LLM_RETRIES = 2            # 单次 LLM 调用的结构化解析重试
 MAX_CODE_RETRIES = int(os.getenv("MATH_AGENT_MAX_CODE_RETRIES", "2"))
 MAX_BLUEPRINT_ITERATIONS = 2   # blueprint critic 允许的评估次数（首次 + 一次 retry）
 MAX_CODE_VERIFY_ITERATIONS = int(os.getenv("MATH_AGENT_MAX_CODE_VERIFY_ITERATIONS", "3"))
+# 无主证据分支的专门上限：主方案代码始终未通过执行/输出门禁时，最多重试
+# MAX_CODE_NO_PRIMARY_ITERATIONS 批后整条流水线停止，等待人工先检查失败原因
+# （同一失败原因连续出现时通常是门禁与 prompt 矛盾等系统性问题，无限重试只会空转）。
+MAX_CODE_NO_PRIMARY_ITERATIONS = int(
+    os.getenv("MATH_AGENT_MAX_CODE_NO_PRIMARY_ITERATIONS", "6")
+)
 
 
 def _quality_score(name: str, default: str) -> float:

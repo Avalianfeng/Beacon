@@ -5,6 +5,7 @@
 from math_agent.config import (
     MAX_MODEL_ITERATIONS, MAX_WRITER_ITERATIONS,
     MAX_BLUEPRINT_ITERATIONS, MAX_CODE_VERIFY_ITERATIONS,
+    MAX_CODE_NO_PRIMARY_ITERATIONS,
     MIN_MODEL_CRITIC_SCORE, MIN_MODEL_CODE_SCORE, MIN_PAPER_CRITIC_SCORE,
 )
 from math_agent.state import MathModelingState
@@ -96,9 +97,12 @@ def after_figure_work(state: MathModelingState) -> str:
 def after_model_code_consistency(state: MathModelingState) -> str:
     """model_code_consistency 审查完后的去向。
 
-    code_verify_iteration 语义：model_code_consistency_node 返回时已递增。
+    无主证据与“有主证据但低分”使用两个独立预算：
+    - 无主证据轮次计 code_verify_iteration，上限 MAX_CODE_NO_PRIMARY_ITERATIONS；
+    - 有主证据低分轮次计 code_verify_low_score_iteration，上限 MAX_CODE_VERIFY_ITERATIONS。
+    分开计避免无主证据轮次提前耗尽低分修复预算（r3 曾因此拿到证据后立即停机）。
     approved 且达到配置门槛 -> advance；未通过则 retry_coder；
-    已有主证据但重试用尽仍未达标时停止，禁止带病进入论文阶段。
+    任一预算耗尽仍不达标时停止，禁止带病进入论文阶段。
     """
     if not state.model_code_reports:
         return "retry_coder"
@@ -113,9 +117,13 @@ def after_model_code_consistency(state: MathModelingState) -> str:
     )
     # 没有主证据不是“低分但可继续”的软问题，任何重试上限都不能把它放行到
     # sensitivity/writer。下一 coder 批次可使用确定性安全求解器或明确失败。
+    # 但也不再无限重试：连续无主证据达到专门上限后停止整条流水线，由人工先检查
+    # 失败原因（通常意味着门禁与 prompt 的系统性矛盾，重试本身不会解决）。
     if not has_primary:
+        if state.code_verify_iteration >= MAX_CODE_NO_PRIMARY_ITERATIONS:
+            return "stop"
         return "retry_coder"
-    if state.code_verify_iteration >= MAX_CODE_VERIFY_ITERATIONS:
+    if state.code_verify_low_score_iteration >= MAX_CODE_VERIFY_ITERATIONS:
         return "stop"
     return "retry_coder"
 
