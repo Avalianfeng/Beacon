@@ -1,0 +1,87 @@
+# 注入体系补全计划：Modeling Brief 八字段 × 节点注入矩阵
+
+- 建立日期：2026-08-19（对应设计债清单 B06，下一步主要路线）
+- 关联：[验证与下一步](2026-08-19-brief-verification-next.md)、[实施计划书](2026-08-19-modeling-brief-plan.md)（第九节原则、第十节产出路径）、[设计债清单](2026-08-19-design-debt-checklist.md)
+- 定位：**计划文档**。补齐「八字段 × 注入点」的契合度缺口。**执行顺序：先真跑抽样判定 → 按缺口优先级补全 → 再真跑对比**，不在没有 runs 证据前盲改（r11 教训）。
+- 原则边界（不违背）：方向级在源头、实现级在节点（9.3）；不加方向再评估节点（设计红线）；不注入参考答案数值（原则 A）；无 brief 行为逐字节不变；容量控制每条 ≤200 字符、整块 ≤1500 字符级。
+
+---
+
+## 一、现状矩阵（已代码核实，2026-08-19）
+
+| 字段 | analyst | blueprint_critic | modeler | model_critic | coder | writer |
+|---|---|---|---|---|---|---|
+| 逐题方向 | ✅ 全量 | ✅ 全量 | ✅ 专门块 | — | — | — |
+| 公式注意 | ✅ 全量 | ✅ 全量 | ✅ 专门块 | ✅ 专门块 | ✅ 专门块 | — |
+| 讨论点 | ✅ 全量 | ✅ 全量 | — | — | — | ✅ 分组过滤 |
+| 红线 | ✅ 全量 | ✅ 全量 | — | ✅ 专门块 | ✅ 专门块 | — |
+| 图表规划 | ✅ 全量 | ✅ 全量 | — | — | — | — |
+| 评分要点 | ✅ 全量 | ✅ 全量 | — | — | — | — |
+| 数据注意 | ✅ 全量 | ✅ 全量 | — | — | — | — |
+| 文献方向 | ✅ 全量 | ✅ 全量 | — | — | — | — |
+
+「✅ 全量」= `render_full_brief` 在 analyst / blueprint_critic 的 prompt 中完整出现一次；
+「✅ 专门块」= 该节点有专属渲染器（modeler/coder/critic/writer）。
+
+## 二、缺口分析（为什么这是问题）
+
+1. **转述依赖（信息衰减主因）**：图表规划 / 评分要点 / 数据注意 / 文献方向四个字段
+   **没有任何直接注入点**，只在 analyst 与 blueprint_critic 的全量块出现一次；此后
+   modeler → coder → writer 各环节只能靠 **analyst 把内容转述进 ProblemBlueprint** 才能
+   间接看到。`brief_coverage` 门禁只保证「逐条回应」，**不保证内容被带下来**——
+   39 条全量转述不现实，衰减是必然。
+2. **节点级盲区**：figure 环节看不到 figure_plan（图要求和标注要求）；evaluation /
+   paper_critic 看不到 scoring_notes（评分要点和容差）；modeler / coder 看不到 data_notes
+   （数据使用注意，如均值化、口径），只有公式注意块。
+3. **拿分相关性**：MCM-51 场景里，评分要点 / 数据注意 / 图表规划恰恰是 40 分空白项
+   （1.2/3.1/3.2/4）的拿分关键——契合度缺口直接对应得分风险。
+4. **容量约束**：整块 ≤1500 字符级、每条 ≤200 字符；补全不能无限堆叠，需要压缩策略
+   （每条截断/合并/按节点裁剪子集）。
+
+## 三、补全方案（分阶段）
+
+### 阶段 1：纯 prompt 接线（低风险，先做）
+给缺失环节补「专门块」渲染器 + 接线，不动节点逻辑语义：
+
+| 新增/扩展 | 注入点 | 内容 | 渲染器 |
+|---|---|---|---|
+| figure 环节 | figure 生成 prompt（coder_figure_one / figure_pipeline） | figure_plan 子集（按 question_id 过滤） | 新增 `render_figure_brief` |
+| evaluation / paper_critic | 对应评审 prompt | scoring_notes 子集（按 question_id 过滤） | 新增 `render_scoring_brief` |
+| modeler / coder | 既有专门块扩展 | data_notes 并入（每条 ≤200 字符，截断） | 扩展 `render_modeler_brief` / `render_coder_brief` 或新增块 |
+| writer references 分组 | writer_section references | reference_direction | 扩展 `render_discussions_for_group` 或独立块 |
+
+全部按「有 brief 含块 / 无 brief 不含块」参数化测试（沿用 test_brief.py 模式）。
+
+### 阶段 2：结构化传递（降低转述衰减，依阶段 1 效果决定）
+- 方案 A：ProblemBlueprint 增加显式转述字段（如 `brief_directions: list[str]`），
+  analyst 输出结构化摘要而非自由转述；state schema 向后兼容（默认空列表，旧 checkpoint 为 None）。
+- 方案 B：modeler / coder prompt 直接注入四字段压缩版（容量内合并），跳过转述。
+- 取舍：方案 A 保证可审计、可门禁化（可对摘要内容做关键词校验）；方案 B 实现更小但
+  依赖 prompt 长度预算。倾向方案 A，需评估 schema 变更的兼容测试成本。
+
+### 阶段 3：验证与对比
+- 单测：每个新增注入点参数化（有 brief 含 / 无 brief 不含）；容量上限断言（整块字符数）。
+- 真跑抽样对比：`scripts/sample_brief_direction.py` 在补全前后各跑一次（同一 brief、
+  同一题），对比 1.2 / 2.2 / 3.1 / 4 方向在蓝图、代码、论文中的落地率；
+  以及 required_discussions 是否真的出现在论文对应章节。
+- 验收口径沿用验证文档 4.3 三档：管道成立 → 防忽略成立 → 源头杜绝方向错成立
+  （最后一档要求方向在代码与论文中可指认）。
+
+## 四、执行顺序与验收
+
+1. **先真跑 `51mcm-a-brief-v1`**（基线）：拿到管道证据 + coverage 完整性 + 方向抽样，
+   用抽样结果确认哪些缺口实际造成衰减（而不是假设衰减）；
+2. 阶段 1 落地 + 单测（子集全绿，12 个既有失败另案不动）；
+3. 真跑对比（可选，看阶段 1 效果）；
+4. 阶段 2 结构化传递（依阶段 1 效果决定是否值得 schema 变更）。
+
+验收：方向落地可在代码 / 论文中指认；无 brief 行为不变；相关子集测试全绿；
+新增注入点零回归。
+
+## 五、风险与不做的事
+
+- **风险**：prompt 变长稀释注意力（容量控制缓解）；analyst 转述能力有限（阶段 2 缓解）；
+  state schema 变更的兼容面（方案 A 需兼容测试）；与本次参考答案无关——注入的是
+  方向级内容，不是数值锚点（原则 A 不破）。
+- **不做**：不加方向再评估节点（设计红线）；不把参考答案数值注入（原则 A）；
+  不重写架构；不修 12 个既有失败（另案）。

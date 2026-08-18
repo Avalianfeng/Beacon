@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "problem_id": "mcm51-a",
+  "created_at": "2026-08-18T18:03:00+08:00",
+  "source": [
+    "official_standard",
+    "human"
+  ],
+  "per_question_direction": [
+    {
+      "id": "1.2-direction",
+      "question_id": "1.2",
+      "direction": "突变点识别：分段线性回归+网格搜索 T_c；对 T≥T_c 稳定段建立 P=aT+b 回归，给出区间推荐值与敏感性",
+      "forbidden": "禁止用工况A力学 min 模型直接求临界值；不得将三约束力学框架套用于 1.2"
+    },
+    {
+      "id": "2.1-direction",
+      "question_id": "2.1",
+      "direction": "P_max=min(P_yield,F_bond) 两约束；压陷 δ 独立作钢带判据，不参与 P_max 的 min",
+      "forbidden": "禁止三约束全参与 min 求 P_max"
+    },
+    {
+      "id": "2.2-direction",
+      "question_id": "2.2",
+      "direction": "工况B 粘结控制：F_bond<205kN→T_max≈700；K 按锚杆直径取值（20→0.183、22→0.190），禁止整体 K",
+      "forbidden": "禁止将压陷作为主控失效模式判定工况B"
+    },
+    {
+      "id": "3.1-direction",
+      "question_id": "3.1",
+      "direction": "显式 T_max(e)=500/√((1.224+0.576e)²+0.162²)；调心垫圈定量：e=0 参考线、e_cr≈3.66、233% 提升",
+      "forbidden": "禁止仅给隐式 σ_eq 而无显式 T_max(e) 数值验证"
+    },
+    {
+      "id": "3.2-direction",
+      "question_id": "3.2",
+      "direction": "仅围岩压陷受偏心 e 直接影响；四约束 T_max(e)=min{T_yield,T_bond,T_indent(e),T_VM(e)}；Von Mises 全范围主控",
+      "forbidden": "禁止只做 e=0 退化验证而忽略偏心压陷修正"
+    },
+    {
+      "id": "4-direction",
+      "question_id": "4",
+      "direction": "围岩三档分级 f<3/3≤f<6/f≥6；T_opt(f)=min{T₁,T₂,T₃,T₄}；argmin 主控分区；E(f) 参数化假设+敏感性",
+      "forbidden": "禁止 T_opt=0.8·T_max 或伪装 E(f) 映射唯一确定"
+    }
+  ],
+  "formula_notes": [
+    {
+      "id": "2.2-fbond",
+      "question_id": "2.2",
+      "note": "F_bond=π·D_hole·L_bond·τ（钻孔直径 28/30mm，非锚杆直径）；τ=0.25E+1，E 用 GPa：A=4.75MPa、B=1.50MPa"
+    },
+    {
+      "id": "2.1-indent",
+      "question_id": "2.1",
+      "note": "压陷公式 δ=P(1-ν²)h₀/(E·b²)，h₀=900mm 围岩载荷影响深度；b=托盘边长 150/180mm（表4）"
+    },
+    {
+      "id": "3.1-tmax-e",
+      "question_id": "3.1",
+      "note": "T_max(e)=500/√((1.224+0.576e)²+0.162²)；d_e=17mm、A_e=226.98mm²、W_b=482.33mm³、W_t=964.67mm³"
+    },
+    {
+      "id": "3.2-indent-e",
+      "question_id": "3.2",
+      "note": "偏心压陷 δ(e)=P(1-ν²)h₀/(E·b²)·(1+6e/b)；反解 T_max,indent(e)=K·d·δ_max·E·b²/((1-ν²)·h₀·(1+6e/b))"
+    },
+    {
+      "id": "4-topt",
+      "question_id": "4",
+      "note": "T₁=K·d·P_yield；T₂=K·d·π·D_hole·L_bond·(0.25E(f)+1)·10⁻³；T₃=K·d·δ_max·E(f)·b²/((1-ν²)·h₀)；T₄=T_VM(e)"
+    },
+    {
+      "id": "4-ef",
+      "question_id": "4",
+      "note": "E(f)=E₀(f/f₀)^m 参数化假设；须声明非唯一并做敏感性分析，不得伪装官方唯一映射"
+    }
+  ],
+  "required_discussions": [
+    {
+      "id": "3.1-e0",
+      "sections": [
+        "model_section",
+        "solution"
+      ],
+      "topic": "e=0 调心垫圈参考线意义：T_max(0)=404.97 N·m 为水平基准；无垫圈 e=5mm 时 T_max(5)=121.74 N·m，相对提升约 233%",
+      "requirement": "必须出现 e=0 参考线、233% 定量解读及调心垫圈必要性论述"
+    },
+    {
+      "id": "3.1-ecr",
+      "sections": [
+        "model_section",
+        "solution"
+      ],
+      "topic": "临界偏心距 e_cr≈3.66mm（T_max=149.88≈150 规范值）；超过后无垫圈无法满足 150 N·m，调心垫圈成为必要条件",
+      "requirement": "必须给出 e_cr 数值及物理意义"
+    },
+    {
+      "id": "3.1-limit",
+      "sections": [
+        "model_section",
+        "conclusion"
+      ],
+      "topic": "模型适用性与局限性四层：名义截面/应力集中、M=Pe 一级近似、Von Mises 理想材料、K_s 不恒定",
+      "requirement": "至少覆盖四层局限性讨论"
+    },
+    {
+      "id": "3.2-eccentric",
+      "sections": [
+        "model_section",
+        "solution"
+      ],
+      "topic": "关键逻辑：仅围岩压陷受偏心 e 直接影响，屈服与粘结不受偏心修正；四约束综合 T_max(e)=min{…}",
+      "requirement": "必须明确区分哪类失效受偏心影响"
+    },
+    {
+      "id": "3.2-vm",
+      "sections": [
+        "solution",
+        "conclusion"
+      ],
+      "topic": "全范围 Von Mises 等效应力为主控约束：T_VM(0)≈405 < T_yield≈612，需给出数值验证",
+      "requirement": "必须给出至少一组四约束数值验证并得出 VM 主控结论"
+    },
+    {
+      "id": "1.2-tc-discuss",
+      "sections": [
+        "model_section",
+        "sensitivity"
+      ],
+      "topic": "T_c 区间推荐与敏感性：岩石 T_c∈[100,150]、煤体 T_c∈[150,200]；给推荐值+回归式，不声称唯一确定",
+      "requirement": "必须声明 T_c 在区间内任意值 ±5% 容差均可接受"
+    },
+    {
+      "id": "4-grade",
+      "sections": [
+        "model_section",
+        "solution"
+      ],
+      "topic": "围岩三档分级：f<3 软岩（压陷主控）、3≤f<6 中等、 f≥6 坚硬（屈服主控）；各级对应 C1–C4 主控失效模式",
+      "requirement": "至少三级分级及各级主控模式判定"
+    },
+    {
+      "id": "4-ef-assume",
+      "sections": [
+        "assumptions",
+        "sensitivity"
+      ],
+      "topic": "f→E 参数化假设 E(f)=E₀(f/f₀)^m 须显式声明为非唯一开放假设，并附敏感性扫描",
+      "requirement": "不得伪装 E(f) 为官方唯一确定映射"
+    }
+  ],
+  "red_lines": [
+    {
+      "id": "1.2-600",
+      "question_id": "1.2",
+      "prohibition": "不得硬编码 600.71 或 0.8·T_max 作为 1.2 临界值答案"
+    },
+    {
+      "id": "4-topt-red",
+      "question_id": "4",
+      "prohibition": "禁止 T_opt=0.8·T_max；必须用 min{T₁,T₂,T₃,T₄} 结构"
+    },
+    {
+      "id": "2.2-pmax-red",
+      "question_id": "2.2",
+      "prohibition": "禁止压陷参与 P_max 的 min；P_max 仅取 min(P_yield,F_bond)"
+    },
+    {
+      "id": "2.2-fbond-red",
+      "question_id": "2.2",
+      "prohibition": "禁止用锚杆直径 d 替代钻孔直径 D_hole 计算 F_bond"
+    },
+    {
+      "id": "2.2-tau-red",
+      "question_id": "2.2",
+      "prohibition": "禁止将 E 当 Pa 使用计算 τ；τ=0.25E+1 中 E 必须用 GPa"
+    }
+  ],
+  "figure_plan": [
+    {
+      "id": "fig2",
+      "question_id": "1.1",
+      "figure": "K 随直径变化图（K-d）",
+      "requirements": "标注 K₁₈/K₂₀/K₂₂ 官方参考区间"
+    },
+    {
+      "id": "fig3",
+      "question_id": "1.2",
+      "figure": "岩石/煤体平均 P-T 曲线+临界点 T_c 标注",
+      "requirements": "分段回归直线与 T_c 变点清晰标注"
+    },
+    {
+      "id": "fig4",
+      "question_id": "2",
+      "figure": "三约束 T_max 对比柱状图（工况A/B）",
+      "requirements": "区分屈服/粘结/压陷三失效模式数值"
+    },
+    {
+      "id": "fig5",
+      "question_id": "2",
+      "figure": "δ-P 压陷曲线+δ_max 阈值线",
+      "requirements": "标注钢带判据阈值 δ_max=1/1.5mm"
+    },
+    {
+      "id": "fig6",
+      "question_id": "3.1",
+      "figure": "T_max-e 曲线",
+      "requirements": "三条线（e=0 垫圈参考线、无垫圈下降曲线、150 规范线）+e_cr≈3.66 标注"
+    },
+    {
+      "id": "fig7",
+      "question_id": "3.2",
+      "figure": "四失效模式 T-e 约束包络图",
+      "requirements": "T_yield/T_bond/T_indent(e)/T_VM(e) 四条约束+包络 min 曲线"
+    },
+    {
+      "id": "fig8",
+      "question_id": "4",
+      "figure": "T_i(f) 与 T_opt(f) 曲线+主控模式分区",
+      "requirements": "软/中/硬三档围岩分区及 argmin 主控标注"
+    }
+  ],
+  "scoring_notes": [
+    {
+      "id": "1.2-tc",
+      "question_id": "1.2",
+      "note": "T_c∈[100,150]（岩石）、[150,200]（煤体）±5% 容差；R²>0.99；不声称唯一确定"
+    },
+    {
+      "id": "3.1-score",
+      "question_id": "3.1",
+      "note": "调心垫圈 10 分：e=0→404.97、e=5→121.74、233% 提升、e_cr≈3.66；显式函数 6 分+局限性 4 分"
+    },
+    {
+      "id": "2.2-score",
+      "question_id": "2.2",
+      "note": "工况A：T_max≈630、δ=0.425mm 无需钢带；工况B：T_max≈700、δ=2.07mm 必须钢带；±5% 容差"
+    },
+    {
+      "id": "4-score",
+      "question_id": "4",
+      "note": "围岩分级 4 分+T_opt(f) 统一模型 6 分；低 f 压陷主控、高 f 屈服主控"
+    }
+  ],
+  "data_notes": [
+    {
+      "id": "1.2-mean",
+      "question_id": "1.2",
+      "note": "表2/表3 五测点预紧力按 T 均值化（岩石：3.962/9.122/14.754/21.296…；煤体同理）后再做分段回归"
+    },
+    {
+      "id": "1.1-kref",
+      "question_id": "1.1",
+      "note": "K 官方参考：K₁₈≈0.162~0.163、K₂₀≈0.183~0.185、K₂₂≈0.186~0.190；R²>0.96"
+    },
+    {
+      "id": "2.2-ref",
+      "question_id": "2.2",
+      "note": "工况A：F_bond=334.27kN、τ=4.75MPa；工况B：F_bond=169.65kN、τ=1.50MPa；钻孔直径 28/30mm"
+    }
+  ],
+  "reference_direction": [
+    "巷道支护",
+    "Winkler 地基",
+    "螺纹力学"
+  ]
+}
