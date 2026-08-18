@@ -15,6 +15,7 @@ const insightMeta = document.querySelector("#insightMeta");
 const insightBody = document.querySelector("#insightBody");
 const commandPreview = document.querySelector("#commandPreview");
 const outputDir = document.querySelector("#outputDir");
+const briefPath = document.querySelector("#briefPath");
 const threadId = document.querySelector("#threadId");
 const iterationDepth = document.querySelector("#iterationDepth");
 const iterationValue = document.querySelector("#iterationValue");
@@ -325,6 +326,7 @@ function updateCommand() {
   if (!hitlToggle.checked) parts.push("--no-interrupt");
   if (activeTemplate !== "default") parts.push(`--template ${activeTemplate}`);
   if (forceToggle.checked) parts.push("--force");
+  if (briefPath?.value?.trim()) parts.push(`--brief ${briefPath.value.trim()}`);
   commandPreview.textContent = parts.join(" ");
   outputSummary.textContent = outputDir.value || "runs/ui-latest";
   iterationValue.textContent = iterationDepth.value;
@@ -591,6 +593,7 @@ async function startProjectRun() {
       background: problemBrief.value,
       fixturePath: currentFixturePath,
       outputDir: outputDir.value || "runs/ui-latest",
+      briefPath: briefPath?.value?.trim() || undefined,
       threadId: threadId.value || "default",
       template: activeTemplate,
       noInterrupt: !hitlToggle.checked,

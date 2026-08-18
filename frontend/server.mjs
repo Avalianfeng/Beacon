@@ -848,7 +848,7 @@ async function handleApi(request, response, url) {
     if (body === null || Array.isArray(body) || typeof body !== "object") {
       throw new HttpError(400, "Request body must be a JSON object.");
     }
-    for (const key of ["title", "background", "outputDir", "threadId", "fixturePath", "template"]) {
+    for (const key of ["title", "background", "outputDir", "threadId", "fixturePath", "template", "briefPath"]) {
       if (body[key] != null && typeof body[key] !== "string") {
         throw new HttpError(400, `${key} must be a string.`);
       }
@@ -950,6 +950,7 @@ async function handleApi(request, response, url) {
     if (body.noInterrupt) args.push("--no-interrupt");
     if (body.template && body.template !== "default") args.push("--template", body.template);
     if (body.force) args.push("--force");
+    if (body.briefPath) args.push("--brief", safeProjectPath(body.briefPath));
 
     const logPath = resolve(runDir, "run.log");
     const logStream = createWriteStream(logPath, { flags: "a" });

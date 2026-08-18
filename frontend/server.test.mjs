@@ -326,6 +326,85 @@ test("POST /api/run accepts null fixturePath without 400 error", async () => {
   await fetch(`${base}/api/runs/${data.run.id}/stop`, { method: "POST" });
 });
 
+test("POST /api/run briefPath pass-through and validation", async () => {
+  const briefRel = "frontend/test-fixtures/brief-pass-through.json";
+  const briefAbs = resolve(projectRoot, briefRel);
+  await writeFile(briefAbs, JSON.stringify({ version: 1 }), "utf8");
+  try {
+    const valid = await fetch(`${base}/api/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "test-brief",
+        background: "test",
+        briefPath: briefRel,
+        outputDir: "runs/ui-test-brief",
+        threadId: "test-brief",
+        noInterrupt: true,
+        ragEnabled: false,
+      }),
+    });
+    assert.equal(valid.status, 202);
+    const validData = await valid.json();
+    assert.ok(validData.run.id);
+    const commandNorm = validData.run.command.replace(/\\/g, "/");
+    assert.match(commandNorm, /--brief/);
+    assert.ok(commandNorm.includes(briefAbs.replace(/\\/g, "/")));
+    await fetch(`${base}/api/runs/${validData.run.id}/stop`, { method: "POST" });
+  } finally {
+    await rm(briefAbs, { force: true });
+  }
+
+  const nullBrief = await fetch(`${base}/api/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "test-brief-null",
+      background: "test",
+      briefPath: null,
+      outputDir: "runs/ui-test-brief-null",
+      threadId: "test-brief-null",
+      noInterrupt: true,
+      ragEnabled: false,
+    }),
+  });
+  assert.equal(nullBrief.status, 202);
+  const nullData = await nullBrief.json();
+  assert.ok(nullData.run.id);
+  assert.doesNotMatch(nullData.run.command, /--brief/);
+  await fetch(`${base}/api/runs/${nullData.run.id}/stop`, { method: "POST" });
+
+  const invalidType = await fetch(`${base}/api/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "test-brief-invalid",
+      background: "test",
+      briefPath: 123,
+      outputDir: "runs/ui-test-brief-invalid",
+      threadId: "test-brief-invalid",
+      noInterrupt: true,
+      ragEnabled: false,
+    }),
+  });
+  assert.equal(invalidType.status, 400);
+
+  const outside = await fetch(`${base}/api/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: "test-brief-outside",
+      background: "test",
+      briefPath: "../outside.json",
+      outputDir: "runs/ui-test-brief-outside",
+      threadId: "test-brief-outside",
+      noInterrupt: true,
+      ragEnabled: false,
+    }),
+  });
+  assert.equal(outside.status, 403);
+});
+
 test("POST /api/runs/:id/recover 从失败任务的 checkpoint 恢复", async () => {
   const outputDir = `runs/ui-test-recover-${Date.now()}`;
   const response = await fetch(`${base}/api/run`, {
