@@ -1,6 +1,6 @@
 """brief 方向/红线抽样检查脚本（只读，不调 LLM）。
 
-对应 docs/2026-08-19-brief-verification-next.md 第四节 4.2 清单：
+对应 docs/12-ModelingBrief验证与下一步.md 第四节 4.2 清单：
 对一次 run 的产物做"方向是否落地 / 红线是否被触碰"的关键词抽样，
 输出 命中/未命中 + file:line 证据。脚本只收集证据，最终判定由人做
 （"源头杜绝方向错成立" = 抽样方向在代码与论文中可指认）。
@@ -136,6 +136,37 @@ def _extract_blueprint_text(run_dir: Path) -> str:
     return "\n".join(texts)
 
 
+def _coverage_from_checkpoint(run_dir: Path) -> dict[str, str] | None:
+    """从 checkpoint 正规读取 brief_coverage（msgpack 序列化，文本正则不可靠）。
+
+    checkpoint 的 state 经 JsonPlusSerializer 序列化，直接扫文本是乱码；
+    这里用仓库自己的 sqlite_saver + graph 反序列化，读 problem_blueprint.brief_coverage。
+    thread 从 run_manifest.json 取（默认 default）。
+    """
+    db = run_dir / "checkpoints.sqlite"
+    if not db.is_file():
+        return None
+    thread = "default"
+    try:
+        manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+        thread = str(manifest.get("thread", "default"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        pass
+    try:
+        from math_agent import cli as c
+        from math_agent.checkpointing import sqlite_saver
+        with sqlite_saver(db) as saver:
+            g = c.build_graph(checkpointer=saver, interrupt_before=[])
+            snap = g.get_state(c._config(thread))
+            bp = snap.values.get("problem_blueprint")
+            if bp is None:
+                return None
+            return {item.brief_item_id: item.status for item in (bp.brief_coverage or [])}
+    except Exception as exc:  # noqa: BLE001 - 只读工具，失败降级
+        print(f"[warn] checkpoint 正规读取失败（{type(exc).__name__}: {exc}），退回文本扫描")
+        return None
+
+
 def _brief_coverage_report(run_dir: Path, brief_source: Path | None) -> list[str]:
     lines: list[str] = []
     brief_copy = run_dir / "brief.json"
@@ -162,13 +193,15 @@ def _brief_coverage_report(run_dir: Path, brief_source: Path | None) -> list[str
             if isinstance(item, dict) and item.get("id"):
                 ids.append(item["id"])
 
-    blob = _extract_blueprint_text(run_dir)
-    if not blob:
-        lines.append(f"brief_coverage: 未在 checkpoint 中找到含 brief_coverage 的状态（{len(ids)} 个 id 无法核对）")
-        return lines
-    covered: dict[str, str] = {}
-    for m in re.finditer(r'"brief_item_id"\s*:\s*"([^"]+)"\s*,\s*"status"\s*:\s*"([^"]+)"', blob):
-        covered[m.group(1)] = m.group(2)
+    covered = _coverage_from_checkpoint(run_dir)
+    if covered is None:
+        blob = _extract_blueprint_text(run_dir)
+        if not blob:
+            lines.append(f"brief_coverage: 未在 checkpoint 中找到含 brief_coverage 的状态（{len(ids)} 个 id 无法核对）")
+            return lines
+        covered = {}
+        for m in re.finditer(r'"brief_item_id"\s*:\s*"([^"]+)"\s*,\s*"status"\s*:\s*"([^"]+)"', blob):
+            covered[m.group(1)] = m.group(2)
     missing = [i for i in ids if i not in covered]
     deviated = [i for i, s in covered.items() if s == "deviated"]
     followed = [i for i, s in covered.items() if s == "followed"]
@@ -247,7 +280,7 @@ def main(argv: list[str]) -> int:
         print(line)
     print()
     print("说明: 本脚本只做关键词证据收集；方向是否落地、红线是否违反的最终判定由人按")
-    print("docs/2026-08-19-brief-verification-next.md 4.3 的语言做（管道成立/防忽略成立/源头杜绝成立）。")
+    print("docs/12-ModelingBrief验证与下一步.md 4.3 的语言做（管道成立/防忽略成立/源头杜绝成立）。")
     return 0
 
 
