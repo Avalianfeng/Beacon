@@ -82,6 +82,7 @@ def test_blueprint_defaults_for_optional_fields():
     assert bp.recommended_route is None
     assert bp.validation_plan == []
     assert bp.risks == []
+    assert bp.brief_coverage == []
 
 
 def test_blueprint_round_trip_json():

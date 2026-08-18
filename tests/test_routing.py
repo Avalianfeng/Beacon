@@ -209,3 +209,71 @@ def test_human_review_routes_approval_to_finalize():
     from math_agent.state import HumanDecision
     s = MathModelingState(problem="p", human_decision=HumanDecision(approved=True))
     assert after_human_review(s) == "finalize"
+
+
+# ---------------------------------------------------------------------------
+# after_blueprint_critic + brief_coverage 门禁
+# ---------------------------------------------------------------------------
+
+def _state_with_brief_coverage(
+    approved: bool,
+    iteration: int,
+    brief,
+    blueprint,
+):
+    s = MathModelingState(problem="p", blueprint_iteration=iteration)
+    s.brief = brief
+    s.problem_blueprint = blueprint
+    s.critic_reports.append(CriticReport(
+        target="analyst", score=9 if approved else 4, approved=approved,
+        critic_type="blueprint",
+    ))
+    return s
+
+
+def test_blueprint_critic_retries_on_coverage_gap_under_cap():
+    from math_agent.brief import ModelingBrief, PerQuestionDirectionItem
+    from math_agent.config import MAX_BLUEPRINT_ITERATIONS
+    from math_agent.state import ProblemBlueprint
+
+    brief = ModelingBrief(per_question_direction=[
+        PerQuestionDirectionItem(id="dir-1", direction="MILP"),
+    ])
+    blueprint = ProblemBlueprint(core_task="t", brief_coverage=[])
+    s = _state_with_brief_coverage(
+        approved=True, iteration=1, brief=brief, blueprint=blueprint,
+    )
+    assert s.blueprint_iteration < MAX_BLUEPRINT_ITERATIONS
+    assert after_blueprint_critic(s) == "retry"
+
+
+def test_blueprint_critic_stops_on_coverage_gap_at_cap():
+    from math_agent.brief import ModelingBrief, PerQuestionDirectionItem
+    from math_agent.config import MAX_BLUEPRINT_ITERATIONS
+    from math_agent.state import ProblemBlueprint
+
+    brief = ModelingBrief(per_question_direction=[
+        PerQuestionDirectionItem(id="dir-1", direction="MILP"),
+    ])
+    blueprint = ProblemBlueprint(core_task="t", brief_coverage=[])
+    s = _state_with_brief_coverage(
+        approved=True, iteration=MAX_BLUEPRINT_ITERATIONS, brief=brief, blueprint=blueprint,
+    )
+    assert after_blueprint_critic(s) == "stop"
+
+
+def test_blueprint_critic_advances_on_full_coverage_and_approved():
+    from math_agent.brief import ModelingBrief, PerQuestionDirectionItem, BriefCoverageItem
+    from math_agent.state import ProblemBlueprint
+
+    brief = ModelingBrief(per_question_direction=[
+        PerQuestionDirectionItem(id="dir-1", direction="MILP"),
+    ])
+    blueprint = ProblemBlueprint(
+        core_task="t",
+        brief_coverage=[BriefCoverageItem(brief_item_id="dir-1", status="followed")],
+    )
+    s = _state_with_brief_coverage(
+        approved=True, iteration=1, brief=brief, blueprint=blueprint,
+    )
+    assert after_blueprint_critic(s) == "advance"

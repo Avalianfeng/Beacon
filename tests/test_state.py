@@ -21,6 +21,11 @@ def test_initial_state_minimal():
     assert s.iteration == 0
 
 
+def test_state_brief_defaults_none():
+    s = MathModelingState(problem="p")
+    assert s.brief is None
+
+
 def test_state_can_append_model_version():
     s = MathModelingState(problem="x")
     s.model_versions.append(

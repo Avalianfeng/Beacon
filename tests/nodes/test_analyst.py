@@ -119,3 +119,27 @@ def test_analyst_receives_data_files_in_prompt(mocker):
     analyst_node(state)
     assert "orders.xlsx" in captured_prompt["prompt"]
     assert "1200行×5列" in captured_prompt["prompt"]
+
+
+def test_analyst_prompt_includes_brief_when_set(mocker):
+    from math_agent.brief import ModelingBrief, PerQuestionDirectionItem, BriefCoverageItem
+
+    brief = ModelingBrief(per_question_direction=[
+        PerQuestionDirectionItem(id="dir-q1", question_id="q1", direction="MILP"),
+    ])
+    fake = _blueprint(
+        brief_coverage=[BriefCoverageItem(brief_item_id="dir-q1", status="followed")],
+    )
+    spy = mocker.patch("math_agent.nodes.analyst.complete", return_value=fake)
+    state = MathModelingState(problem="共享单车调度", brief=brief)
+    analyst_node(state)
+    prompt = spy.call_args.args[0]
+    assert "# 人工建模预备" in prompt
+    assert "dir-q1" in prompt
+
+
+def test_analyst_prompt_excludes_brief_when_none(mocker):
+    spy = mocker.patch("math_agent.nodes.analyst.complete", return_value=_blueprint())
+    state = MathModelingState(problem="p", brief=None)
+    analyst_node(state)
+    assert "# 人工建模预备（Modeling Brief）" not in spy.call_args.args[0]

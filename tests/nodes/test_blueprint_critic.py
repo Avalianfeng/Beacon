@@ -67,3 +67,26 @@ def test_blueprint_critic_injects_blueprint_into_prompt(mocker):
     assert "调度优化" in prompt_arg
     assert "预测" in prompt_arg
     assert "调度" in prompt_arg
+
+
+def test_blueprint_critic_injects_brief_into_prompt(mocker):
+    from math_agent.brief import ModelingBrief, PerQuestionDirectionItem
+
+    brief = ModelingBrief(per_question_direction=[
+        PerQuestionDirectionItem(id="dir-1", direction="MILP路线"),
+    ])
+    spy = mocker.patch(
+        "math_agent.nodes.blueprint_critic.complete",
+        return_value=CriticReport(
+            target="analyst", score=9, approved=True, critic_type="blueprint",
+        ),
+    )
+    s = MathModelingState(problem="调度问题", questions=["预测", "调度"])
+    s.problem_blueprint = _blueprint()
+    s.brief = brief
+    blueprint_critic_node(s)
+
+    prompt_arg = spy.call_args.args[0]
+    assert "# 人工建模预备" in prompt_arg
+    assert "MILP路线" in prompt_arg
+    assert "dir-1" in prompt_arg

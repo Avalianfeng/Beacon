@@ -504,3 +504,171 @@ def test_review_reroutes_stopped_run_to_human_review(tmp_path):
     kwargs = fake_graph.update_state.call_args.kwargs
     assert kwargs["as_node"] == "paper_critic"
     fake_graph.invoke.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# brief CLI 与 --brief 传参
+# ---------------------------------------------------------------------------
+
+_MINIMAL_BRIEF_JSON = (
+    '{"schema_version":1,"per_question_direction":[{"id":"d1","direction":"x"}]}'
+)
+
+
+def test_run_brief_invalid_json_exits_nonzero(tmp_path):
+    problem = _problem(tmp_path)
+    bad_brief = tmp_path / "bad_brief.json"
+    bad_brief.write_text("{not json", encoding="utf-8")
+    result = runner.invoke(app, [
+        "run", "--problem", str(problem), "--out", str(tmp_path / "run"),
+        "--brief", str(bad_brief), "--no-interrupt",
+    ])
+    assert result.exit_code != 0
+
+
+def test_supervise_passes_brief_to_run_args(tmp_path):
+    problem = _problem(tmp_path)
+    out = tmp_path / "run"
+    brief_path = tmp_path / "brief.json"
+    brief_path.write_text(_MINIMAL_BRIEF_JSON, encoding="utf-8")
+    with patch(
+        "math_agent.cli.run_process_supervisor",
+        return_value=SupervisorResult(status="completed", attempts=1),
+    ) as supervised:
+        result = runner.invoke(app, [
+            "supervise", "--problem", str(problem), "--out", str(out),
+            "--brief", str(brief_path), "--no-interrupt",
+        ])
+    assert result.exit_code == 0, result.output
+    run_args = supervised.call_args.kwargs["run_args"]
+    assert "--brief" in run_args
+    assert str(brief_path.resolve()) in run_args
+
+
+def test_start_passes_brief_to_supervise_args(tmp_path):
+    problem = _problem(tmp_path)
+    out = tmp_path / "run"
+    brief_path = tmp_path / "brief.json"
+    brief_path.write_text(_MINIMAL_BRIEF_JSON, encoding="utf-8")
+    with patch("math_agent.cli.start_detached_supervisor", return_value=4321) as detached:
+        result = runner.invoke(app, [
+            "start", "--problem", str(problem), "--out", str(out),
+            "--brief", str(brief_path), "--no-interrupt",
+        ])
+    assert result.exit_code == 0, result.output
+    supervise_args = detached.call_args.kwargs["supervise_args"]
+    assert "--brief" in supervise_args
+    assert str(brief_path.resolve()) in supervise_args
+
+
+def test_brief_check_valid_exits_zero(tmp_path):
+    brief_path = tmp_path / "brief.json"
+    brief_path.write_text(_MINIMAL_BRIEF_JSON, encoding="utf-8")
+    result = runner.invoke(app, ["brief", "check", "--brief", str(brief_path)])
+    assert result.exit_code == 0, result.output
+    assert "[OK]" in result.output
+
+
+def test_brief_check_invalid_exits_nonzero(tmp_path):
+    bad_path = tmp_path / "bad.json"
+    bad_path.write_text("{bad", encoding="utf-8")
+    result = runner.invoke(app, ["brief", "check", "--brief", str(bad_path)])
+    assert result.exit_code != 0
+    assert "[FAIL]" in result.output
+
+
+def test_brief_init_generates_valid_template(tmp_path):
+    problem = _problem(tmp_path)
+    out = tmp_path / "brief.json"
+    result = runner.invoke(app, [
+        "brief", "init", "--problem", str(problem), "--out", str(out), "--force",
+    ])
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+    check = runner.invoke(app, ["brief", "check", "--brief", str(out)])
+    assert check.exit_code == 0, check.output
+    assert "[OK]" in check.output
+
+# ---------------------------------------------------------------------------
+# 落盘链路：out/brief.json 副本 + run_manifest.brief_sha256
+# ---------------------------------------------------------------------------
+
+def test_copy_brief_and_write_manifest_roundtrip(tmp_path):
+    """纯函数级：_copy_brief_to_out + _write_run_manifest 写副本与 brief_sha256。"""
+    import hashlib
+
+    from math_agent.cli import _copy_brief_to_out, _problem_fingerprint, _write_run_manifest
+
+    out = tmp_path / "out"
+    out.mkdir()
+    brief_path = tmp_path / "brief.json"
+    brief_path.write_text(_MINIMAL_BRIEF_JSON, encoding="utf-8")
+    src_hash = hashlib.sha256(brief_path.read_bytes()).hexdigest()
+    spec = {"title": "t", "questions": ["q"], "background": "",
+            "data_files": [], "data_dir": ""}
+
+    _copy_brief_to_out(out, brief_path)
+    _write_run_manifest(out, "default", spec, no_interrupt=True, brief_sha256=src_hash)
+
+    assert (out / "brief.json").read_bytes() == brief_path.read_bytes()
+    manifest = json.loads((out / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["brief_sha256"] == src_hash
+    assert manifest["thread"] == "default"
+    assert manifest["no_interrupt"] is True
+    assert manifest["problem_sha256"] == _problem_fingerprint(spec)
+
+
+def test_copy_brief_to_out_same_path_early_returns(tmp_path):
+    """源 == 目标（out/brief.json）时早退，不覆盖已有文件。"""
+    from math_agent.cli import _copy_brief_to_out
+
+    out = tmp_path / "out"
+    out.mkdir()
+    target = out / "brief.json"
+    target.write_text('{"schema_version":1}', encoding="utf-8")
+    _copy_brief_to_out(out, target)  # brief_path.resolve() == target.resolve()
+    assert target.read_text(encoding="utf-8") == '{"schema_version":1}'
+
+
+def test_run_writes_brief_copy_and_manifest_before_invoke(tmp_path):
+    """run --brief：副本与 manifest 在 invoke 之前已写；initial.brief 是 ModelingBrief。"""
+    import hashlib
+
+    from math_agent.brief import ModelingBrief, brief_item_ids
+
+    problem = _problem(tmp_path)
+    out = tmp_path / "run"
+    brief_path = tmp_path / "brief.json"
+    brief_path.write_text(_MINIMAL_BRIEF_JSON, encoding="utf-8")
+    src_hash = hashlib.sha256(brief_path.read_bytes()).hexdigest()
+
+    fake_graph = MagicMock()
+    fake_graph.get_state.return_value = MagicMock(values={"problem": "p"})
+
+    def fake_invoke(initial, config=None):
+        # invoke 被调用时副本与 manifest 必须已落盘（顺序断言）
+        assert (out / "brief.json").read_bytes() == brief_path.read_bytes()
+        manifest = json.loads((out / "run_manifest.json").read_text(encoding="utf-8"))
+        assert manifest["brief_sha256"] == src_hash
+        return {}
+
+    fake_graph.invoke.side_effect = fake_invoke
+    saver_cm = MagicMock()
+    saver_cm.__enter__.return_value = object()
+    saver_cm.__exit__.return_value = False
+    with patch("math_agent.cli._saver_cm", return_value=saver_cm), \
+         patch("math_agent.cli.build_graph", return_value=fake_graph), \
+         patch("math_agent.cli._dump_state_summary"):
+        result = runner.invoke(app, [
+            "run", "--problem", str(problem), "--out", str(out),
+            "--brief", str(brief_path), "--no-interrupt",
+        ])
+
+    assert result.exit_code == 0, result.output
+    initial = fake_graph.invoke.call_args.args[0]
+    assert isinstance(initial["brief"], ModelingBrief)
+    assert brief_item_ids(initial["brief"]) == ["d1"]
+    assert (out / "brief.json").read_bytes() == brief_path.read_bytes()
+    manifest = json.loads((out / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["brief_sha256"] == src_hash
+    assert manifest["thread"] == "default"
