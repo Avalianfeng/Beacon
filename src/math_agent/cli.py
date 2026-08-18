@@ -424,7 +424,7 @@ def brief_init(
     title = spec.get("title") or (spec.get("questions") or [""])[0]
     typer.echo(f"brief 模板已生成：{out}")
     typer.echo(f"题目：{title[:60]}")
-    typer.echo("八字段结构与示例见 docs/2026-08-19-modeling-brief.md；")
+    typer.echo("八字段结构与示例见 docs/10-ModelingBrief实施计划书.md；")
     typer.echo("填写后运行 `math-agent brief check --brief <path>` 校验；")
     typer.echo("建议沉淀到 docs/problems/<题号>/brief.json 跨题复用。")
 

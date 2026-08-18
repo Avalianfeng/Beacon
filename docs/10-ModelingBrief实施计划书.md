@@ -1,8 +1,8 @@
 # Modeling Brief（建模预备 A2）实施计划书与交接文档
 
 - 建立日期：2026-08-19
-- 关联：《体系流程优化报告》（`docs/2026-08-18-mcm51-system-evolution.md` 方案 A2）、
-  《MCM-51 迭代计划》（`docs/2026-08-18-mcm51-iteration-plan.md`）
+- 关联：《体系流程优化报告》（`docs/09-体系流程优化报告.md` 方案 A2）、
+  《MCM-51 迭代计划》（`docs/08-MCM51整改迭代计划.md`）
 - 定位：**跨平台交接计划书**。本次会话已完成全部设计决策与大部分编码；
   本文档记录：① 已拍板的设计决策；② 完整设计（计划书主体）；③ 已执行部分（文件级 + 验证证据）；
   ④ 未执行部分（接手者按序执行）；⑤ 当前工作区状态与紧急修复指引；⑥ 重要注意事项。
@@ -276,7 +276,7 @@ brief_app = typer.Typer(
   五组 prompt+node（analyst / blueprint_critic / model_critic / modeler / coder）、`prompts/writer_section.py`；
   其中 **`nodes/blueprint_critic.py` 为本轮才改**（补传 `brief=state.brief`），其余多为早前会话；
 - **新建（2）**：`src/math_agent/brief.py`、`src/math_agent/brief_dialogue.py`；
-- **未跟踪（??）**：本文档 `docs/2026-08-19-modeling-brief-plan.md`、`docs/problems/mcm51-a/brief.json`；
+- **未跟踪（??）**：本文档 `docs/10-ModelingBrief实施计划书.md`、`docs/problems/mcm51-a/brief.json`；
 - **另有**：`frontend/` 四文件（brief 透传）、`tests/` 扩展与 `tests/test_brief.py` 新建；
 - `.tmp_brief_edits/`：T7 已删除（曾为 apply1–8 / debug1–4 临时脚本）；
 - 不修改原始题目附件，不使用 `scripts/repair_final_run.py`。

@@ -25,7 +25,7 @@
 确定性事实稿提供完整覆盖，其他题目不得把它当作通用评审替代品。
 
 完整数值、获奖论文对照和仍存在的差距见
-[`huazhong-2026-a-quality-gap.md`](huazhong-2026-a-quality-gap.md)。
+[`04-华中杯2026A题质量差距.md`](04-华中杯2026A题质量差距.md)。
 
 ## 恢复入口与本地环境约束
 
@@ -96,41 +96,42 @@ Web 高级选项中两个开关彼此独立：
 
 ## 现行文档
 
-- [`paper-content-quality.md`](paper-content-quality.md)：论文证据、深度实验、离线应急评审、
+命名按 `序号 + 中文名`（CONTRACT §6）：01–04 现行实现与运行说明，05–09 MCM-51 迭代系列，
+10–14 Modeling Brief 系列，15–18 历史追溯（见下节）。
+
+- [`01-论文内容质量与篇幅门禁.md`](01-论文内容质量与篇幅门禁.md)：论文证据、深度实验、离线应急评审、
   图文排布和篇幅门禁。
-- [`beacon-resilient-execution.md`](beacon-resilient-execution.md)：后台监督、恢复、硬期限和
+- [`02-长流程可靠执行与恢复.md`](02-长流程可靠执行与恢复.md)：后台监督、恢复、硬期限和
   最终原子收口。
-- [`console-observation.md`](console-observation.md)：控制台观察面（`watch` / `progress.jsonl` / `insights/`）。
-- [`huazhong-2026-a-quality-gap.md`](huazhong-2026-a-quality-gap.md)：当前真题结果、
+- [`03-控制台观察面.md`](03-控制台观察面.md)：控制台观察面（`watch` / `progress.jsonl` / `insights/`）。
+- [`04-华中杯2026A题质量差距.md`](04-华中杯2026A题质量差距.md)：当前真题结果、
   8 篇获奖论文对比和剩余差距。
-- [`plan-c-runbook.md`](plan-c-runbook.md)：RAG、benchmark 和错误处理的历史运维快照；
-  运行参数仍以 `.env.example` 和代码为准。
-- [`2026-08-18-mcm51-issue-report.md`](2026-08-18-mcm51-issue-report.md)：MCM-51 锚杆题
+- [`05-MCM51运行问题汇报.md`](05-MCM51运行问题汇报.md)：MCM-51 锚杆题
   运行问题汇报（P01–P20 问题清单与已落地解决方案、O01–O10 观察项、commit 对照；供项目方跟进）。
-- [`2026-08-18-mcm51-handoff.md`](2026-08-18-mcm51-handoff.md)：MCM-51 跨迭代交接文档
+- [`06-MCM51迭代交接.md`](06-MCM51迭代交接.md)：MCM-51 跨迭代交接文档
   （r11 之后必读：已确认可靠部分 / 需重点解决部分 / 明确留待后续流程的内容 / 启动检查清单）。
-- [`2026-08-18-mcm51-paper-report.md`](2026-08-18-mcm51-paper-report.md)：MCM-51 论文成果与情况说明
+- [`07-MCM51论文成果报告.md`](07-MCM51论文成果报告.md)：MCM-51 论文成果与情况说明
   （纯论文视角：结构、模型、数据、结果、局限；不含生成流程与内部机制）。
-- [`2026-08-18-mcm51-system-evolution.md`](2026-08-18-mcm51-system-evolution.md)：Beacon 体系流程优化报告
-  （外部知识注入与多视角推演：RAG/资料包/评分标准门禁化/并行蓝图，r1–r11 视角盲区实证）。
-- [`2026-08-18-mcm51-iteration-plan.md`](2026-08-18-mcm51-iteration-plan.md)：MCM-51 后续迭代计划
+- [`08-MCM51整改迭代计划.md`](08-MCM51整改迭代计划.md)：MCM-51 后续迭代计划
   （按官方评分标准逐题评估：符合项保留、40 分空白项整改、代码思路转向清单、8 张补图指导）。
-- [`2026-08-19-modeling-brief-plan.md`](2026-08-19-modeling-brief-plan.md)：建模预备（A2）
+- [`09-体系流程优化报告.md`](09-体系流程优化报告.md)：Beacon 体系流程优化报告
+  （外部知识注入与多视角推演：RAG/资料包/评分标准门禁化/并行蓝图，r1–r11 视角盲区实证）。
+- [`10-ModelingBrief实施计划书.md`](10-ModelingBrief实施计划书.md)：建模预备（A2）
   实施计划书与交接文档（八字段 brief schema、六处注入点、brief_coverage 门禁、
   已执行/未执行清单、cli.py 紧急修复指引；**第九节：体系方向声明**——参考答案不可得假设、来源分级语义、以工程完善体系为第一目标）。
-- [`2026-08-19-brief-verification-next.md`](2026-08-19-brief-verification-next.md)：A2 目标验证与下一步
-  （管道 vs 效果分层、低成本验证命令、带 `--brief` 的真跑清单、路线更迭启动条件）。
-- [`2026-08-19-brief-flow.md`](2026-08-19-brief-flow.md)：Modeling Brief 全流程总图
+- [`11-ModelingBrief流程总图.md`](11-ModelingBrief流程总图.md)：Modeling Brief 全流程总图
   （前置对话 → 注入 → 门禁 → 主图；各环节验证状态标注）。
-- [`2026-08-19-design-debt-checklist.md`](2026-08-19-design-debt-checklist.md)：Beacon 设计债与遗留问题清单
+- [`12-ModelingBrief验证与下一步.md`](12-ModelingBrief验证与下一步.md)：A2 目标验证与下一步
+  （管道 vs 效果分层、低成本验证命令、带 `--brief` 的真跑清单、路线更迭启动条件；**第七节：brief-v1 真跑评审结论**——对照官方评分标准 ≈74–86/100，r11 空白 40 分全补齐）。
+- [`13-注入体系补全计划.md`](13-注入体系补全计划.md)：注入体系补全计划
+  （八字段 × 节点注入矩阵现状、转述衰减缺口、阶段 1 纯 prompt 接线 / 阶段 2 结构化传递；执行顺序：先真跑抽样判定再补全）。
+- [`14-设计债与遗留问题清单.md`](14-设计债与遗留问题清单.md)：Beacon 设计债与遗留问题清单
   （跨迭代登记，解决后逐个标注已解决；延续 P01–P20 问题清单模式）。
-- [`2026-08-19-injection-plan.md`](2026-08-19-injection-plan.md)：注入体系补全计划
-  （八字段 × 节点注入矩阵现状、转述衰减缺口、阶段 1 纯 prompt 接线 / 阶段 2 结构化传递；执行顺序：先真跑抽样判定再补全）。  （跨迭代登记，解决后逐个标注已解决；延续 P01–P20 问题清单模式）。
 
 ## 待确认 / 愿景设计（非现行实现说明）
 
 - [`../PLAN-console-progress-management.md`](../PLAN-console-progress-management.md)：观察面设计稿
-  （实现说明以 [`console-observation.md`](console-observation.md) 为准）。
+  （实现说明以 [`03-控制台观察面.md`](03-控制台观察面.md) 为准）。
 - [`../PLAN-console-control-plane.md`](../PLAN-console-control-plane.md)：控制面愿景（断点问人、
   空闲重做、流程 profile）；尚未实现。
 
@@ -138,16 +139,16 @@ Web 高级选项中两个开关彼此独立：
 
 以下文件用于追溯，不是现行事实源：
 
-- [`beacon-full-pipeline-root-cause-20260717.md`](beacon-full-pipeline-root-cause-20260717.md)：
+- [`15-全流程故障根因与修复报告.md`](15-全流程故障根因与修复报告.md)：
   2026-07-17 完整调用链故障诊断和旧 v4 运行证据。
-- [`llm-timeout-retry-redesign.md`](llm-timeout-retry-redesign.md)：LLM transport、取消和预算机制
+- [`16-LLM超时取消与重试机制设计.md`](16-LLM超时取消与重试机制设计.md)：LLM transport、取消和预算机制
   的历史设计记录。
-- [`problem-blueprint-implementation-plan.md`](problem-blueprint-implementation-plan.md)：
+- [`17-ProblemBlueprint实施方案.md`](17-ProblemBlueprint实施方案.md)：
   ProblemBlueprint 的历史实施方案。
-- [`writer-quality-recovery-development.md`](writer-quality-recovery-development.md)：
+- [`18-Writer质量与恢复改造设计.md`](18-Writer质量与恢复改造设计.md)：
   writer 恢复与质量增强的历史设计记录。
 - `docs/superpowers/plans/` 与 `docs/superpowers/specs/`：阶段性计划和规格。文件中的旧行号、
-  待办、超时值和“≥30 页/≥10 图”等内容只按其日期上下文阅读。
+  待办、超时值和"≥30 页/≥10 图"等内容只按其日期上下文阅读。
 
 ## 验证入口
 

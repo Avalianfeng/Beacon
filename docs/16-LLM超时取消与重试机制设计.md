@@ -1,6 +1,6 @@
 # LLM Timeout、取消与重试机制重构方案
 
-> 历史设计记录。主要机制已经落地；现行参数以 `.env.example`、`src/math_agent/llm.py` 和 [`beacon-resilient-execution.md`](beacon-resilient-execution.md) 为准。
+> 历史设计记录。主要机制已经落地；现行参数以 `.env.example`、`src/math_agent/llm.py` 和 [`02-长流程可靠执行与恢复.md`](02-长流程可靠执行与恢复.md) 为准。
 
 ## 1. 背景与结论
 
