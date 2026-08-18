@@ -14,6 +14,8 @@ from operator import add
 from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, Field
 
+from math_agent.brief import BriefCoverageItem, ModelingBrief
+
 ModelStage = Literal["basic", "improved", "final"]
 
 
@@ -128,6 +130,9 @@ class ProblemBlueprint(BaseModel):
     recommended_route: RecommendedRoute | None = None
     validation_plan: list[ValidationPlanItem] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
+    # 人工建模预备（brief）逐条回应：每条 brief 条目 → followed / deviated+理由。
+    # 门禁（routing.after_blueprint_critic）确定性校验，防模型忽略人工输入。
+    brief_coverage: list[BriefCoverageItem] = Field(default_factory=list)
 
 
 class DerivationStep(BaseModel):
@@ -304,6 +309,9 @@ class MathModelingState(BaseModel):
     problem: str = ""  # 防御性默认值：checkpoint 重建容错（S2 bug，见 P2 评级）
     background: str = ""
     questions: list[str] = Field(default_factory=list)
+    # 人工建模预备（可选，run 启动时确定，中途不变）：建模方向约束 + 门禁基准。
+    # 无 brief 时全链路行为与旧版一致（所有注入块不渲染、门禁直接通过）。
+    brief: ModelingBrief | None = None
 
     # 当前 Blueprint 的假设（覆盖语义）。analyst 重试后必须替换旧假设，
     # 否则 modeler/sensitivity 会继续消费被 critic 否决的首轮内容。

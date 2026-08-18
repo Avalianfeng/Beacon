@@ -10,16 +10,23 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from pydantic import BaseModel
 
+import math_agent.brief as brief_module
 import math_agent.state as state_module
 
 
 def _allowed_state_types() -> tuple[type[BaseModel], ...]:
-    """只允许 math_agent.state 中定义的 Pydantic checkpoint 类型。"""
+    """只允许 math_agent.state / math_agent.brief 中定义的 Pydantic checkpoint 类型。
+
+    brief 类型（ModelingBrief / BriefCoverageItem）随 state 一起进 checkpoint，
+    必须在白名单内，否则读取含 brief 的 checkpoint 时被 JsonPlusSerializer 拦截
+    （降级为 dict，LANGGRAPH_STRICT_MSGPACK=true 时硬失败）。
+    """
     allowed = []
-    for value in vars(state_module).values():
-        if (inspect.isclass(value) and issubclass(value, BaseModel)
-                and value.__module__ == state_module.__name__):
-            allowed.append(value)
+    for module in (state_module, brief_module):
+        for value in vars(module).values():
+            if (inspect.isclass(value) and issubclass(value, BaseModel)
+                    and value.__module__ == module.__name__):
+                allowed.append(value)
     return tuple(sorted(allowed, key=lambda item: item.__name__))
 
 

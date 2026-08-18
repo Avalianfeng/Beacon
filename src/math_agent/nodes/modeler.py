@@ -45,7 +45,8 @@ def _build_model_draft(state: MathModelingState) -> ModelVersion | None:
         ctx = format_snippets(snippets, max_chars=RAG_CTX_MAX_CHARS_MODELER)
     out: ModelVersion = complete(
         build_prompt(state.problem, state.assumptions, prev_for_stage, state.stage_target,
-                     critic_fb, retrieved_context=ctx, blueprint=state.problem_blueprint),
+                     critic_fb, retrieved_context=ctx, blueprint=state.problem_blueprint,
+                     brief=state.brief),
         schema=ModelVersion, system=SYSTEM, model=MODEL_ROUTING["modeler"], profile="long",
         max_tokens=_STAGE_MAX_TOKENS[state.stage_target],
     )

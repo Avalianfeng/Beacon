@@ -78,7 +78,7 @@ def _blueprint_summary(blueprint) -> str:
 
 
 def build_prompt(problem, assumptions, prev_model, stage, critic_feedback=None,
-                 retrieved_context: str = "", blueprint=None):
+                 retrieved_context: str = "", blueprint=None, brief=None):
     asum = "\n".join(f"- {a.statement}（依据：{a.rationale}）" for a in assumptions) or "（暂无）"
     prev = "（无前一版本）"
     if prev_model is not None:
@@ -90,6 +90,10 @@ def build_prompt(problem, assumptions, prev_model, stage, critic_feedback=None,
         ) + "\n" + "\n".join(f"- 建议: {s}" for s in critic_feedback.suggestions)
     ctx = f"\n{retrieved_context}\n" if retrieved_context else ""
     bp = f"\n# Problem Blueprint\n{_blueprint_summary(blueprint)}\n" if blueprint is not None else ""
+    brief_block = ""
+    if brief is not None:
+        from math_agent.brief import render_modeler_brief
+        brief_block = f"\n{render_modeler_brief(brief)}\n"
     domain_requirements = _green_logistics_requirements(problem)
 
     # Plan D Phase 3：final 阶段才要求 figure_purposes（basic/improved 不需要图，
@@ -124,6 +128,7 @@ def build_prompt(problem, assumptions, prev_model, stage, critic_feedback=None,
     return (
         f"# 题目\n{problem}\n\n# 当前阶段\n{stage}\n\n"
         f"{bp}"
+        f"{brief_block}"
         f"# 已确认假设\n{asum}\n\n# 上一版模型\n{prev}\n{fb}\n"
         f"{ctx}\n"
         f"{domain_requirements}\n"

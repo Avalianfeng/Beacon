@@ -57,13 +57,20 @@ def _coverage_context(model) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(problem, assumptions, model, blueprint=None):
+def build_prompt(problem, assumptions, model, blueprint=None, brief=None):
     asum = "\n".join(f"- {a.statement}" for a in assumptions)
     eqs = "\n".join(f"  - $$ {e} $$" for e in model.equations)
     vars_ = "\n".join(f"  - {k}: {v}" for k, v in model.variables.items())
     bp = ""
     if blueprint is not None:
         bp = f"\n\n{_blueprint_context(blueprint)}"
+    brief_block = ""
+    if brief is not None:
+        from math_agent.brief import render_critic_brief
+        brief_block = (
+            f"\n\n{render_critic_brief(brief)}\n"
+            "模型/推导违反上述公式注意或红线 → issue（实现级检查，不评审方向本身）。"
+        )
     cov = ""
     if model.stage == "final":
         cov = f"\n\n{_coverage_context(model)}"
@@ -77,6 +84,6 @@ def build_prompt(problem, assumptions, model, blueprint=None):
         derivation_audit = f"\n\n## 推导一致性检查发现的问题\n{model.derivation_notes}"
     return (
         f"# 题目\n{problem}\n\n# 假设\n{asum}\n\n# 模型（{model.stage}）\n"
-        f"{model.description}\n方程：\n{eqs}\n变量：\n{vars_}{bp}{cov}{derivation_audit}\n\n"
+        f"{model.description}\n方程：\n{eqs}\n变量：\n{vars_}{bp}{brief_block}{cov}{derivation_audit}\n\n"
         f"请输出 JSON：{{\"target\":\"modeler\",\"score\":int,\"issues\":[{{\"section\":\"general\",\"problem\":str}}, ...],\"suggestions\":[str],\"approved\":bool}}"
     )

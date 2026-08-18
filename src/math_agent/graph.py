@@ -147,7 +147,7 @@ def build_graph(
     g.add_conditional_edges(
         "blueprint_critic",
         after_blueprint_critic,
-        {"retry": "analyst", "advance": "modeler", "advance_with_warning": "modeler"},
+        {"retry": "analyst", "advance": "modeler", "advance_with_warning": "modeler", "stop": END},
     )
     g.add_conditional_edges(
         "modeler", after_modeler_work,

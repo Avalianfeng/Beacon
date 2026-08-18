@@ -18,7 +18,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from math_agent.config import MIN_PAPER_CRITIC_SCORE
+from math_agent.config import MIN_PAPER_CRITIC_SCORE  # brief: 建模预备门禁基准
 from math_agent.graph import build_graph
 from math_agent.checkpointing import sqlite_saver
 from math_agent.state import HumanDecision, DataFileInfo, MathModelingState
@@ -266,21 +266,42 @@ def _problem_fingerprint(spec: dict) -> str:
 
 
 def _write_run_manifest(
-    out: Path, thread: str, spec: dict, *, no_interrupt: bool = False
+    out: Path, thread: str, spec: dict, *, no_interrupt: bool = False,
+    brief_sha256: str | None = None,
 ) -> None:
     path = out / "run_manifest.json"
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    payload = {
+        "thread": thread,
+        "problem_sha256": _problem_fingerprint(spec),
+        "no_interrupt": no_interrupt,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if brief_sha256:
+        payload["brief_sha256"] = brief_sha256
     try:
-        tmp.write_text(json.dumps({
-            "thread": thread,
-            "problem_sha256": _problem_fingerprint(spec),
-            "no_interrupt": no_interrupt,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
 
+
+def _load_brief_or_raise(brief: Path) -> "object":
+    """读取并校验 --brief；失败抛 typer.BadParameter（带 param_hint）。"""
+    from math_agent.brief import load_brief
+    try:
+        return load_brief(brief)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--brief") from exc
+
+
+def _copy_brief_to_out(out: Path, brief_path: Path) -> None:
+    """把 brief 原文复制到输出目录，保证运行证据链可审计。"""
+    import shutil
+    target = out / "brief.json"
+    if brief_path.resolve() == target.resolve():
+        return
+    shutil.copyfile(brief_path, target)
 
 def _validate_existing_run_manifest(out: Path, thread: str, spec: dict, force: bool) -> None:
     if force or not (out / "checkpoints.sqlite").is_file():
@@ -343,11 +364,181 @@ def _prepare_run_output(out: Path, thread: str, force: bool) -> None:
         pass
 
 
+brief_app = typer.Typer(
+    help="建模预备（Modeling Brief）：人机协同前置阶段，生成/校验 brief.json（不进主图）"
+)
+app.add_typer(brief_app, name="brief")
+
+
+def _write_brief_file(out: Path, payload: dict, force: bool) -> None:
+    """原子写入 brief.json；已存在且未 --force 时拒绝。"""
+    if out.exists() and not force:
+        raise typer.BadParameter(f"输出文件已存在：{out}（用 --force 覆盖）", param_hint="--out")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.name + f".tmp-{os.getpid()}")
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    os.replace(tmp, out)
+
+
+def _warn_brief_problem_mismatch(brief_obj, spec: dict) -> None:
+    """brief.problem_id 与题目宽松匹配；不匹配仅警告（防误用，不阻塞）。"""
+    pid = (getattr(brief_obj, "problem_id", "") or "").strip()
+    if not pid:
+        return
+    title = (spec.get("title") or "") + " " + " ".join(spec.get("questions", []))
+    if pid not in title:
+        typer.echo(
+            f"[WARN] brief.problem_id={pid!r} 与题目（{title[:40]}...）不匹配；"
+            f"请确认 brief 是否属于本题",
+            err=True,
+        )
+
+
+@brief_app.command("init")
+def brief_init(
+    problem: Path = typer.Option(..., exists=True, readable=True, help="题目 spec JSON"),
+    out: Path = typer.Option(
+        Path("docs/problems/brief.json"), help="brief.json 输出路径"
+    ),
+    force: bool = typer.Option(False, "--force", help="覆盖已存在的文件"),
+):
+    """生成空白 brief 模板（人工填写后运行 `brief check` 校验）。"""
+    spec = _read_problem_spec(problem)
+    payload = {
+        "schema_version": 1,
+        "problem_id": "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "source": ["human"],
+        "per_question_direction": [],
+        "formula_notes": [],
+        "required_discussions": [],
+        "red_lines": [],
+        "figure_plan": [],
+        "scoring_notes": [],
+        "data_notes": [],
+        "reference_direction": [],
+    }
+    _write_brief_file(out, payload, force)
+    title = spec.get("title") or (spec.get("questions") or [""])[0]
+    typer.echo(f"brief 模板已生成：{out}")
+    typer.echo(f"题目：{title[:60]}")
+    typer.echo("八字段结构与示例见 docs/2026-08-19-modeling-brief.md；")
+    typer.echo("填写后运行 `math-agent brief check --brief <path>` 校验；")
+    typer.echo("建议沉淀到 docs/problems/<题号>/brief.json 跨题复用。")
+
+
+@brief_app.command("check")
+def brief_check(
+    brief: Path = typer.Option(..., exists=True, readable=True, help="brief.json 路径"),
+):
+    """校验 brief.json 是否符合 schema（纯校验，不调用 LLM）。"""
+    from math_agent.brief import brief_item_ids, load_brief
+    from math_agent.brief_dialogue import FIELD_SPECS
+
+    try:
+        obj = load_brief(brief)
+    except ValueError as exc:
+        typer.echo(f"[FAIL] {exc}", err=True)
+        raise typer.Exit(1)
+    ids = brief_item_ids(obj)
+    typer.echo(f"[OK] {brief} 通过校验（schema_version={obj.schema_version}）")
+    for field_name, label, _, _ in FIELD_SPECS:
+        count = len(getattr(obj, field_name) or [])
+        typer.echo(f"  - {field_name}（{label}）：{count} 条")
+    typer.echo(f"共 {len(ids)} 条待回应条目（brief_coverage 门禁按这些 id 校验）")
+    if not ids:
+        typer.echo("[WARN] brief 全为空——不会注入任何约束（如需约束请填写）")
+
+
+@brief_app.command("dialogue")
+def brief_dialogue(
+    problem: Path = typer.Option(..., exists=True, readable=True, help="题目 spec JSON"),
+    out: Path = typer.Option(
+        Path("docs/problems/brief.json"), help="brief.json 输出路径"
+    ),
+    assist: bool = typer.Option(
+        True, "--assist/--no-assist",
+        help="每字段先由 LLM 按题面+数据摘要起草建议，再人工确认/修改",
+    ),
+    force: bool = typer.Option(False, "--force", help="覆盖已存在的文件"),
+):
+    """交互式生成 brief：逐字段问答（--assist 时 LLM 先起草，人工确认）。"""
+    from math_agent.brief import ModelingBrief
+    from math_agent.brief_dialogue import (
+        FIELD_SPECS, assemble_brief, build_context, draft_field,
+    )
+    from math_agent.config import STRONG_MODEL
+    from math_agent.state import DataFileInfo
+
+    spec = _read_problem_spec(problem)
+    data_files = [DataFileInfo(**f) for f in spec.get("data_files", [])]
+    context = build_context(
+        spec.get("title", ""), spec.get("background", ""),
+        spec.get("questions", []), data_files,
+    )
+    fields: dict[str, list] = {}
+    for field_name, label, desc, schema_hint in FIELD_SPECS:
+        typer.echo(f"\n=== 字段 {field_name}（{label}）===")
+        typer.echo(desc)
+        typer.echo(f"结构：{schema_hint}")
+        draft = None
+        if assist:
+            draft = draft_field(field_name, context, model=STRONG_MODEL)
+            if draft:
+                typer.echo("[AI 草稿]")
+                typer.echo(json.dumps(draft, ensure_ascii=False, indent=2))
+            else:
+                typer.echo("[AI 起草失败——请人工填写或回车跳过]")
+        typer.echo("回车=采用草稿/跳过；粘贴 JSON 数组=替换；输入 skip=跳过")
+        while True:
+            try:
+                raw = typer.prompt("内容", default="")
+            except EOFError:
+                typer.echo("\n[dialogue 中止]")
+                raise typer.Exit(130)
+            raw = (raw or "").strip()
+            if raw == "skip":
+                break
+            if raw == "":
+                if draft:
+                    fields[field_name] = draft
+                break
+            try:
+                parsed = json.loads(raw)
+                if not isinstance(parsed, list):
+                    raise ValueError("必须是 JSON 数组")
+            except (ValueError, json.JSONDecodeError) as exc:
+                typer.echo(f"解析失败：{exc}，请重新粘贴（或回车采用草稿/跳过）")
+                continue
+            fields[field_name] = parsed
+            break
+    payload = assemble_brief(
+        fields,
+        problem_id="",
+        source=["human", "model_draft"] if assist else ["human"],
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    try:
+        ModelingBrief.model_validate(payload)
+    except Exception as exc:
+        typer.echo(f"[FAIL] 组装结果不符合 schema：{exc}", err=True)
+        typer.echo("可手动修正文件后运行 `brief check` 校验。", err=True)
+        raise typer.Exit(1)
+    _write_brief_file(out, payload, force)
+    total = sum(len(v) for v in fields.values())
+    typer.echo(f"[OK] brief 已写入：{out}（共 {total} 条条目）")
+    typer.echo("运行：math-agent run --problem <spec> --brief <path>")
+
+
 @app.command()
 def run(
     problem: Path = typer.Option(..., exists=True, readable=True),
     out: Path = typer.Option(Path("runs/latest")),
     thread: str = typer.Option("default"),
+    brief: Path | None = typer.Option(None, "--brief", exists=True, readable=True,
+                                      help="人工建模预备 brief.json（可选）"),
     no_interrupt: bool = typer.Option(False, "--no-interrupt", help="跳过 HITL，直接跑到底"),
     template: str = typer.Option("default", help="LaTeX 模板：default | gmcm（国赛 gmcmthesis）"),
     school: str = typer.Option("", help="学校名称（gmcm 模板用）"),
@@ -356,6 +547,12 @@ def run(
     force: bool = typer.Option(False, "--force", help="即使已有 checkpoint 也覆盖（慎用）"),
 ):
     spec = _read_problem_spec(problem)
+    brief_obj = None
+    brief_sha256 = None
+    if brief is not None:
+        brief_obj = _load_brief_or_raise(brief)
+        brief_sha256 = hashlib.sha256(brief.read_bytes()).hexdigest()
+        _warn_brief_problem_mismatch(brief_obj, spec)
     if template not in {"default", "gmcm"}:
         raise typer.BadParameter("template 只能是 default 或 gmcm", param_hint="--template")
 
@@ -367,6 +564,7 @@ def run(
         "problem": spec.get("title", "") + "\n" + "\n".join(spec.get("questions", [])),
         "background": spec.get("background", ""),
         "questions": spec.get("questions", []),
+        "brief": brief_obj,
         "stage_target": "basic",
         "iteration": 0,
         "output_dir": str(out),
@@ -386,7 +584,9 @@ def run(
     try:
         with RunLock(out):
             _prepare_run_output(out, thread, force)
-            _write_run_manifest(out, thread, spec, no_interrupt=no_interrupt)
+            if brief_obj is not None:
+                _copy_brief_to_out(out, brief)
+            _write_run_manifest(out, thread, spec, no_interrupt=no_interrupt, brief_sha256=brief_sha256)
             clear_failure_report(out)
             try:
                 from math_agent.progress import emit_run_boundary
@@ -768,6 +968,8 @@ def supervise(
     problem: Path = typer.Option(..., exists=True, readable=True),
     out: Path = typer.Option(Path("runs/latest")),
     thread: str = typer.Option("default"),
+    brief: Path | None = typer.Option(None, "--brief", exists=True, readable=True,
+                                      help="人工建模预备 brief.json（可选）"),
     no_interrupt: bool = typer.Option(False, "--no-interrupt", help="跳过 HITL，直接跑到底"),
     template: str = typer.Option("default", help="LaTeX 模板：default | gmcm"),
     school: str = typer.Option(""),
@@ -780,6 +982,11 @@ def supervise(
 ):
     """以独立 worker 运行完整流程；崩溃或可恢复故障后自动从 checkpoint 续跑。"""
     spec = _read_problem_spec(problem)
+    brief_obj = None
+    brief_sha256 = None
+    if brief is not None:
+        brief_obj = _load_brief_or_raise(brief)
+        _warn_brief_problem_mismatch(brief_obj, spec)
     if template not in {"default", "gmcm"}:
         raise typer.BadParameter("template 只能是 default 或 gmcm", param_hint="--template")
     out = out.resolve()
@@ -796,6 +1003,8 @@ def supervise(
         args.extend(["--members", members])
     if force:
         args.append("--force")
+    if brief is not None:
+        args.extend(["--brief", str(brief.resolve())])
     try:
         result = run_process_supervisor(
             out=out,
@@ -820,6 +1029,8 @@ def start(
     problem: Path = typer.Option(..., exists=True, readable=True),
     out: Path = typer.Option(Path("runs/latest")),
     thread: str = typer.Option("default"),
+    brief: Path | None = typer.Option(None, "--brief", exists=True, readable=True,
+                                      help="人工建模预备 brief.json（可选）"),
     no_interrupt: bool = typer.Option(False, "--no-interrupt"),
     template: str = typer.Option("default"),
     force: bool = typer.Option(False, "--force"),
@@ -829,6 +1040,11 @@ def start(
 ):
     """在后台启动受监管任务，适合 Codex CLI、Claude CLI 和短生命周期终端。"""
     spec = _read_problem_spec(problem)
+    brief_obj = None
+    brief_sha256 = None
+    if brief is not None:
+        brief_obj = _load_brief_or_raise(brief)
+        _warn_brief_problem_mismatch(brief_obj, spec)
     if template not in {"default", "gmcm"}:
         raise typer.BadParameter("template 只能是 default 或 gmcm", param_hint="--template")
     out = out.resolve()
@@ -842,6 +1058,8 @@ def start(
         args.append("--no-interrupt")
     if force:
         args.append("--force")
+    if brief is not None:
+        args.extend(["--brief", str(brief.resolve())])
     pid = start_detached_supervisor(out=out, supervise_args=args, cwd=Path.cwd())
     try:
         from math_agent.run_pointer import write_active_run

@@ -23,6 +23,7 @@ def blueprint_critic_node(state: MathModelingState) -> dict:
         state.questions,
         background=state.background,
         data_files=state.data_files,
+        brief=state.brief,
     )
     out: CriticReport = complete(
         prompt, schema=CriticReport, system=SYSTEM, model=MODEL_ROUTING["model_critic"]

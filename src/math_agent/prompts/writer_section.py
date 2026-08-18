@@ -388,6 +388,12 @@ def build_section_prompt(
             vp = "; ".join(v.target for v in bp.validation_plan)
             constraints_lines.append(f"- 求解与结果必须对应验证计划：{vp}")
         rendered = rendered + "\n".join(constraints_lines)
+    # 注入人工建模预备的讨论点（按分组过滤；无 brief 时跳过）
+    if state.brief is not None:
+        from math_agent.brief import render_discussions_for_group
+        discussions = render_discussions_for_group(state.brief, group_name)
+        if discussions:
+            rendered = rendered + "\n\n---\n" + discussions
     # 注入可用数值清单：让 writer 只能引用这些数值，不得编造
     numbers = view["available_numbers"]
     if numbers:

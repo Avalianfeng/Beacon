@@ -154,7 +154,8 @@ def _truncate_model_context(model) -> tuple[str, str, str]:
 
 def build_prompt_figure_one(model, purpose: str, prev_failure=None, prev_error_kind: str = "",
                             blueprint=None, data_dir=None, data_files=None,
-                            canonical_evidence: str = "", previous_code: str = ""):
+                            canonical_evidence: str = "", previous_code: str = "",
+                            brief=None):
     """构造单图代码生成 prompt。"""
     green = _green_logistics(data_files)
     desc, eqs, vars_ = _truncate_model_context(model)
@@ -182,6 +183,10 @@ def build_prompt_figure_one(model, purpose: str, prev_failure=None, prev_error_k
     if data_dir and data_files:
         from math_agent.prompts._data_hint import build_data_hint
         data_hint = build_data_hint(data_dir, data_files)
+    brief_hint = ""
+    if brief is not None:
+        from math_agent.brief import render_coder_brief
+        brief_hint = render_coder_brief(brief) + "\n"
     canonical_hint = ""
     if canonical_evidence:
         base = (
@@ -249,7 +254,7 @@ def build_prompt_figure_one(model, purpose: str, prev_failure=None, prev_error_k
         f"# 核心方程（节选）\n{eqs}\n\n"
         f"# 核心变量（节选）\n{vars_}\n\n"
         f"# 当前绘图任务\n{purpose}\n"
-        f"{metrics_hint}{subquestions_hint}{data_hint}{canonical_hint}{fb}{repair_hint}\n"
+        f"{metrics_hint}{subquestions_hint}{data_hint}{brief_hint}{canonical_hint}{fb}{repair_hint}\n"
         f"请为上述绘图任务生成一段独立可运行的 Python 脚本。\n"
         f"优先使用标准库 + numpy + matplotlib；除非确有必要，不要依赖 pandas、seaborn、networkx 等额外库。\n"
         f"如果任务属于鲁棒性或敏感性图，请用小规模、轻量级实验设计，保证单脚本 60 秒内完成。\n"

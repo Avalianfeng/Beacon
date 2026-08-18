@@ -2789,6 +2789,7 @@ def coder_generate_node(state: MathModelingState) -> dict:
                             data_dir=state.data_dir, data_files=state.data_files,
                             canonical_evidence=primary.stdout if primary else "",
                             previous_code=previous_code,
+                            brief=state.brief,
                         ),
                         schema=CoderDraft, system=SYSTEM,
                         model=_supporting_figure_model() if is_supporting else MODEL_ROUTING["coder"],

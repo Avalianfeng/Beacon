@@ -22,6 +22,15 @@ def after_blueprint_critic(state: MathModelingState) -> str:
     report = state.latest_critic("analyst", critic_type="blueprint")
     if report is None:
         return "retry"
+    # brief_coverage 门禁（确定性，不依赖 LLM）：提供 --brief 时，blueprint 必须
+    # 逐条回应 brief 条目（followed，或 deviated+理由）。不满足 → 重试；预算耗尽
+    # 仍不满足 → stop 硬停（人工输入方向不能被忽略；无 brief 时恒通过，向后兼容）。
+    from math_agent.brief import brief_coverage_problems
+    problems = brief_coverage_problems(state.brief, state.problem_blueprint)
+    if problems:
+        if state.blueprint_iteration >= MAX_BLUEPRINT_ITERATIONS:
+            return "stop"
+        return "retry"
     if report.approved:
         return "advance"
     if state.blueprint_iteration >= MAX_BLUEPRINT_ITERATIONS:
