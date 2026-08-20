@@ -89,8 +89,9 @@ def supervise_loop(
     policy: SupervisorPolicy | None = None,
     sleep: Callable[[float], None],
     initial_mode: WorkerMode | None = None,
+    pause_requested: Callable[[], bool] | None = None,
 ) -> SupervisorResult:
-    """doc"""
+    """监督循环。若传入 pause_requested，worker 退出后检查到暂停标记则返回 paused。"""
     policy = policy or SupervisorPolicy()
     inspection = inspect()
     terminal = _terminal(inspection, auto_approve=policy.auto_approve)
@@ -106,6 +107,12 @@ def supervise_loop(
     while True:
         result = worker(mode)
         attempts += 1
+        if pause_requested is not None and pause_requested():
+            return SupervisorResult(
+                status="paused", attempts=attempts, recoveries=recoveries,
+                last_node=last_node, same_node_failures=same_node_failures,
+                message="pause requested by user",
+            )
         inspection = inspect()
         terminal = _terminal(inspection, auto_approve=policy.auto_approve)
         if terminal:
@@ -518,12 +525,14 @@ def run_process_supervisor(
                 message=f"recovery budget exhausted ({policy.max_recoveries})",
             )
         else:
+            from math_agent.pause_control import pause_requested
             current_result = supervise_loop(
                 worker=worker,
                 inspect=lambda: inspect_checkpoint(out, thread),
                 policy=active_policy,
                 sleep=time.sleep,
                 initial_mode=initial_mode,
+                pause_requested=lambda: pause_requested(out),
             )
             result = replace(
                 current_result,

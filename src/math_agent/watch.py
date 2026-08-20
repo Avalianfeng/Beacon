@@ -26,6 +26,7 @@ from math_agent.supervisor import (
     load_failure_report,
     reconcile_supervisor_state,
 )
+from math_agent import pause_control
 
 WatchMode = Literal["auto", "log", "panel"]
 PanelView = Literal["overview", "history", "log"]
@@ -107,6 +108,8 @@ class WatchView:
     insight_path: str = ""
     # model_code_consistency 门禁诊断（来自 supervisor.json["gate"] 或 gate_diagnostics.json）
     gate: dict | None = None
+    # 用户通过 CLI 或 watch 键写入的暂停请求
+    pause_requested: bool = False
 
 
 def load_recover_marker(out: str | Path) -> tuple[str, int]:
@@ -462,6 +465,7 @@ def assemble_watch_view(
     except Exception:
         pass
 
+    view.pause_requested = pause_control.pause_requested(out)
     view.next_hint = build_next_hint(view)
     return view
 
@@ -579,7 +583,10 @@ def format_watch_text(
         lines.append(f"gate: {counters}" + (f"  {warn}" if warn else ""))
     if view.next_hint:
         lines.append(f"下一步: {view.next_hint}")
-    lines.append("f switch view  q / Ctrl+C quit (does not kill task)")
+    if view.pause_requested:
+        lines.append("PAUSE REQUESTED (p request / c clear)")
+    else:
+        lines.append("p pause  c clear pause  f switch view  q / Ctrl+C quit")
     if include_logs:
         if panel_view == "log":
             lines.append("--- log ---")
@@ -615,6 +622,8 @@ def _status_block(view: WatchView) -> Text:
         header.append(f"\nstale: {view.stale_reason}", style="yellow")
 
     body = Text()
+    if view.pause_requested:
+        body.append("PAUSE REQUESTED  (worker 将在当前节点边界停止)\n", style="bold yellow")
     body.append(
         f"worker_pid: {view.worker_pid or '-'}   "
         f"attempt: {view.attempt or view.progress_attempt or '-'}   "
@@ -702,8 +711,13 @@ def render_watch_panel(
         parts.append(Text())
         parts.append(hint)
 
+    hint = (
+        "p pause  c clear pause  "
+        if not view.pause_requested else
+        "PAUSE REQUESTED  c clear pause  "
+    )
     parts.append(Text(
-        f"\nview: {panel_view}   f cycle(overview/history/log)   "
+        f"\nview: {panel_view}   {hint}f cycle(overview/history/log)   "
         "q / Ctrl+C quit (does not kill task)",
         style="dim",
     ))
@@ -826,6 +840,12 @@ def watch_loop(
                 if key in {"f", "F"}:
                     panel_view = cycle_panel_view(panel_view)
                     last_header = ""
+                if key in {"p", "P"}:
+                    pause_control.request_pause(out)
+                    console.print("[watch] 已写入暂停请求；worker 将在节点边界停止。", style="yellow")
+                if key in {"c", "C"}:
+                    pause_control.clear_pause(out)
+                    console.print("[watch] 已清除暂停请求；可运行 recover/supervise-recover 续跑。", style="green")
                 time.sleep(refresh)
         else:
             with Live(
@@ -849,6 +869,12 @@ def watch_loop(
                         return 0
                     if key in {"f", "F"}:
                         panel_view = cycle_panel_view(panel_view)
+                    if key in {"p", "P"}:
+                        pause_control.request_pause(out)
+                        console.print("[watch] 已写入暂停请求；worker 将在节点边界停止。", style="yellow")
+                    if key in {"c", "C"}:
+                        pause_control.clear_pause(out)
+                        console.print("[watch] 已清除暂停请求；可运行 recover/supervise-recover 续跑。", style="green")
                     time.sleep(refresh)
     except KeyboardInterrupt:
         return 0

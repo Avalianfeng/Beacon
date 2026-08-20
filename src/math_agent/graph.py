@@ -63,8 +63,18 @@ def _wrap(fn, name: str):
         print(line, flush=True)
         tracer = get_current()
         out_dir = tracer.out_dir if tracer is not None else None
+        if out_dir is None:
+            try:
+                out_dir = s.get("output_dir", None) if isinstance(s, dict) else getattr(s, "output_dir", None)
+            except Exception:
+                out_dir = None
         append_supervisor_log(out_dir, line)
         emit_node_start(out_dir, name, **({"stage": stage} if stage else {}))
+        # 节点边界检查：暂停请求只拦截新节点执行，不中断已运行节点。
+        if out_dir is not None:
+            from math_agent.pause_control import pause_requested, PauseRequested
+            if pause_requested(out_dir):
+                raise PauseRequested(name)
         started = time.monotonic()
         try:
             if tracer is not None:

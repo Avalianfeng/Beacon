@@ -19,7 +19,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from math_agent.config import MIN_PAPER_CRITIC_SCORE  # brief: 建模预备门禁基准
+from math_agent.config import (
+    MIN_PAPER_CRITIC_SCORE,
+    MIN_MODEL_CODE_SCORE,
+    MAX_CODE_VERIFY_ITERATIONS,
+    MAX_CODE_NO_PRIMARY_ITERATIONS,
+)
 from math_agent.graph import build_graph
 from math_agent.checkpointing import sqlite_saver
 from math_agent.state import HumanDecision, DataFileInfo, MathModelingState
@@ -39,6 +44,8 @@ from math_agent.supervisor import (
 from math_agent.tracing import (
     Tracer, get_last_node, set_current, reset_current, clear_failed_node,
 )
+from math_agent import pause_control
+from math_agent.pause_control import PauseRequested
 
 
 app = typer.Typer(help="Math modeling multi-agent system.")
@@ -350,6 +357,7 @@ def _prepare_run_output(out: Path, thread: str, force: bool) -> None:
         "run_manifest.json", "progress.jsonl",
     ):
         (out / stale_name).unlink(missing_ok=True)
+    (out / pause_control.PAUSE_MARKER_NAME).unlink(missing_ok=True)
     insights = out / "insights"
     if insights.is_dir():
         import shutil
@@ -854,6 +862,13 @@ def run(
         typer.echo(f"  Retry budget used up. Wait and resume:", err=True)
         typer.echo(f"  uv run math-agent recover --out {out} --thread {thread}")
         raise typer.Exit(1)
+    except PauseRequested as e:
+        typer.echo(
+            f"\n[PAUSED] 节点 '{e.node}' 边界捕获暂停请求；checkpoint 已保存。\n"
+            f"  使用 `math-agent recover --out {out} --thread {thread}` 续跑。",
+            err=True,
+        )
+        raise typer.Exit(0)
     except LLMError as e:
         failure = _record_failure(out, e)
         typer.echo(f"\n[FAILED] LLM error at node '{failure.node}': {e}", err=True)
@@ -872,8 +887,23 @@ def run(
         if tok is not None:
             reset_current(tok)
     clear_failure_report(out)
+    pause_control.clear_pause(out)
     _dump_state_summary(out, thread)
     _echo_run_outcome(out, thread)
+
+
+@app.command()
+def pause(
+    out: Path = typer.Option(Path("runs/latest")),
+):
+    """向运行中的 run 写入暂停请求；worker 在当前节点结束后停止。"""
+    out = out.resolve()
+    if not out.is_dir():
+        typer.echo(f"[FAIL] 输出目录不存在：{out}", err=True)
+        raise typer.Exit(1)
+    pause_control.request_pause(out)
+    typer.echo(f"[PAUSE] 已写入暂停请求到 {out / pause_control.PAUSE_MARKER_NAME}")
+    typer.echo(f"  worker 将在当前节点边界停止，之后可用 recover 续跑。")
 
 
 def _echo_run_outcome(out: Path, thread: str) -> None:
@@ -1018,6 +1048,7 @@ def resume(
     _require_trace_thread(out, thread)
     clear_failed_node()
     clear_failure_report(out)
+    pause_control.clear_pause(out)
     tracer = Tracer(thread_id=thread, out_dir=out, append_existing=True)
     tok = set_current(tracer)
     try:
@@ -1033,6 +1064,13 @@ def resume(
     except RunLockedError as e:
         typer.echo(f"[BUSY] {e}", err=True)
         raise typer.Exit(75)
+    except PauseRequested as e:
+        typer.echo(
+            f"[PAUSED] 节点 '{e.node}' 边界捕获暂停请求；checkpoint 已保存。\n"
+            f"  使用 `math-agent recover --out {out} --thread {thread}` 续跑。",
+            err=True,
+        )
+        raise typer.Exit(0)
     except LLMError as e:
         failure = _record_failure(out, e)
         typer.echo(f"[FAILED] LLM error at node '{failure.node}': {e}", err=True)
@@ -1045,6 +1083,7 @@ def resume(
         tracer.flush()
         reset_current(tok)
     clear_failure_report(out)
+    pause_control.clear_pause(out)
     _dump_state_summary(out, thread)
     if approve:
         typer.echo(f"done. tex/md written to {out}")
@@ -1077,6 +1116,7 @@ def recover(
         pass
     clear_failed_node()
     clear_failure_report(out)
+    pause_control.clear_pause(out)
     tracer = Tracer(thread_id=thread, out_dir=out, append_existing=True)
     tok = set_current(tracer)
     # 连续失败计数只防止真正的死循环；间歇性 502 至少允许三次人工 recover。
@@ -1143,6 +1183,13 @@ def recover(
     except RunLockedError as e:
         typer.echo(f"[BUSY] {e}", err=True)
         raise typer.Exit(75)
+    except PauseRequested as e:
+        typer.echo(
+            f"[PAUSED] 节点 '{e.node}' 边界捕获暂停请求；checkpoint next 已指向下一节点。\n"
+            f"  清除标记后可用 `math-agent recover --out {out} --thread {thread}` 续跑。",
+            err=True,
+        )
+        raise typer.Exit(0)
     except LLMError as e:
         failure = _record_failure(out, e)
         failed = failure.node
@@ -1166,6 +1213,216 @@ def recover(
     clear_failure_report(out)
     _dump_state_summary(out, thread)
     typer.echo(f"recovered. trace at {out / 'trace.json'}")
+
+
+def _is_gate_stop_state(state: MathModelingState) -> bool:
+    """从 state 推导是否因 coder/一致性门禁耗尽而停机（不依赖 nodes/ 内部）。"""
+    reports = state.model_code_reports
+    if not reports:
+        return False
+    last = reports[-1]
+    if last.approved and last.score >= MIN_MODEL_CODE_SCORE:
+        return False
+    over_no_primary = state.code_verify_iteration >= MAX_CODE_NO_PRIMARY_ITERATIONS
+    over_low_score = state.code_verify_low_score_iteration >= MAX_CODE_VERIFY_ITERATIONS
+    return over_no_primary or over_low_score
+
+
+def _gate_stop_reason(state: MathModelingState) -> str:
+    if state.code_verify_iteration >= MAX_CODE_NO_PRIMARY_ITERATIONS:
+        return "code_verify 无主证据轮次耗尽"
+    if state.code_verify_low_score_iteration >= MAX_CODE_VERIFY_ITERATIONS:
+        return "code_verify 低分修复轮次耗尽"
+    return "code_verify 门禁上限"
+
+
+def _find_restart_checkpoint(g, config: dict, node_name: str):
+    """在历史 checkpoint 中找 next 指向 node_name 的最近快照。"""
+    try:
+        history = list(g.get_state_history(config))
+    except Exception:
+        return None
+    for snap in history:
+        try:
+            if snap.next and snap.next[0] == node_name:
+                return snap
+        except Exception:
+            continue
+    return None
+
+
+def _checkpoint_id_of(snapshot) -> str | None:
+    """从 StateSnapshot 取出可传给 config 的 checkpoint_id。"""
+    if snapshot is None:
+        return None
+    if hasattr(snapshot, "checkpoint_id") and snapshot.checkpoint_id:
+        return str(snapshot.checkpoint_id)
+    if hasattr(snapshot, "checkpoint") and snapshot.checkpoint:
+        chk = snapshot.checkpoint
+        if hasattr(chk, "id"):
+            return str(chk.id)
+        if isinstance(chk, dict):
+            return str(chk.get("id"))
+    if hasattr(snapshot, "config") and isinstance(snapshot.config, dict):
+        cid = snapshot.config.get("configurable", {}).get("checkpoint_id")
+        if cid:
+            return str(cid)
+    return None
+
+
+def _append_restart_record(out: Path, from_node: str, reason: str, checkpoint_id: str) -> None:
+    path = out / "run_manifest.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        manifest = {}
+    restarts = manifest.setdefault("restarts", [])
+    restarts.append({
+        "from_node": from_node,
+        "reason": reason,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "checkpoint_id": str(checkpoint_id),
+    })
+    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    try:
+        tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _supersede_gate_diagnostics(out: Path) -> None:
+    path = out / "gate_diagnostics.json"
+    if path.is_file():
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        path.rename(out / f"gate_diagnostics.superseded-{ts}.json")
+
+
+def _emit_restart_boundary(out: Path) -> None:
+    try:
+        from math_agent.progress import emit_run_boundary
+        emit_run_boundary(out, attempt=1, mode="restart")
+    except Exception:
+        pass
+
+
+@app.command()
+def restart(
+    out: Path = typer.Option(Path("runs/latest")),
+    thread: str = typer.Option("default"),
+    from_node: str = typer.Option("coder", "--from", help="目前仅支持 coder"),
+    reason: str = typer.Option(..., "--reason", help="人工判定重启原因，写入 run_manifest"),
+    problem: Path | None = typer.Option(None, "--problem", exists=True, readable=True, help="用于校验输入不变性"),
+):
+    """门禁停机后，从指定节点前重新执行。
+
+    仅当 checkpoint 处于门禁停机态（next 为空、一致性门禁计数器耗尽）时可用；
+    不绕过任何门禁，只是让人工判定守卫/方向无问题后重试一次合法节点。
+    """
+    _require_checkpoint(out)
+    _require_trace_thread(out, thread)
+    if from_node != "coder":
+        raise typer.BadParameter("目前 --from 只支持 coder", param_hint="--from")
+    out = out.resolve()
+
+    # 1. 读取当前 checkpoint 并验证停机态
+    with _saver_cm(out) as saver:
+        g = build_graph(checkpointer=saver)
+        config = _config(thread)
+        snapshot = g.get_state(config)
+        if snapshot is None or not snapshot.values:
+            raise ValueError(f"checkpoint has no state for thread={thread}")
+        state = MathModelingState.model_validate(snapshot.values)
+
+        if snapshot.next:
+            typer.echo(
+                f"[REJECT] checkpoint 未处于停机态（next={snapshot.next}），不能 restart。",
+                err=True,
+            )
+            raise typer.Exit(1)
+        inspection = inspect_checkpoint(out, thread)
+        if inspection.final_status in {"completed", "degraded", "rejected"}:
+            typer.echo(f"[REJECT] run 已终态完成（{inspection.final_status}），不能 restart。", err=True)
+            raise typer.Exit(1)
+        if not _is_gate_stop_state(state):
+            typer.echo(
+                "[REJECT] checkpoint 不是 coder/一致性门禁停机态，不能 restart。\n"
+                "  只有 code_verify 计数器耗尽导致的停机才允许人工放行重试。",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+    # 2. 输入不变性校验
+    manifest_path = out / "run_manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError) as exc:
+        typer.echo(f"[REJECT] 无法读取 run_manifest.json：{exc}", err=True)
+        raise typer.Exit(1)
+    if problem is not None:
+        spec = _read_problem_spec(problem)
+        if manifest.get("problem_sha256") != _problem_fingerprint(spec):
+            typer.echo(
+                "[REJECT] --problem 与 run_manifest 不匹配；题目或 brief 已变，只能全新 run。",
+                err=True,
+            )
+            raise typer.Exit(1)
+    brief_path = out / "brief.json"
+    if brief_path.is_file() and manifest.get("brief_sha256"):
+        if hashlib.sha256(brief_path.read_bytes()).hexdigest() != manifest["brief_sha256"]:
+            typer.echo(
+                "[REJECT] out/brief.json 与 run_manifest 不匹配；输入已变，只能全新 run。",
+                err=True,
+            )
+            raise typer.Exit(1)
+    elif not brief_path.is_file() and manifest.get("brief_sha256"):
+        typer.echo(
+            "[REJECT] 原 run 使用了 brief，但 out/brief.json 缺失；无法验证输入不变性。",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    # 3. 回退到目标节点前并重置计数器、标注血缘
+    with RunLock(out), _saver_cm(out) as saver:
+        g = build_graph(checkpointer=saver, interrupt_before=[] if state.human_decision else ["human_review"])
+        target = _find_restart_checkpoint(g, config, from_node)
+        if target is None:
+            typer.echo(
+                f"[FAIL] 未在 checkpoint 历史中找 next={from_node} 的快照，无法 restart。",
+                err=True,
+            )
+            raise typer.Exit(1)
+        checkpoint_id = _checkpoint_id_of(target)
+        if checkpoint_id is None:
+            typer.echo("[FAIL] 无法读取目标 checkpoint 的 id。", err=True)
+            raise typer.Exit(1)
+        # fork 配置必须带 checkpoint_ns（LangGraph 要求 thread_id+ns+checkpoint_id 三元组），
+        # 直接从目标快照的 config 继承，避免手写缺键。
+        restart_config = {"configurable": {**target.config.get("configurable", {}), "checkpoint_id": checkpoint_id}}
+        g.update_state(
+            restart_config,
+            {
+                "code_verify_iteration": 0,
+                "code_verify_low_score_iteration": 0,
+            },
+            as_node="model_code_consistency",
+        )
+        _append_restart_record(out, from_node, reason, checkpoint_id)
+        _supersede_gate_diagnostics(out)
+        clear_failure_report(out)
+        pause_control.clear_pause(out)
+        _emit_restart_boundary(out)
+        try:
+            g.invoke(None, config=restart_config)
+        except PauseRequested as e:
+            typer.echo(
+                f"[PAUSED] 节点 '{e.node}' 边界捕获暂停请求；checkpoint 已保存。\n"
+                f"  使用 `math-agent recover --out {out} --thread {thread}` 续跑。",
+                err=True,
+            )
+            raise typer.Exit(0)
+    _dump_state_summary(out, thread)
+    _echo_run_outcome(out, thread)
 
 
 def _supervisor_exit(result, out: Path, thread: str) -> None:
