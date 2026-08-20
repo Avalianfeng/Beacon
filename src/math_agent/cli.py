@@ -371,6 +371,164 @@ brief_app = typer.Typer(
 app.add_typer(brief_app, name="brief")
 
 
+problem_app = typer.Typer(
+    help="题目资产：导入/归档/总览（纯机械，智能内容按 brief-playbook 外置给人 + 外部强模型）",
+    no_args_is_help=True,
+)
+
+
+@problem_app.command("import")
+def problem_import(
+    source: Path = typer.Argument(..., exists=True, readable=True, help="题面文件（md/txt 直接复制；pdf/docx 走现有 ingest 管线）"),
+    problem_id: str = typer.Option(..., "--problem-id", help="题号（字母/数字/连字符，如 mcm51-b）"),
+    attachments: Path | None = typer.Option(
+        None, "--attachments", exists=True, file_okay=False, help="附件目录（可选，逐文件归档+哈希）",
+    ),
+    force: bool = typer.Option(False, "--force", help="覆盖已存在的题目目录（慎用）"),
+):
+    """最小导入：source/ 归档 + sha256 清单 + problem.md + spec v2 骨架（不含 AI 起草）。"""
+    import shutil
+    from datetime import datetime, timezone
+
+    if not re.fullmatch(r"[A-Za-z0-9-]+", problem_id):
+        raise typer.BadParameter("problem_id 只能是字母/数字/连字符", param_hint="--problem-id")
+    target = Path("problems") / problem_id
+    if target.exists() and not force:
+        raise typer.BadParameter(
+            f"problems/{problem_id} 已存在；换题号或 --force 覆盖", param_hint="--problem-id",
+        )
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "source").mkdir(exist_ok=True)
+
+    def _archive(path: Path) -> dict:
+        dest = target / "source" / path.name
+        shutil.copyfile(path, dest)
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+        # path 为相对 data_dir（"source"）的文件名，data_hint 用 data_dir+path 拼接
+        return {"path": path.name, "sha256": digest, "name": path.name}
+
+    archived = [_archive(source)]
+    if attachments is not None:
+        for f in sorted(attachments.iterdir()):
+            if f.is_file():
+                archived.append(_archive(f))
+
+    # 事实层 problem.md：md/txt 直接复制；pdf/docx 走现有 ingest 管线（乱码可视觉回退）
+    if source.suffix.lower() in {".md", ".txt"}:
+        shutil.copyfile(source, target / "problem.md")
+    else:
+        from math_agent.problem_ingest import parse_problem_file
+
+        try:
+            parsed = parse_problem_file(source, write_md=False)
+        except Exception as exc:  # noqa: BLE001
+            raise typer.BadParameter(
+                f"题面解析失败：{exc}；请先人工整理为 md 再 import（复杂文件可用 scripts/extract_file_meta.py）",
+            ) from exc
+        (target / "problem.md").write_text(parsed.text, encoding="utf-8")
+
+    (target / "source" / "manifest.json").write_text(
+        json.dumps({a["name"]: a["sha256"] for a in archived}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    data_files = []
+    for a in archived:
+        lower = a["name"].lower()
+        if lower.endswith((".xlsx", ".xls")):
+            file_type = "xlsx"
+        elif lower.endswith(".csv"):
+            file_type = "csv"
+        elif lower.endswith(".pdf"):
+            file_type = "pdf"
+        elif lower.endswith(".docx"):
+            file_type = "docx"
+        elif lower.endswith((".md", ".txt")):
+            file_type = "md"
+        else:
+            file_type = "txt"
+        data_files.append({
+            "filename": a["name"], "file_type": file_type, "path": a["path"], "summary": {},
+        })
+
+    spec = {
+        "schema_version": 2,
+        "problem_id": problem_id,
+        "title": "",
+        "background": "",
+        "questions": [],
+        "source": {
+            "md_path": "problem.md",
+            "source_files": [{"path": a["path"], "sha256": a["sha256"]} for a in archived],
+            "imported_at": datetime.now(timezone.utc).isoformat(),
+            "imported_by": "cli",
+        },
+        "feasibility": {
+            "checklist": ["external_data", "simulation", "survey", "supercomputer"],
+            "blockers": [],
+            "assessment": "",
+        },
+        "data_files": data_files,
+        "data_dir": "source",
+    }
+    (target / "problem.json").write_text(
+        json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+
+    typer.echo(f"[OK] problems/{problem_id} 已导入：source 归档 {len(archived)} 个文件 + 哈希 + problem.md + spec 骨架")
+    typer.echo("下一步（按 brief-playbook）：人工填写 problem.json 的 title/background/questions/feasibility，")
+    typer.echo(f"然后 `math-agent brief init --problem problems/{problem_id}/problem.json --out problems/{problem_id}/brief.json`")
+
+
+@problem_app.command("show")
+def problem_show(
+    problem_id: str = typer.Argument(..., help="题号（problems/<题号>/ 目录名）"),
+):
+    """总览：spec 摘要 + 附件 + feasibility + brief 状态 + 最近 run 指针。"""
+    target = Path("problems") / problem_id
+    spec_path = target / "problem.json"
+    if not spec_path.is_file():
+        raise typer.BadParameter(f"problems/{problem_id}/problem.json 不存在", param_hint="problem_id")
+    try:
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(f"problem.json 损坏：{exc}") from exc
+
+    typer.echo(f"=== problem show {problem_id} ===")
+    typer.echo(f"title    : {spec.get('title') or '（未填）'}")
+    qs = spec.get("questions") or []
+    typer.echo(f"questions: {len(qs)} 条" + ("" if qs else "（未填）"))
+    blockers = spec.get("feasibility", {}).get("blockers") or []
+    typer.echo(f"blockers : {blockers if blockers else '空（可达）'}")
+    src = spec.get("source", {})
+    files = src.get("source_files") or []
+    typer.echo(f"source   : {len(files)} 个文件已归档（md={src.get('md_path')}）")
+    brief_path = target / "brief.json"
+    if brief_path.is_file():
+        digest = hashlib.sha256(brief_path.read_bytes()).hexdigest()[:12]
+        typer.echo(f"brief    : {brief_path}（sha256 前 12 位 {digest}）→ 运行 `brief check` 校验")
+    else:
+        typer.echo("brief    : 未生成（`brief init --problem problems/<id>/problem.json ...`）")
+
+    fp = _problem_fingerprint({
+        k: spec.get(k) for k in ("title", "background", "questions", "data_files", "data_dir")
+    })
+    hits = []
+    runs_root = Path("runs")
+    if runs_root.is_dir():
+        for manifest_path in sorted(runs_root.glob("*/run_manifest.json"), reverse=True):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            if manifest.get("problem_sha256") == fp:
+                hits.append(manifest_path.parent.name)
+    typer.echo("最近 run  : " + ("、".join(hits[:5]) + "（见 runs/ 对应目录）" if hits else "无（尚未跑过本题）"))
+
+
+app.add_typer(problem_app, name="problem")
+
+
 def _write_brief_file(out: Path, payload: dict, force: bool) -> None:
     """原子写入 brief.json；已存在且未 --force 时拒绝。"""
     if out.exists() and not force:
@@ -553,6 +711,58 @@ def brief_dialogue(
     typer.echo("运行：math-agent run --problem <spec> --brief <path>")
 
 
+def _dry_run_preflight(
+    problem_path: Path, spec: dict, brief_path: Path | None,
+    brief_obj, out: Path, thread: str, force: bool,
+) -> None:
+    """`run --dry-run`：启动前全项预检（不建目录、不烧 token）。
+
+    spec 五字段已由 `_read_problem_spec` 校验；本函数补查：
+    feasibility.blockers（能力不可达强制中断）、附件存在性、out 目录冲突。
+    """
+    from math_agent.brief import brief_item_ids
+
+    problems_found: list[str] = []
+    try:
+        raw = json.loads(problem_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(f"题目文件不可读：{exc}", param_hint="--problem") from exc
+
+    blockers = raw.get("feasibility", {}).get("blockers") or []
+    if not isinstance(blockers, list):
+        blockers = []
+    if blockers:
+        problems_found.append(f"feasibility.blockers 非空（能力不可达）：{blockers}")
+
+    data_dir = spec.get("data_dir") or ""
+    for df in spec.get("data_files", []):
+        rel = (df.get("path") or "").strip()
+        if not rel:
+            continue
+        fp = Path(rel) if os.path.isabs(rel) else Path(data_dir) / rel
+        if not fp.is_file():
+            problems_found.append(f"附件缺失：{fp}（data_files 的 {df.get('filename', rel)}）")
+
+    if (out / "checkpoints.sqlite").is_file() and not force:
+        problems_found.append(f"输出目录已有 checkpoint（{out}）：换 --out 或 --force")
+
+    typer.echo("=== run --dry-run 预检 ===")
+    typer.echo(f"problem : {problem_path}（{(spec.get('title') or '')[:50]}...）")
+    typer.echo(f"thread  : {thread}")
+    typer.echo(f"out     : {out}")
+    brief_desc = str(brief_path) if brief_path is not None else "（无）"
+    if brief_obj is not None:
+        brief_desc += f"（{len(brief_item_ids(brief_obj))} 条待回应条目）"
+    typer.echo(f"brief   : {brief_desc}")
+    typer.echo(f"data    : data_dir={data_dir or '（无）'}，data_files={len(spec.get('data_files', []))} 个")
+    if problems_found:
+        for msg in problems_found:
+            typer.echo(f"  [FAIL] {msg}", err=True)
+        typer.echo(f"预检未通过（{len(problems_found)} 项），禁止启动。", err=True)
+        raise typer.Exit(1)
+    typer.echo("  [OK] 全部通过，可启动 run（烧 token 前请确认预算）。")
+
+
 @app.command()
 def run(
     problem: Path = typer.Option(..., exists=True, readable=True),
@@ -561,6 +771,7 @@ def run(
     brief: Path | None = typer.Option(None, "--brief", exists=True, readable=True,
                                       help="人工建模预备 brief.json（可选）"),
     no_interrupt: bool = typer.Option(False, "--no-interrupt", help="跳过 HITL，直接跑到底"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只做启动前预检（spec/brief/feasibility/附件/out 冲突），不烧 token"),
     template: str = typer.Option("default", help="LaTeX 模板：default | gmcm（国赛 gmcmthesis）"),
     school: str = typer.Option("", help="学校名称（gmcm 模板用）"),
     team_id: str = typer.Option("", help="参赛报名号（gmcm 模板用）"),
@@ -576,6 +787,10 @@ def run(
         _warn_brief_problem_mismatch(brief_obj, spec)
     if template not in {"default", "gmcm"}:
         raise typer.BadParameter("template 只能是 default 或 gmcm", param_hint="--template")
+
+    if dry_run:
+        _dry_run_preflight(problem, spec, brief, brief_obj, out, thread, force)
+        return
 
     # 防止以同一 --thread 重复输出到同一目录，掩盖上次 runs
     out.mkdir(parents=True, exist_ok=True)

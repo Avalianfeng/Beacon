@@ -6,7 +6,7 @@
   1. 信息够不够开下一轮「路线更迭」；
   2. 目标句现在实现到哪一层；
   3. 接手者按什么顺序验证、验证通过后才改 coder/modeler。
-- 工作区：HEAD `977a21f`（brief 全栈已提交）；全量 pytest **798 passed / 12 failed / 4 skipped**（共收集 814，2026-08-20 批次 0 新增 11 个测试后实测；12 失败为既有管线，非 brief 链路）。
+- 工作区：HEAD `9f2906c`；全量 pytest **810 passed / 0 failed / 4 skipped**（收集 814，2026-08-20 实测；12 个既有失败已修复入库，与 brief 链路无关）。
 
 ---
 
@@ -29,7 +29,8 @@
 
 分层认知仍成立，不要把下一轮做成「再评估 brief 对不对」：
 
-- 方向级：前置对话 / 现成 `brief.json`；
+- 方向级：前置**题目探索** + 对话 / 现成 `brief.json`（2026-08-21 明确：探索先于建模——
+  「先问可能要求看到什么，再问怎么解」，协议见 docs/brief-playbook.md）；
 - 实现级：现有 critic / consistency / runner 门禁；
 - 传递级：`brief_coverage` 硬停（已实现、有单测）。
 
@@ -49,7 +50,7 @@
 
 - **没有**带 `--brief` 的 MCM-51 新 run（analyst 的 `brief_coverage`、coder 是否避开红线、论文是否出现 3.1-e0 讨论，全无 runs 产物）。
 - **没有**把对话走通：不知道 `--assist` 在本机网关/模型下是否可用、耗时、人要改多少。
-- 全量 12 失败（coder 多图、granular recovery、graph smoke 不出 paper）与 brief 无关，但会干扰「跑一遍完整图」的信心；**另案**，不要和 brief 绑在一起修。
+- 全量 12 失败（coder 多图、granular recovery、graph smoke 不出 paper）与 brief 无关，已作**另案**交 Cursor 修复（2026-08-20：全量 810/0/4，入库 `9f2906c`）。
 
 建议顺序：**先验证管道（第三节）→ 再开一条带 brief 的 MCM-51 短跑 → 用第四节清单判定方向是否被执行 → 最后才改 coder/modeler 实现。** 不要在未验证注入的情况下直接大改求解代码。
 
@@ -149,7 +150,7 @@ math-agent supervise --problem <MCM-51 spec> --out runs/51mcm-a-brief-v1 --brief
 
 1. 读 [modeling-brief-plan.md](10-ModelingBrief实施计划书.md) 第二、三节（决策与 schema），再读本文第三、四节（怎么验）。
 2. 仓库仍可能 dirty；**禁止 `git checkout` 恢复** brief 相关文件。
-3. 不要把 12 个全量失败当成 brief 回滚信号。
+3. 12 个全量失败已修复清零（2026-08-20，入库 `9f2906c`），不要当成 brief 回滚信号。
 4. 没有 `runs/*/brief.json` + coverage 抽样前，不要写「已在源头杜绝方向性错误」。
 
 ---
@@ -157,8 +158,10 @@ math-agent supervise --problem <MCM-51 spec> --out runs/51mcm-a-brief-v1 --brief
 ## 八、机制修复清单（brief-v1 评审后，下一轮 run 的前置条件，2026-08-19）
 
 > 修**体系机制**（改代码/prompt/门禁让下一轮不再犯），而不是修这篇论文。
-> 执行顺序：**M1 + M3 + M6 先做**（小、直接影响下一轮质量）→ 跑 brief-v2 验证 →
-> **M2 + M4** 随注入补全阶段 1 排期 → **M5** 并入 coder 改进。
+> 执行顺序（v2，2026-08-21）：**M1 / M6 / M5-prompt 已完成**（批次 0）；
+> **M3 → 主线工作项 2（批次 1）、M2 → 主线工作项 3（批次 3 文档 §3.1 单拎）**，两者在第一次真跑前落地；
+> **M4 冻结**（前几题手工补对照 + 17#8 诚实记录）；M5 校验层待评估（冻结，07 行 8）；
+> 主验证改为 **mcm51-b 干净题真跑**（实现计划-8-20/00 演练），A 题 brief-v2 降级为可选实验（见 实现计划-8-20/README v2）。
 
 | # | 机制项 | 证据（brief-v1 评审） | 内容 | 量级 | 设计债 |
 |---|---|---|---|---|---|

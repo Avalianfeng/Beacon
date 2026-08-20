@@ -10,8 +10,11 @@ _GREEN_LOGISTICS_FILES = frozenset({
 })
 
 # 城市绿色物流题的专用指标名；非物流题生成代码必须禁止。
+# 注意：total_cost 是通用成本指标名，成本/费用类题目（如 mcm51-b Q4 购置预算）
+# 合法使用，不在此禁止——物流口径污染由其余专名（vehicles/service_rate 等）判定
+# （2026-08-21 mcm51-b 真跑实证：total_cost 被误杀导致一致性 0/10 停机）。
 _GREEN_METRIC_NAMES = (
-    "total_cost", "vehicles", "service_rate", "total_carbon",
+    "vehicles", "service_rate", "total_carbon",
     "avg_delivery_time", "fuel_vehicles", "ev_vehicles",
     "total_distance", "timewin_rate", "response_time",
 )

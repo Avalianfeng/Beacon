@@ -977,8 +977,19 @@ def test_non_logistics_primary_rejects_green_metric_leak(workdir):
 
     assert valid is False
     assert "非物流题禁止输出物流指标" in reason
-    assert "total_cost" in reason
+    assert "vehicles" in reason  # total_cost 已移除（通用成本名，2026-08-21），专名仍禁止
+    assert "total_cost" not in reason
     assert kind == "output_validation"
+
+
+def test_leaked_green_metrics_allows_generic_total_cost():
+    """total_cost 是通用成本名，非物流成本类题目合法；物流专名仍报漏。"""
+    from math_agent.nodes.coder import _leaked_green_metrics
+
+    assert _leaked_green_metrics({"ours": {"total_cost": 10}}) == []
+    assert _leaked_green_metrics({"ours": {"vehicles": 3}}) == ["vehicles"]
+    assert _leaked_green_metrics({"ours": {"total_cost": 10, "vehicles": 3}}) == ["vehicles"]
+    assert _leaked_green_metrics({"ours": {"total_cost": 10, "service_rate": 0.9}}) == ["service_rate"]
 
 
 def test_green_depth_evidence_gate_requires_statistical_and_dynamic_experiments():

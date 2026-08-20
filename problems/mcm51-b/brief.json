@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "problem_id": "mcm51-b",
+  "created_at": "2026-08-21T00:00:00+08:00",
+  "source": [
+    "human"
+  ],
+  "per_question_direction": [
+    {
+      "id": "model-framework",
+      "question_id": "",
+      "direction": "统一母模型：多项目移动资源 RCPSP + MILP/CP-SAT——A–E 为并行项目、设备为可重复使用资源且带当前位置、跨车间形成顺序相关转移时间、双设备工序拆为联合资源活动；Q1→Q4 逐级开放决策（时间排程→跨车间流动→班组/设备池→离散购置），目标恒为 min Cmax；论文只保留这一个主主线",
+      "forbidden": "禁止把 RCPSP/Job-Shop/GA/两层分解并列成多个“核心模型”；其余只能作求解/验证对照"
+    },
+    {
+      "id": "q1-direction",
+      "question_id": "1",
+      "direction": "单车间 A、班组1：A1→A2→A3 固定顺序 + 有限设备容量 + 双设备异步完成；min Cmax；表1 逐设备排程（设备编号/起始/结束/持续/工序编号）；A1/A2 双设备工序按两设备各自完成判定",
+      "forbidden": "禁止把工序顺序当可自由重排问题；禁止双设备同步锁定"
+    },
+    {
+      "id": "q2-direction",
+      "question_id": "2",
+      "direction": "五车间、班组1：移动资源调度——设备编号是数学决策实体（哪台设备+何时做+做完去哪个车间）；跨车间可用=前任务结束+运输时间（距离÷2m/s）；同车间转移为0；min Cmax；表2 逐设备排程",
+      "forbidden": "禁止忽略跨车间转运（假设4）；禁止把设备当无位置状态"
+    },
+    {
+      "id": "q3-direction",
+      "question_id": "3",
+      "direction": "班组1+2 协同：第二班组价值=空间覆盖改善（不同驻地出发减少迁移）；设备归属班组只决定初始位置与初始设备池，完成任务后不回班组、不改变归属；min Cmax；表3 加“班组”列（记录实际使用设备所属班组）",
+      "forbidden": "禁止班组间共享设备；禁止设备完成任务后强制返回驻地"
+    },
+    {
+      "id": "q4-direction",
+      "question_id": "4",
+      "direction": "预算≤500000：购置台数×班组×调度联合优化（非先买后排）；新增设备 00:00 起可用、归属班组由决策变量决定、编号模型内部生成；表4 调度+表5 购置台数与总费用；建议枚举预算内购置组合+每组合精确调度，或同一框架加整数购置变量；画预算-工期曲线",
+      "forbidden": "禁止总费用>500000；禁止先凭经验定采购再排程；禁止购买设备跨班组使用"
+    }
+  ],
+  "formula_notes": [
+    {
+      "id": "formula-duration",
+      "question_id": "",
+      "note": "设备-工序加工时长=工程量÷设备效率（m³/h），统一转秒后向上取整（假设5）；如 A1 灌装机 300/200=1.5h=5400s"
+    },
+    {
+      "id": "formula-dual",
+      "question_id": "",
+      "note": "核心口径：设备完成≠工序完成。工序完成判据 C_i=max(C_{i,r1},C_{i,r2})——两类设备都完成各自工程量后工序才结束；两台完成时刻可以不同"
+    },
+    {
+      "id": "formula-release",
+      "question_id": "",
+      "note": "设备完成自身工程量后立即释放（可接新任务或开始转运），不被搭档锁死——异步双资源模型，可能一台设备已开始转运而工序整体未完成"
+    },
+    {
+      "id": "formula-transport",
+      "question_id": "",
+      "note": "跨车间转运时间=车间距离÷2 m/s，统一秒级向上取整；同车间内工序间转移为0（假设4）；运输占用该设备但不占整个班组"
+    },
+    {
+      "id": "formula-cloop",
+      "question_id": "",
+      "note": "C 车间展开为 C1→C2→(C3→C4→C5)³，即 C_{3,1}..C_{5,3} 共 9 个活动；轮间整链完成后进入下一轮，不可重排、不可跳过"
+    },
+    {
+      "id": "formula-makespan",
+      "question_id": "",
+      "note": "目标 min Cmax=各车间最后一道工序完成时间的最大值；排程表用时刻、最短时长用秒，两者一致（口径41）"
+    }
+  ],
+  "required_discussions": [
+    {
+      "id": "disc-assumptions",
+      "sections": ["assumptions", "model_section"],
+      "topic": "52 条口径裁决的核心必须进模型假设：初始设备在班组驻地且进场运输计入；设备完成后不回班组、车间间直接运输（无向距离）；运输只占具体设备；一设备一工序（不允许多台同类分摊）；不可抢占；双设备异步完成且先完成者立即释放；新购设备00:00可用+归属班组由决策决定；购置整数、预算≤500000 允许恰好花满",
+      "requirement": "假设逐条声明，避免不同解释产生不同答案"
+    },
+    {
+      "id": "disc-framework",
+      "sections": ["model_section", "solution"],
+      "topic": "统一移动资源 RCPSP 主模型：多项目工序网络+有限设备+移动资源+多资源联合工序+离散设备投资；Q1→Q4 由同一母模型逐级退化/扩展",
+      "requirement": "必须呈现主模型形式化（precedence/容量/运输/联合完成约束），不得并列多核心模型"
+    },
+    {
+      "id": "disc-dual-core",
+      "sections": ["model_section"],
+      "topic": "「设备完成≠工序完成」是核心口径不是脚注：双设备异步完成、先完成者立即释放并可开始转运，而工序作为整体尚未完成——本题与普通同步机器作业模型的最大区别",
+      "requirement": "必须明确“工序完成”与“设备完成”的区别并贯穿求解"
+    },
+    {
+      "id": "disc-device",
+      "sections": ["model_section", "solution"],
+      "topic": "设备实例+位置是数学决策实体：设备编号不是展示信息；跨车间运输可能改变资源分配（最快设备未必服务当前任务）；Q2 甘特图以设备编号为纵轴",
+      "requirement": "必须解释运输与空间布局为何改变最优调度"
+    },
+    {
+      "id": "disc-cloop",
+      "sections": ["solution"],
+      "topic": "C 车间 C3–C5 三轮重复链：展开为 9 个活动，轮间整链顺序（第二轮不能在第一轮未结束时开始）",
+      "requirement": "必须呈现循环链展开与约束"
+    },
+    {
+      "id": "disc-q4",
+      "sections": ["solution"],
+      "topic": "Q4 购置-调度联合优化：预算约束下联合决定购置台数×班组归属×调度；「买给谁」是关键决策；给出预算-工期曲线与“为什么买这些设备”的解释",
+      "requirement": "必须呈现购置变量与调度变量耦合，总费用≤500000"
+    },
+    {
+      "id": "disc-progress",
+      "sections": ["model_section", "conclusion"],
+      "topic": "Q1→Q4 同一模型递进扩展（单车间→空间迁移→第二资源池→离散投资）；给出 T1..T4 与 ΔT 的递进解释与结果比较",
+      "requirement": "必须体现模型统一性而非四个孤立问题"
+    },
+    {
+      "id": "disc-sensitivity",
+      "sections": ["sensitivity"],
+      "topic": "至少一次资源数量敏感性（某设备+1台对 Cmax 边际改善）+ 一次运输敏感性 + Q4 预算边际价值（B→T*(B) 判断 500000 是否投资临界点）",
+      "requirement": "敏感性服务瓶颈解释，不把参数扰动做成独立研究"
+    }
+  ],
+  "red_lines": [
+    {
+      "id": "rl-sync",
+      "question_id": "",
+      "prohibition": "把“双设备必须同时开始 / 两台设备锁定到整道工序结束”作为正式约束——这是最可能改变四问最优解的高风险口径（第三轮裁决：异步完成、先完成立即释放）"
+    },
+    {
+      "id": "rl-share",
+      "question_id": "",
+      "prohibition": "一道工序由多台同类设备共同分摊工程量（默认一道所需资源类型由一台设备承担）"
+    },
+    {
+      "id": "rl-transport",
+      "question_id": "",
+      "prohibition": "忽略跨车间转运时间、把运输算作整个班组占用、设备完成任务后必须回班组、车间间运输需经班组驻地"
+    },
+    {
+      "id": "rl-units",
+      "question_id": "",
+      "prohibition": "h 与 s 混用、忽略向上取整（加工与运输统一秒级）、持续工作时间(s) 列误填运输/等待时间"
+    },
+    {
+      "id": "rl-budget",
+      "question_id": "4",
+      "prohibition": "购置总费用超过 500000 元（硬约束；恰好花满允许）"
+    },
+    {
+      "id": "rl-freemerge",
+      "question_id": "",
+      "prohibition": "把 C 车间三轮当作可自由重排任务、或第二轮在第一轮未结束时开始、或跳过某工序"
+    },
+    {
+      "id": "rl-wait",
+      "question_id": "",
+      "prohibition": "把“不考虑等待时间”解释为“必须同步启动”（两者不等价，第三轮裁决）"
+    },
+    {
+      "id": "rl-scope",
+      "question_id": "",
+      "prohibition": "把 RCPSP/Job-Shop/遗传算法/两层分解并列成多个“核心模型”——论文重心只允许一个主主线"
+    }
+  ],
+  "figure_plan": [
+    {
+      "id": "fig-gantt-q1",
+      "question_id": "1",
+      "figure": "Q1 A 车间甘特图",
+      "requirements": "A1/A2/A3 precedence + 多设备并行 + 双设备工序 + 设备释放时刻"
+    },
+    {
+      "id": "fig-gantt-q2",
+      "question_id": "2",
+      "figure": "Q2 五车间设备调度甘特图",
+      "requirements": "纵轴=设备编号（不是车间），标注跨车间转运间隔——解释设备如何移动"
+    },
+    {
+      "id": "fig-gantt-q3",
+      "question_id": "3",
+      "figure": "Q3 双班组调度图",
+      "requirements": "班组1设备 | 班组2设备 分区，展示第二班组资源并行与空间优势"
+    },
+    {
+      "id": "fig-move",
+      "question_id": "",
+      "figure": "设备移动关系/运输时间图",
+      "requirements": "如 设备: A→C→D 链 + 对应运输时间（问题2–4）"
+    },
+    {
+      "id": "fig-budget",
+      "question_id": "4",
+      "figure": "问题4 预算—最短工期关系 B→T*(B)",
+      "requirements": "标 0 元/关键预算点/500000 元/500000 下最终采购方案"
+    }
+  ],
+  "scoring_notes": [
+    {
+      "id": "score-tables",
+      "question_id": "",
+      "note": "表1~表5 必须按题面格式逐行填写（设备编号/班组/起止/持续(s)/工序编号），可加行；双设备工序两设备各一行；每问末尾填“最短时长___ (s)”"
+    },
+    {
+      "id": "score-makespan",
+      "question_id": "",
+      "note": "四问必须给出最短时长数值(s)；给出递进比较（ΔT_{2→3}、ΔT_{3→4}）"
+    },
+    {
+      "id": "score-method",
+      "question_id": "",
+      "note": "统一母模型+逐级扩展是结构加分；对照方案（如 Job-Shop 式/两层分解/枚举）应有真实执行与结果比较"
+    }
+  ],
+  "data_notes": [
+    {
+      "id": "data-cloop",
+      "question_id": "",
+      "note": "C3–C5 在进入任何优化器前展开为 9 个活动（C_{3,1}..C_{5,3}），轮间整链顺序"
+    },
+    {
+      "id": "data-attach",
+      "question_id": "",
+      "note": "附件读取注意：班组配置表设备编号列含换行/句号分隔多台编号，需拆分计数（班组1:4/5/5/1/1 共16台，班组2 同）；车间距离表无向对称"
+    },
+    {
+      "id": "data-initial",
+      "question_id": "",
+      "note": "设备初始位置=所属班组驻地；进场运输计入 makespan（如班组1→A 400m÷2m/s=200s）；表1 首行起始时间与进场时间需按此口径一致呈现"
+    },
+    {
+      "id": "data-rounding",
+      "question_id": "",
+      "note": "加工时长与运输时间统一秒向上取整；表格“持续工作时间(s)”只填加工时长，运输作为设备可用性约束不入该列"
+    },
+    {
+      "id": "data-newid",
+      "question_id": "",
+      "note": "Q4 新增设备唯一编号由模型内部生成（表4 需具体设备编号，表5 只报台数）"
+    }
+  ],
+  "reference_direction": [
+    "RCPSP / Multi-project scheduling（renewable resource、precedence、makespan）MILP/CP 建模",
+    "Multi-site RCPSP / mobile resource scheduling（资源转移时间进入约束）",
+    "synchronized / multi-resource activity scheduling（双设备联合工序表达）",
+    "Flexible Job-Shop（对照模型的设备选择与冲突建模）",
+    "大邻域搜索/元启发式（Q4 精确模型求解困难时的第二求解器路线）"
+  ]
+}

@@ -20,10 +20,11 @@
 - [`12-ModelingBrief验证与下一步.md`](12-ModelingBrief验证与下一步.md)：验证清单 + **第七节 brief-v1 评审结论** + **第八节机制修复清单（M1–M6）**。
 - [`13-注入体系补全计划.md`](13-注入体系补全计划.md)：八字段 × 节点注入矩阵、转述衰减缺口、阶段化补全、不走 RAG 决策。
 - [`14-设计债与遗留问题清单.md`](14-设计债与遗留问题清单.md)：B01–B25（B21–B25 为智慧中枢评估新增；已解决/已决策/规划中/待处理/另案）。
-- [`15-智慧中枢评估与处置.md`](15-智慧中枢评估与处置.md)：外部独立评估要点 + 逐条处置（H01–H20）+ 原则修订提案（C1–C4 待批）。
+- [`15-智慧中枢评估与处置.md`](15-智慧中枢评估与处置.md)：外部独立评估要点 + 逐条处置（H01–H20）+ 原则修订（C1–C4 已采纳，2026-08-20）。
 - [`16-中长远路线图.md`](16-中长远路线图.md)：战略三选项 + 门控阈值 + 阶段 0–4 + Go/No-Go 与投入护栏。
 - [`17-资料补全清单.md`](17-资料补全清单.md)：智慧中枢建议补充的 11 项证据采购跟踪。
-- [`实现计划-8-20/`](实现计划-8-20/README.md)：执行层落地批次（0 简单修复 → 1–4 机制工程 → 5 验证实验；07 待决策指针）。
+- [`brief-playbook.md`](brief-playbook.md)：**brief 生产手册（方向生产协议，2026-08-21，最高杠杆资产）**——开放探索 → 多视角对撞 → 逐问清点 → 方向收敛 → brief + 提示词包 + pilot/评估简报模板。
+- [`实现计划-8-20/`](实现计划-8-20/README.md)：执行层落地批次（**v2 主线（2026-08-21）：brief-playbook → 导入最小闭环 → M3 → M2 → pilot → mcm51-b 干净题真跑**；批次 0 已完成；M4/批次 4/前端完整形态冻结，A 题 brief-v2 降级可选；07 待决策指针；10 前端+Web 入库另案）。
 - `problems/mcm51-a/brief.json`：MCM-51 方向约束（40 条，M6 增 1.2-reg-coef；当前参考题特例）。
 
 ## 四、历史归档（不再维护，链接可能失效，以本索引为准）
@@ -34,7 +35,7 @@
 ## 五、验证入口
 
 ```powershell
-.venv\Scripts\python.exe -m pytest -q            # 全量基线 798 passed / 12 failed / 4 skipped（收集 814；12 失败=另案）
+.venv\Scripts\python.exe -m pytest -q            # 全量基线 810 passed / 0 failed / 4 skipped（收集 814；12 失败已清零，2026-08-20 修复入库 9f2906c）
 npm.cmd test -- --run                            # Web 测试
 .venv\Scripts\python.exe -m math_agent.cli status --out runs/<run> --thread <thread>
 .venv\Scripts\python.exe scripts\sample_brief_direction.py runs\<run> --brief-source docs\problems\mcm51-a\brief.json

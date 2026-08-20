@@ -388,3 +388,7 @@ brief_app = typer.Typer(
 - **命令实现状态**：`brief extract --from <doc.md> --out brief.json` **未实现**，
   本迭代只记录方向、不做命令；实现时复用 `draft_field`（起草）+ `assemble_brief`
   （组装）+ `auto_fill_ids`（id 补全）即可，成本低。
+
+- **2026-08-21 上游扩展**：产出路径前置新增「题目探索（Problem Exploration）」——人 + 强模型 +
+  联网先扩大认知空间（出题人/评阅人/建模者/反方多视角），产出方向性认知地图（`exploration.md`），
+  再提取为 brief；**探索 ≠ 投票、探索 ≠ 推测答案**，协议见 [docs/brief-playbook.md](brief-playbook.md)。
