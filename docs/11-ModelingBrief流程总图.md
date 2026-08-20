@@ -49,7 +49,7 @@
 │            │                                                               │
 │            ▼                                                               │
 │   后续：consistency / sensitivity / figure / paper_critic /                │
-│   human_review / LaTeX / finalizer → 论文 PDF + runs 证据链                │
+│   human_review / LaTeX / finalizer → 论文 .md（+PDF 预览验证）+ runs 证据链  │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -82,7 +82,7 @@ flowchart TB
         G -->|"预算耗尽"| STOP["stop 硬停<br/>不带头病进 modeler"]
         W --> TAIL["consistency / sensitivity / figure /<br/>paper_critic / human_review / LaTeX / finalizer"]
     end
-    TAIL --> OUT["论文 PDF + runs 产物证据链"]
+    TAIL --> OUT["论文 .md（+PDF 预览验证）+ runs 产物证据链"]
 ```
 
 ## 三、各环节验证状态一览

@@ -9,6 +9,7 @@
 ## 一、5.1 brief-v2 真跑（核心实验）
 
 - 前置：批次 0（M1/M5/M6 + 成本遥测 v0）+ 批次 1（M3）+ 批次 2（M4）+ 批次 4 模板。
+- 运行模式：**全自动**（D4 决策，2026-08-20）——不加人工介入检查点，保持无人工自动跑通以做干净对照；检查点 2（首个数值证据后检查）先以 M3 确定性反证实现，人工介入版本延后到盲测条件④（16 阶段 1）。
 - 命令：`math-agent supervise --problem <MCM-51 spec> --out runs/51mcm-a-brief-v2 --brief docs/problems/mcm51-a/brief.json --thread default`（**新目录，禁止 recover 旧 run**）。
 - 验收清单（对照 12 §4.2 + 本批次新增）：
   1. 管道：`brief.json` 副本 + sha256 对上；coverage 全 followed（40 条，含 M6 新增）；
@@ -16,7 +17,7 @@
   3. **对照方案（M4）**：final_state ≥2 个 baseline 证据角色、RESULT 可解析、对比表非空（硬伤「基线对照纯文字」闭环）；
   4. **figure_plan（M2）**：fig6 三线图落地（硬伤 2 闭环）；
   5. 单位口径（M5/M6）：3.2 无 T_VM 应力/力矩混比、1.2 回归方程系数数值出现（硬伤 3/4 闭环）；
-  6. LaTeX：`paper.tex` 编译零错误（M1），PDF 出；
+  6. LaTeX：`paper.tex` 编译零错误（M1）；PDF 仅预览验证，不要求完整可交付（2026-08-20 定位）；
   7. **测量基线（批次 4）**：cost_summary.md、评审记录、人工投入记录、人工修补清单齐全；
   8. degraded 判定：若仍 degraded，原因必须机器可解释（不出现「原因未知」）。
 - 结果落点：写入 12 §七 更新或新评审小节；00 关键数字更新。

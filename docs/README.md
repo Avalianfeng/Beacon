@@ -40,4 +40,4 @@ npm.cmd test -- --run                            # Web 测试
 .venv\Scripts\python.exe scripts\sample_brief_direction.py runs\<run> --brief-source docs\problems\mcm51-a\brief.json
 ```
 
-> 论文运行验收：`completion.json` 哈希、正式证据角色、LaTeX 日志、PDF 逐页渲染（PDF 能用即可，.md 为主交付物）。
+> 论文运行验收：`completion.json` 哈希、正式证据角色、LaTeX 日志零错误；**.md 为主交付物**（PDF 仅预览/编译链路验证，不承诺完整可交付；格式调整走人工后续流程，2026-08-20 定位）。

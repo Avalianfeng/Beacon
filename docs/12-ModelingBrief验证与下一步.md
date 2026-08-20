@@ -139,7 +139,7 @@ math-agent supervise --problem <MCM-51 spec> --out runs/51mcm-a-brief-v1 --brief
      门禁 `stop` 后 checkpoint `next=()`，`recover` 为空转）
    - coverage 反复 stop → analyst 吃不下 39 条，做容量（每条 ≤200 字、整块 ≤1500）或拆 brief；
    - 方向已写进蓝图但 coder 仍错 F_bond → 进入 iteration-plan 的代码转向（实现级），此时信息才够改求解器。
-5. **后置（本迭代不做）**：Web 对话式建模预备 UI；把 brief 做成方向再评估；并行蓝图 / RAG 资料包（A2 以外方案）。
+5. **后置（本迭代不做）**：Web 对话式建模预备 UI；并行蓝图 / RAG 资料包（A2 以外方案）。「把 brief 做成方向再评估」已按 C2 细化（2026-08-20）：无依据 LLM 投票式评审维持不做；确定性证据反证允许，实施见 16 阶段 2。
 
 路线更迭的「代码改什么」仍以 [iteration-plan 第四节](08-MCM51整改迭代计划.md) 为准；**启动条件**是第四节至少有一次带 brief 的蓝图/coder 证据。
 
