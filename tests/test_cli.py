@@ -672,3 +672,42 @@ def test_run_writes_brief_copy_and_manifest_before_invoke(tmp_path):
     manifest = json.loads((out / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["brief_sha256"] == src_hash
     assert manifest["thread"] == "default"
+
+
+# ---- B04: brief.problem_id 与题目匹配规范化 ----
+
+def test_brief_mismatch_warns_on_wrong_problem(capsys):
+    from math_agent.cli import _warn_brief_problem_mismatch
+
+    class _Brief:
+        problem_id = "mcm52-a"
+
+    _warn_brief_problem_mismatch(
+        _Brief(), {"title": "2026 51MCM Problem A", "questions": ["问题1"]}
+    )
+    assert "[WARN]" in capsys.readouterr().err
+
+
+def test_brief_mismatch_silent_on_normalized_match(capsys):
+    """mcm51-a vs '2026 51MCM Problem A'：裸子串双向都不包含，规范化后必须静默。"""
+    from math_agent.cli import _warn_brief_problem_mismatch
+
+    class _Brief:
+        problem_id = "mcm51-a"
+
+    _warn_brief_problem_mismatch(
+        _Brief(), {"title": "2026 51MCM Problem A", "questions": ["问题1"]}
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_brief_mismatch_silent_on_empty_pid(capsys):
+    from math_agent.cli import _warn_brief_problem_mismatch
+
+    class _Brief:
+        problem_id = ""
+
+    _warn_brief_problem_mismatch(
+        _Brief(), {"title": "2026 51MCM Problem A", "questions": []}
+    )
+    assert capsys.readouterr().err == ""

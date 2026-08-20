@@ -258,6 +258,11 @@
       "id": "2.2-ref",
       "question_id": "2.2",
       "note": "工况A：F_bond=334.27kN、τ=4.75MPa；工况B：F_bond=169.65kN、τ=1.50MPa；钻孔直径 28/30mm"
+    },
+    {
+      "id": "1.2-reg-coef",
+      "question_id": "1.2",
+      "note": "1.2 稳定段必须输出回归方程系数数值（P=a·T+b 的 a、b 与 R²），不得只给分段区间与容差"
     }
   ],
   "reference_direction": [

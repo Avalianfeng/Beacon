@@ -260,6 +260,15 @@ def render_full_brief(brief: ModelingBrief | None) -> str:
     return "\n".join(lines)
 
 
+def _dimension_note_lines() -> list[str]:
+    """M5（单位/量纲口径，prompt 层）：modeler/coder 渲染器共用的量纲要求块。"""
+    return [
+        "## 单位/量纲口径（必须遵循）",
+        "- 数值必须携带并匹配物理单位；应力/力矩/力不得混比（如 MPa 应力 vs kN·m 力矩）",
+        "- 同一物理量全篇口径一致（力统一 kN 或 N，换算必须明确）；求解章口径必须与模型章一致",
+    ]
+
+
 def render_modeler_brief(brief: ModelingBrief | None) -> str:
     """modeler 注入：逐题方向 + 公式注意（路线选择约束）。"""
     if brief is None:
@@ -276,6 +285,7 @@ def render_modeler_brief(brief: ModelingBrief | None) -> str:
         lines.append("## 公式注意")
         for item in brief.formula_notes:
             lines.append(f"- [{item.id}]{_qid(item)} {item.note}")
+    lines.extend(_dimension_note_lines())
     if not lines[1:]:
         return ""
     return "\n".join(lines)
@@ -294,6 +304,7 @@ def render_coder_brief(brief: ModelingBrief | None) -> str:
         lines.append("## 公式与参数注意（实现必须遵循）")
         for item in brief.formula_notes:
             lines.append(f"- [{item.id}]{_qid(item)} {item.note}")
+    lines.extend(_dimension_note_lines())
     if not lines[1:]:
         return ""
     return "\n".join(lines)

@@ -190,6 +190,18 @@ def test_render_coder_brief_none_and_content():
     assert "禁止硬编码" in text
     assert "F=ma" in text
 
+def test_render_coder_brief_contains_dimension_notes():
+    """M5：量纲口径块随 brief 注入 coder 提示。"""
+    text = render_coder_brief(_rich_brief())
+    assert "## 单位/量纲口径（必须遵循）" in text
+    assert "应力/力矩/力不得混比" in text
+
+
+def test_render_modeler_brief_contains_dimension_notes():
+    """M5：量纲口径块随 brief 注入 modeler 提示。"""
+    text = render_modeler_brief(_rich_brief())
+    assert "## 单位/量纲口径（必须遵循）" in text
+
 
 def test_render_discussions_for_group_filters_by_group():
     brief = _rich_brief()

@@ -38,6 +38,34 @@ def test_wrap_unicode_subscripts_keeps_co2_visible():
 
 def test_wrap_unicode_math_attaches_subscript():
     """α_i / σ_{d,i} 必须整体包，否则 _i 进 text mode 又会炸。"""
+
+
+# ---- B18/M1：表格行首单元格以 `[` 开头（\ 可选参数陷阱） ----
+
+def test_md_table_first_cell_bracket_guarded():
+    md = "| 符号 | 含义 |\n|---|---|\n| [sigma] | 应力 |\n| [T_max] | 最大力矩 |\n| x | y |"
+    out = _md_table_to_latex(md)
+    assert "{[}sigma]" in out
+    assert "{[}T_max]" in out
+    # 不得出现 `\\` 直接跟 `[`（会被当作 \\[<dimen>] 可选参数）
+    assert "\\\n[sigma]" not in out
+    assert "\\\n[T_max]" not in out
+
+
+def test_md_table_bracket_not_first_col_untouched():
+    md = "| a | b |\n|---|---|\n| x | [y] |"
+    out = _md_table_to_latex(md)
+    assert "[y]" in out
+    assert "{[}y]" not in out
+
+
+def test_md_table_first_cell_bracket_longtable_too():
+    """多行长表同样走 body_rows 路径，守卫应生效。"""
+    rows = "\n".join(["| [s%d] | d%d |" % (i, i) for i in range(15)])
+    md = "| 符号 | 含义 |\n|---|---|\n" + rows
+    out = _md_table_to_latex(md)
+    assert "{[}s0]" in out
+    assert "\\\n[s1]" not in out
     out = _wrap_unicode_math("比例 α_i 与 σ_{d,i} 控制波动")
     assert r"$\alpha_i$" in out
     assert r"$\sigma_{d,i}$" in out

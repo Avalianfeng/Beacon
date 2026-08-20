@@ -18,12 +18,13 @@
 
 --brief-source 存在时额外输出:
   - brief 副本一致性（sha256 是否一致）
-  - brief_coverage 完整性（39 个 id 中 followed/deviated/缺失 各多少）
+  - brief_coverage 完整性（全部 id 中 followed/deviated/缺失 各多少；当前 brief 40 条）
 
 抽样检查项（对照 iteration-plan 第四节"代码思路更迭清单"）:
   1.2-change-point  1.2 变点检测/分段回归 是否出现
   2.2-fbond-hole    F_bond 用钻孔直径（D_hole/28/30mm）是否出现
   3.1-washer        3.1 调心垫圈定量（233%/404.97/e_cr≈3.66）是否出现
+  1.2-reg-coef     1.2 稳定段回归方程系数数值（a、b、R²）是否输出（M6）
   redline-60071    红线: 600.71 出现次数（出现≠违反，需看上下文）
   redline-topt-08  红线: T_opt=0.8·T_max 出现次数（出现≠违反，需看上下文）
 
@@ -69,6 +70,13 @@ CHECKS: list[dict] = [
         "id": "redline-topt-08",
         "desc": "红线：T_opt=0.8·T_max 出现（出现≠违反，看上下文）",
         "patterns": [r"T_opt.*0\.8", r"0\.8.*T_max", r"T_opt\s*=\s*0\.8", r"0\.8\s*·\s*T"],
+        "scope": ["paper", "code"],
+    },
+    {
+        "id": "1.2-reg-coef",
+        "desc": "1.2 稳定段回归方程系数数值（M6：必须输出 a、b 与 R²）",
+        "patterns": [r"回归系数", r"回归方程", r"0\.217", r"4\.02",
+                     r"P\s*=\s*[a-zA-Z0-9_.]+\s*[+\-]?\s*[a-zA-Z0-9_.]+", r"R\s*\^?2\s*="],
         "scope": ["paper", "code"],
     },
 ]

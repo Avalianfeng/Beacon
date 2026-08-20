@@ -462,6 +462,12 @@ def _md_table_to_latex(s: str) -> str:
                     cells = _split_row(lines[j])
                     cells = [_escape_cell_amps(c) for c in cells]
                     cells = (cells + [""] * ncols)[:ncols]
+                    # B18/M1：行首单元格以 `[` 开头时，`\\` 会把 `[sigma]` 当
+                    # `\\[<dimen>]` 可选参数解析 → "Missing number, treated as zero"
+                    # （paper.tex:183 实证）。用 `{[}` 分组技巧打破可选参数扫描：
+                    # 渲染等价，且不引入 `\[`（display math）或 $...$（中文/下标副作用）。
+                    if cells[0].startswith("["):
+                        cells[0] = re.sub(r"^\[", "{[}", cells[0])
                     body_rows.append(" & ".join(cells) + r" \\")
                     j += 1
                 if len(body_rows) > 12:

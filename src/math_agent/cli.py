@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -382,13 +383,33 @@ def _write_brief_file(out: Path, payload: dict, force: bool) -> None:
     os.replace(tmp, out)
 
 
+def _brief_norm_tokens(s: str) -> tuple[set[str], set[str]]:
+    """提取匹配用的数字段与字母段集合（小写、字母段 len>=2 才保留）。
+
+    `mcm51-a` -> ({"51"}, {"mcm"})；`2026 51MCM Problem A` -> ({"2026","51"}, {"mcm","problem"})。
+    裸子串对这两种写法双向都不包含（B04 真跑误报案例），token 集合则稳定匹配。
+    """
+    digits = set(re.findall(r"\d+", s))
+    letters = {t.lower() for t in re.findall(r"[A-Za-z]+", s) if len(t) >= 2}
+    return digits, letters
+
+
+def _brief_problem_mismatch(pid: str, title: str) -> bool:
+    """brief.problem_id 与题目（标题+小问）是否不匹配：pid 的 token 全部在题目 token 中才匹配。"""
+    pd, pl = _brief_norm_tokens(pid)
+    td, tl = _brief_norm_tokens(title)
+    if not pd and not pl:
+        return False  # pid 无语义 token（如纯符号）→ 不判断，避免噪音
+    return not (pd <= td and pl <= tl)
+
+
 def _warn_brief_problem_mismatch(brief_obj, spec: dict) -> None:
     """brief.problem_id 与题目宽松匹配；不匹配仅警告（防误用，不阻塞）。"""
     pid = (getattr(brief_obj, "problem_id", "") or "").strip()
     if not pid:
         return
     title = (spec.get("title") or "") + " " + " ".join(spec.get("questions", []))
-    if pid not in title:
+    if _brief_problem_mismatch(pid, title):
         typer.echo(
             f"[WARN] brief.problem_id={pid!r} 与题目（{title[:40]}...）不匹配；"
             f"请确认 brief 是否属于本题",
@@ -983,7 +1004,6 @@ def supervise(
     """以独立 worker 运行完整流程；崩溃或可恢复故障后自动从 checkpoint 续跑。"""
     spec = _read_problem_spec(problem)
     brief_obj = None
-    brief_sha256 = None
     if brief is not None:
         brief_obj = _load_brief_or_raise(brief)
         _warn_brief_problem_mismatch(brief_obj, spec)
@@ -1041,7 +1061,6 @@ def start(
     """在后台启动受监管任务，适合 Codex CLI、Claude CLI 和短生命周期终端。"""
     spec = _read_problem_spec(problem)
     brief_obj = None
-    brief_sha256 = None
     if brief is not None:
         brief_obj = _load_brief_or_raise(brief)
         _warn_brief_problem_mismatch(brief_obj, spec)
