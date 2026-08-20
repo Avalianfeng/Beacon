@@ -4,7 +4,6 @@ from math_agent.state import (
     CriticReport, EvaluationReport, ModelCodeConsistencyReport, CodeArtifact,
 )
 from math_agent.nodes.evaluation import _offline_evaluation, evaluation_node
-from math_agent.nodes.paper_evidence import factorial_effect_percentages
 
 
 def _full_state():
@@ -27,33 +26,19 @@ def _full_state():
 def _attach_offline_evidence(state):
     state.code_artifacts.append(CodeArtifact(
         purpose="main",
-        code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+        code="print(1)",
         success=True,
         evidence_role="primary",
-        stdout=(
-            "SCENARIO_Q1: baseline=no_policy total_cost=90685.60\n"
-            "RESULT: baseline=ours total_cost=91544.49 vehicles=123 "
-            "service_rate=1 total_carbon=999 timewin_rate=0.9333 "
-            "dynamic_cost_increase_ratio=0.00544301\n"
-            "DYNAMIC_STRESS: samples=30 success=21 success_rate=0.7\n"
-            "DATA_PROFILE: green_customers=12 coordinate_green_customers=15\n"
-            "SMALL_EXACT: customers=8 exact_distance=242.42 "
-            "heuristic_distance=251.28 gap_pct=3.65\n"
-        ),
+        stdout="RESULT: baseline=ours total_cost=91544.49 service_rate=1\n",
     ))
-    interaction = SensitivityRun(
-        parameter="速度比例×限行开始时刻二维组合编码",
-        values=[8007, 8008, 8009, 10007, 10008, 10009, 12007, 12008, 12009],
+    scan = SensitivityRun(
+        parameter="容量系数",
+        values=[0.9, 1.0, 1.1],
         metric="total_cost",
-        results=[
-            94541.15, 92673.57, 92817.31,
-            92704.02, 91544.49, 91425.33,
-            92301.92, 91006.45, 90933.57,
-        ],
+        results=[91600.0, 91544.49, 91700.0],
     )
-    state.sensitivity_runs.append(interaction)
-    state.sensitivity_formal_parameters = [interaction.parameter]
-    return factorial_effect_percentages(interaction)
+    state.sensitivity_runs.append(scan)
+    state.sensitivity_formal_parameters = [scan.parameter]
 
 
 def test_evaluation_returns_report(mocker):
@@ -106,32 +91,13 @@ def test_evaluation_caps_correctness_without_upstream_quality(mocker):
 
 def test_offline_evaluation_scores_only_present_evidence():
     state = _full_state()
-    effects = _attach_offline_evidence(state)
-    assert effects is not None
+    _attach_offline_evidence(state)
     state.paper = PaperSections(
         assumptions="假" * 700,
-        model_section=(
-            r"\mathcal G_{k,h} 连续限行 " + "模" * 3000
-        ),
-        solution=(
-            "Q1总成本90685.60，主方案总成本91544.49，"
-            "代理成本相对静态总成本之比为0.00544301。不等于备用车辆启用率为零 "
-                "Held–Karp 碳排机制 Q1无政策方案 无邻域与发车优化 "
-                "题面文字称绿色区有30个客户，附件口径下有12个当日正需求客户，"
-                "半径内共有15个坐标客户 "
-            + "解" * 4000
-        ),
-        sensitivity=(
-            f"3×3全因子 描述性双因素平方和分解，速度主效应贡献率{effects[0]:.2f}%，"
-            f"限行开始时刻主效应贡献率{effects[1]:.2f}%，"
-            f"不可加交互残差贡献率{effects[2]:.2f}%。蒙特卡洛 "
-            + "敏" * 1000
-        ),
-        conclusion=(
-            "30个移动任务压力样本成功21次，70%成功率。连续事件；"
-            "Held–Karp 对8客户精确距离242.42，2-opt启发式距离251.28，"
-            "偏差3.65%。" + "结" * 1500
-        ),
+        model_section="模" * 3000,
+        solution="主方案总成本91544.49。" + "解" * 4000,
+        sensitivity="敏" * 1000,
+        conclusion="结" * 1500,
     )
 
     report = _offline_evaluation(state)
@@ -146,6 +112,6 @@ def test_offline_evaluation_scores_only_present_evidence():
     assert stale.result_correctness == 6
     assert any("99999.99" in issue for issue in stale.issues)
 
-    state.paper.sensitivity += " 模拟退火"
+    state.paper.sensitivity += " 图Sensitivity"
     rejected = _offline_evaluation(state)
     assert rejected.writing_clarity == 6

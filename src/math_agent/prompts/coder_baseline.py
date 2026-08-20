@@ -12,8 +12,8 @@ BASELINE_SPECS: list[tuple[str, str, str]] = [
         "无调度",
         "no_schedule",
         "把主方案的优化排序替换为先到先服务（按订单或客户原始顺序）的可行构造法。"
-        "仍须逐单满足载重、容积和基本时间递推，车辆满载后开启下一辆；不得把决策变量全置 0。"
-        "保留真实数据加载与主方案相同的成本、车辆、服务率、碳排放评估口径。",
+        "仍须满足题面资源约束的逐单可行性，不得把决策变量全置 0。"
+        "保留真实数据加载与主方案相同的指标评估口径。",
     ),
     (
         "简单平均预测",
@@ -70,7 +70,7 @@ def build_baseline_prompt(
         f"# 输出要求\n"
         f"基于主方案代码做上述修改，生成一段**独立可运行**的 Python 脚本。\n"
         f"脚本末尾必须用 print 输出至少 2 个指标，格式严格如下：\n"
-        f"print(f'RESULT: baseline={category} total_cost={{total_cost}} service_rate={{service_rate}}')\n"
+        f"print(f'RESULT: baseline={category} metric_a={{metric_a}} metric_b={{metric_b}}')\n"
         f"（指标名可按题目调整，但必须以 RESULT: baseline={category} 开头）\n"
         f"重要：对照方案必须沿用主方案相同的指标名，不得改用不同的指标名，以便对比表汇总。\n"
         f"stdout 不允许只输出自然语言总结，必须包含 RESULT: 行带具体数值。\n\n"

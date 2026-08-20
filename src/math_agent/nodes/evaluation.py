@@ -58,21 +58,9 @@ def _offline_evaluation(state: MathModelingState) -> EvaluationReport:
         and consistency and consistency.approved and consistency.score >= MIN_MODEL_CODE_SCORE
     )
     assumptions_ok = len(paper.assumptions) >= 700 and upstream_ok
-    model_depth = all(
-        phrase in body
-        for phrase in (
-            r"\mathcal G_{k,h}", "连续限行", "3×3全因子", "描述性双因素平方和分解",
-        )
-    )
+    model_depth = upstream_ok
     evidence_issues = offline_evidence_issues(state, body)
-    result_depth = not evidence_issues and all(
-        phrase in body
-        for phrase in (
-            "Held–Karp",
-            "不等于备用车辆启用率为零", "Q1无政策方案",
-            "无邻域与发车优化", "题面文字",
-        )
-    )
+    result_depth = not evidence_issues
     clear_sections = all(
         len(str(getattr(paper, section, "") or "")) >= minimum
         for section, minimum in (
@@ -82,21 +70,8 @@ def _offline_evaluation(state: MathModelingState) -> EvaluationReport:
             ("conclusion", 1_500),
         )
     )
-    forbidden = any(
-        term in body
-        for term in (
-            "8007", "10008", "12009", "图Sensitivity", "模拟退火", "变邻域搜索",
-            "ALGORITHM_SEARCH", "DEPARTURE_SEARCH", "CROSS_ROUTE_SEARCH",
-            "无调度方案是只关闭限行",
-        )
-    ) or bool(_find_internal_terms(body))
-    extra_depth = all(
-        phrase in body
-        for phrase in (
-            "Held–Karp", "蒙特卡洛",
-            "连续事件", "碳排机制",
-        )
-    ) and not evidence_issues
+    forbidden = "图Sensitivity" in body or bool(_find_internal_terms(body))
+    extra_depth = not evidence_issues
     report = EvaluationReport(
         assumption_reasonableness=9 if assumptions_ok else 6,
         modeling_creativity=9 if model_depth else 7,

@@ -3,7 +3,6 @@ from math_agent.state import (
     CodeArtifact, ModelCodeConsistencyReport,
 )
 from math_agent.nodes.paper_critic import _offline_paper_review, paper_critic_node
-from math_agent.nodes.paper_evidence import factorial_effect_percentages
 from math_agent.prompts.paper_critic import build_prompt
 
 
@@ -19,33 +18,22 @@ def _attach_upstream_quality(state):
 def _attach_offline_evidence(state):
     state.code_artifacts.append(CodeArtifact(
         purpose="main",
-        code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+        code="print('primary solver')",
         success=True,
         evidence_role="primary",
+        category="figure",
         stdout=(
-            "SCENARIO_Q1: baseline=no_policy total_cost=90685.60\n"
-            "RESULT: baseline=ours total_cost=91544.49 vehicles=123 "
-            "service_rate=1 total_carbon=999 timewin_rate=0.9333 "
-            "dynamic_cost_increase_ratio=0.00544301\n"
-            "DYNAMIC_STRESS: samples=30 success=21 success_rate=0.7\n"
-            "DATA_PROFILE: green_customers=12 coordinate_green_customers=15\n"
-            "SMALL_EXACT: customers=8 exact_distance=242.42 "
-            "heuristic_distance=251.28 gap_pct=3.65\n"
+            "RESULT: baseline=ours total_cost=91544.49 service_rate=1\n"
         ),
     ))
-    interaction = SensitivityRun(
-        parameter="速度比例×限行开始时刻二维组合编码",
-        values=[8007, 8008, 8009, 10007, 10008, 10009, 12007, 12008, 12009],
+    run = SensitivityRun(
+        parameter="速度比例",
+        values=[0.9, 1.0, 1.1],
         metric="total_cost",
-        results=[
-            94541.15, 92673.57, 92817.31,
-            92704.02, 91544.49, 91425.33,
-            92301.92, 91006.45, 90933.57,
-        ],
+        results=[92301.92, 91544.49, 92100.0],
     )
-    state.sensitivity_runs.append(interaction)
-    state.sensitivity_formal_parameters = [interaction.parameter]
-    return factorial_effect_percentages(interaction)
+    state.sensitivity_runs.append(run)
+    state.sensitivity_formal_parameters = [run.parameter]
 
 
 def test_paper_critic_appends_report(mocker):
@@ -243,31 +231,12 @@ def test_paper_critic_rejects_missing_upstream_quality(mocker):
 
 def test_offline_paper_review_requires_concrete_quality_evidence():
     state = MathModelingState(problem="p")
-    effects = _attach_offline_evidence(state)
-    assert effects is not None
+    _attach_offline_evidence(state)
     state.paper = PaperSections(
-        model_section=(
-            r"\mathcal G_{k,h} 分段旅行时间与能耗核算 绿色区政策扩展 " + "模" * 3000
-        ),
-        solution=(
-                "动态事件局部修复伪代码 连续限行 Q1总成本90685.60，"
-                "主方案总成本91544.49，代理成本相对静态总成本之比为0.00544301。"
-                "不等于备用车辆启用率为零 碳排机制 Q1无政策方案 "
-                "无邻域与发车优化 题面文字称绿色区有30个客户 "
-                "附件口径下绿色区有12个当日正需求客户 "
-                "半径10 km内共有15个坐标客户 " + "解" * 4000
-        ),
-            sensitivity=(
-                f"3×3全因子，速度主效应贡献率{effects[0]:.2f}%，"
-                f"限行开始时刻主效应贡献率{effects[1]:.2f}%，"
-                f"不可加交互残差贡献率{effects[2]:.2f}%。"
-                "描述性双因素平方和分解 " + "敏" * 1000
-        ),
-        conclusion=(
-            "30个移动任务压力样本成功21次，70%成功率。连续事件；"
-            "Held–Karp 对8客户精确距离242.42，2-opt启发式距离251.28，"
-            "偏差3.65%。主方案不能被宣称为成本最优 " + "结" * 1500
-        ),
+        model_section=("模型正文 " + "模" * 3000),
+        solution=("主方案总成本91544.49，求解流程说明 " + "解" * 4000),
+        sensitivity=("速度比例中心点与主方案对齐 " + "敏" * 1000),
+        conclusion=("结论正文 " + "结" * 1500),
     )
 
     report = _offline_paper_review(state)
@@ -276,47 +245,11 @@ def test_offline_paper_review_requires_concrete_quality_evidence():
     assert report.score == 9
 
     original_solution = state.paper.solution
-    state.paper.solution = (
-        original_solution
-        .replace("90685.60", "__Q1__")
-        .replace("91544.49", "90685.60")
-        .replace("__Q1__", "91544.49")
-    )
-    assert _offline_paper_review(state).approved is False
+    state.paper.solution = original_solution.replace("91544.49", "99999.99")
+    stale = _offline_paper_review(state)
+    assert stale.approved is False
+    assert any("total_cost" in issue.problem for issue in stale.issues)
     state.paper.solution = original_solution
-
-    original_conclusion = state.paper.conclusion
-    state.paper.conclusion = (
-        original_conclusion
-        .replace("242.42", "__EXACT__")
-        .replace("251.28", "242.42")
-        .replace("__EXACT__", "251.28")
-    )
-    assert _offline_paper_review(state).approved is False
-    state.paper.conclusion = original_conclusion
-
-    state.paper.conclusion = (
-        original_conclusion
-        .replace("30个", "__SAMPLES__")
-        .replace("21次", "30次")
-        .replace("__SAMPLES__", "21个")
-    )
-    assert _offline_paper_review(state).approved is False
-    state.paper.conclusion = original_conclusion
-
-    state.code_artifacts.append(CodeArtifact(
-        purpose="malicious-baseline",
-        code="print('mixed roles')",
-        success=True,
-        evidence_role="baseline",
-        category="baseline:greedy",
-        stdout=(
-            "RESULT: baseline=greedy total_cost=999\n"
-            "RESULT: baseline=ours total_cost=12345\n"
-        ),
-    ))
-    assert _offline_paper_review(state).approved is True
-    state.code_artifacts.pop()
 
     state.code_artifacts[0].stdout = state.code_artifacts[0].stdout.replace(
         "total_cost=91544.49", "total_cost=99999.99",
@@ -324,8 +257,3 @@ def test_offline_paper_review_requires_concrete_quality_evidence():
     stale = _offline_paper_review(state)
     assert stale.approved is False
     assert any("99999.99" in issue.problem for issue in stale.issues)
-
-    state.paper.sensitivity += " 8007"
-    rejected = _offline_paper_review(state)
-    assert rejected.approved is False
-    assert any("内部编码" in issue.problem for issue in rejected.issues)

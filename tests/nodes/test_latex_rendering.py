@@ -75,14 +75,12 @@ def test_curate_code_truncates_long():
     assert "截取前 80 行" in out
 
 
-def test_curate_code_removes_internal_marker_and_local_absolute_data_path():
+def test_curate_code_rewrites_local_absolute_data_path():
     code = (
-        "# BEACON_GREEN_LOGISTICS_SAFE_SOLVER\n"
         "DATA_DIR = Path(r'C:\\private\\run\\data')\n"
         "print('ok')"
     )
     out = _curate_code(code)
-    assert "BEACON" not in out
     assert r"C:\private" not in out
     assert 'DATA_DIR = Path("./data")' in out
 
@@ -96,7 +94,7 @@ def test_curate_stdout_extracts_result_lines():
     assert "RESULT:" not in out
 
 
-def test_curate_stdout_translates_green_logistics_protocol_labels():
+def test_curate_stdout_translates_result_labels_and_metric_keys():
     stdout = (
         "RESULT: baseline=ours total_cost=100 vehicles=2\n"
         "ALGORITHM_SEARCH: initial_score=120 final_score=100 improvement_rate=.1667\n"
@@ -104,8 +102,9 @@ def test_curate_stdout_translates_green_logistics_protocol_labels():
     out = _curate_stdout(stdout)
     assert "方案=本文方案" in out
     assert "总成本=100" in out
-    assert "局部搜索：初始目标=120" in out
-    assert "ALGORITHM_SEARCH" not in out
+    assert "初始目标=120" in out
+    assert "改进后目标=100" in out
+    assert "ALGORITHM_SEARCH:" not in out
 
 
 def test_curate_stdout_empty_returns_empty():

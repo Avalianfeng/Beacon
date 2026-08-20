@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import re
 import hashlib
-import math
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -94,11 +93,7 @@ def _canonical_primary(state: MathModelingState) -> tuple[str, dict[str, float]]
     return artifact.code, extract_numeric_results(artifact.stdout).get("ours", {})
 
 
-_SENSITIVITY_METRIC_ALIASES = {
-    "carbon_emission": "total_carbon",
-    "fuel_vehicle_ratio": "fuel_ratio",
-    "Z": "total_cost",
-}
+_SENSITIVITY_METRIC_ALIASES: dict[str, str] = {}
 
 
 def _center_alignment_error(
@@ -114,10 +109,7 @@ def _center_alignment_error(
             continue
         center = len(run.values) // 2
         observed = run.results[center]
-        if "二维组合编码" in run.parameter:
-            tolerance = max(abs(expected) * 1e-6, 0.01)
-        else:
-            tolerance = max(abs(expected) * 0.2, 0.1 if "ratio" in key else 1e-6)
+        tolerance = max(abs(expected) * 0.2, 0.1 if "ratio" in key else 1e-6)
         if abs(observed - expected) > tolerance:
             return (
                 f"敏感性基准点口径不一致：{run.parameter} 的中心值 {observed:g}，"
@@ -127,92 +119,12 @@ def _center_alignment_error(
 
 
 def formal_sensitivity_issues(state: MathModelingState) -> list[str]:
-    """校验正式敏感性证据，绿色物流二维契约必须完整且中心同源。"""
+    """校验正式敏感性证据：中心点必须与正式主方案同源。"""
     formal = formal_sensitivity_runs(state)
     if not formal:
         return ["缺少有效敏感性分析结果"]
-
-    issues: list[str] = []
-    green_primary = any(
-        artifact.success
-        and artifact.evidence_role == "primary"
-        and "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in (artifact.code or "")
-        for artifact in state.latest_code_artifacts()
-    )
-    if not green_primary:
-        alignment = _center_alignment_error(formal, _canonical_primary(state)[1])
-        return [alignment] if alignment else []
-
-    interaction = next(
-        (run for run in formal if "二维组合编码" in run.parameter),
-        None,
-    )
-    if interaction is None:
-        issues.append("城市绿色物流缺少正式 3×3 二维敏感性结果")
-    elif len(interaction.values) != 9 or len(interaction.results) != 9:
-        issues.append(
-            "城市绿色物流二维敏感性必须包含完整 9 个网格点"
-        )
-    else:
-        values = [float(value) for value in interaction.values]
-        results = [float(value) for value in interaction.results]
-        expected_grid = [
-            8007.0, 8008.0, 8009.0,
-            10007.0, 10008.0, 10009.0,
-            12007.0, 12008.0, 12009.0,
-        ]
-        if values != expected_grid:
-            issues.append(
-                "城市绿色物流二维敏感性必须按速度0.8/1.0/1.2、"
-                "限行7/8/9时的固定顺序编码"
-            )
-        if not all(math.isfinite(value) for value in (*values, *results)):
-            issues.append("城市绿色物流二维敏感性包含非有限数值")
-        if len(set(values)) != 9:
-            issues.append("城市绿色物流二维敏感性组合编码必须覆盖 9 个不同网格点")
-        matrix = [
-            results[row * 3:(row + 1) * 3]
-            for row in range(3)
-        ]
-        grand = sum(results) / 9.0
-        row_means = [sum(row) / 3.0 for row in matrix]
-        column_means = [
-            sum(matrix[row][column] for row in range(3)) / 3.0
-            for column in range(3)
-        ]
-        ss_total = sum((value - grand) ** 2 for value in results)
-        ss_speed = 3.0 * sum((value - grand) ** 2 for value in row_means)
-        ss_start = 3.0 * sum((value - grand) ** 2 for value in column_means)
-        ss_interaction = ss_total - ss_speed - ss_start
-        if ss_total <= 1e-12:
-            issues.append("城市绿色物流二维敏感性九点无变化，无法进行平方和分解")
-        elif ss_interaction < -max(1e-8, ss_total * 1e-10):
-            issues.append("城市绿色物流二维敏感性平方和分解不一致")
-
     alignment = _center_alignment_error(formal, _canonical_primary(state)[1])
-    if alignment:
-        issues.append(alignment)
-    return issues
-
-
-_SENSITIVITY_LABELS = {
-    "time_window_penalty_factor": ("Time-window penalty factor (dimensionless)", "Total cost (CNY)"),
-    "carbon_emission_cost_coefficient": ("Carbon-cost coefficient (CNY/kg)", "Carbon emissions (kg)"),
-    "green_zone_radius": ("Green-zone radius (km)", "Fuel-vehicle ratio"),
-    "c_late": ("Late-arrival penalty scale", "Total cost (CNY)"),
-    "beta_v(fuel)": ("Carbon-cost coefficient (CNY/kg)", "Total cost (CNY)"),
-    "速度时变函数的比例因子（整体速度水平）": ("Speed multiplier", "Total cost (CNY)"),
-    "绿色区限行时段开始时间（小时）": ("Restriction start (hour)", "Total cost (CNY)"),
-    "软时间窗单位惩罚成本系数（元/分钟）": ("Late penalty (CNY/min)", "Total cost (CNY)"),
-    "速度比例×限行开始时刻二维组合编码": ("Restriction start (hour)", "Speed multiplier"),
-}
-
-_SENSITIVITY_TITLES = {
-    "速度时变函数的比例因子（整体速度水平）": "Speed multiplier",
-    "绿色区限行时段开始时间（小时）": "Green-zone restriction start",
-    "软时间窗单位惩罚成本系数（元/分钟）": "Late-arrival penalty",
-    "速度比例×限行开始时刻二维组合编码": "Speed × restriction-start interaction",
-}
+    return [alignment] if alignment else []
 
 
 def _render_verified_figure(run: SensitivityRun, workdir: Path) -> str:
@@ -224,42 +136,6 @@ def _render_verified_figure(run: SensitivityRun, workdir: Path) -> str:
 
     values = [float(value) for value in run.values]
     results = [float(value) for value in run.results]
-    if "二维组合编码" in run.parameter and len(values) == 9:
-        matrix = np.asarray(results, dtype=float).reshape(3, 3)
-        fig, ax = plt.subplots(figsize=(8.2, 5.6), dpi=180)
-        image = ax.imshow(matrix, cmap="YlGnBu", aspect="auto")
-        ax.set_xticks(range(3), labels=["7", "8", "9"])
-        ax.set_yticks(range(3), labels=["0.8", "1.0", "1.2"])
-        ax.set_xlabel("Restriction start (hour)")
-        ax.set_ylabel("Speed multiplier")
-        ax.set_title("Two-factor sensitivity: speed × restriction start")
-        for row in range(3):
-            for column in range(3):
-                ax.text(
-                    column, row, f"{matrix[row, column]:,.0f}",
-                    ha="center", va="center",
-                    color="white" if matrix[row, column] > np.mean(results) else "#222222",
-                    fontsize=9,
-                )
-        colorbar = fig.colorbar(image, ax=ax, shrink=0.88)
-        colorbar.set_label("Total cost (CNY)")
-        interaction = (
-            (matrix[2, 2] - matrix[2, 0])
-            - (matrix[0, 2] - matrix[0, 0])
-        )
-        fig.text(
-            0.5, 0.015,
-            f"Full 3×3 deterministic grid; corner difference-in-differences = {interaction:+,.2f} CNY.",
-            ha="center", fontsize=8.5, color="#444444",
-        )
-        fig.tight_layout(rect=(0, 0.045, 1, 1))
-        safe_name = hashlib.sha256(run.parameter.encode("utf-8")).hexdigest()[:8]
-        workdir.mkdir(parents=True, exist_ok=True)
-        path = (workdir / f"sensitivity_interaction_{safe_name}.png").resolve()
-        fig.savefig(path, dpi=300, bbox_inches="tight", facecolor="white")
-        plt.close(fig)
-        return str(path)
-
     center = len(values) // 2
     baseline = results[center]
     relative = [100.0 * (value / baseline - 1.0) if baseline else 0.0 for value in results]
@@ -271,10 +147,7 @@ def _render_verified_figure(run: SensitivityRun, workdir: Path) -> str:
         run.metric.replace("_", " ").title()
         if run.metric.isascii() else "Response metric"
     )
-    x_label, y_label = _SENSITIVITY_LABELS.get(
-        run.parameter,
-        (fallback_parameter, fallback_metric),
-    )
+    x_label, y_label = fallback_parameter, fallback_metric
 
     fig, (ax, rel_ax) = plt.subplots(1, 2, figsize=(11, 4.8), dpi=180)
     color = "#276FBF"
@@ -315,7 +188,7 @@ def _render_verified_figure(run: SensitivityRun, workdir: Path) -> str:
     for axis in (ax, rel_ax):
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
-    title = _SENSITIVITY_TITLES.get(run.parameter, fallback_parameter)
+    title = fallback_parameter
     fig.suptitle(f"One-factor sensitivity: {title}", fontsize=13)
     fig.text(
         0.5, 0.01,
@@ -390,28 +263,6 @@ def _fallback_interpretation(run: SensitivityRun) -> str:
     )
 
 
-def _interaction_interpretation(run: SensitivityRun) -> str:
-    """把3×3二维扫描解释成可复核的主效应和交互差分。"""
-    matrix = [
-        run.results[row * 3:(row + 1) * 3]
-        for row in range(3)
-    ]
-    interaction = (
-        (matrix[2][2] - matrix[2][0])
-        - (matrix[0][2] - matrix[0][0])
-    )
-    speed_effect_at_eight = matrix[2][1] - matrix[0][1]
-    start_effect_at_one = matrix[1][2] - matrix[1][0]
-    return (
-        "在速度比例0.8/1.0/1.2与限行开始7/8/9时的完整3×3网格中，"
-        f"8时开始限行时，速度由0.8升至1.2使总成本变化"
-        f"{speed_effect_at_eight:+.2f}元；速度比例为1.0时，开始时刻由7时"
-        f"推迟至9时使总成本变化{start_effect_at_one:+.2f}元。"
-        f"四角差分之差为{interaction:+.2f}元，量化了两因素的非加性交互；"
-        "该值接近0时两项主效应近似可加，偏离0则表明政策时点影响随速度水平改变。"
-    )
-
-
 def _build_sensitivity_template_code(plan: SensitivityPlan) -> str:
     runs_payload = [
         {"parameter": r.parameter, "values": r.values, "metric": r.metric}
@@ -446,166 +297,6 @@ for run in runs:
 '''
 
 
-def _build_canonical_replay_code(plan: SensitivityPlan, main_code: str) -> str:
-    """对已验证主源码做参数替换并逐点重跑，保持目标、约束和数据口径一致。"""
-    # 绿色物流主代码为了政策对比会先在子目录跑 Q1、再跑 Q2。敏感性指标以
-    # RESULT: baseline=ours 的 Q2 为中心点；逐点重放若保留双情景包装器，会
-    # 无谓地把 9 个参数点变成 18 次求解并突破 120 秒硬时限。
-    q2_marker = 'print("SCENARIO_BEGIN: q2_green_policy")\n'
-    if q2_marker in main_code:
-        main_code = main_code.split(q2_marker, 1)[1]
-    # 主 RESULT 在绘图之前输出；敏感性逐点求解不重复生成主网络图，显著降低总耗时。
-    core = main_code.split("\nfig, ax =", 1)[0].rstrip() + "\n"
-    runs = [
-        {"parameter": r.parameter, "values": r.values, "metric": r.metric}
-        for r in plan.runs
-    ]
-    return f'''import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import re
-import subprocess
-import sys
-from pathlib import Path
-
-BASE_SOURCE = {core!r}
-RUNS = {runs!r}
-ALIASES = {{
-    "carbon_emission": "total_carbon", "fuel_vehicle_ratio": "fuel_ratio",
-    "Z": "total_cost", "总成本 (Z)": "total_cost", "总成本": "total_cost",
-}}
-
-def perturb(source, parameter, value):
-    if "二维组合编码" in parameter:
-        encoded = int(round(float(value)))
-        speed_scale = (encoded // 1000) / 10.0
-        restriction_hour = encoded % 1000
-        source = re.sub(
-            r"(?m)^SPEED_SCALE\\s*=.*$", "SPEED_SCALE = " + repr(speed_scale), source
-        )
-        source = re.sub(
-            r"(?m)^BAN_START\\s*=.*$",
-            "BAN_START = " + repr(60.0 * restriction_hour),
-            source,
-        )
-    elif ("速度" in parameter and "比例" in parameter) or parameter == "speed_multiplier":
-        source = re.sub(
-            r"(?m)^SPEED_SCALE\\s*=.*$", f"SPEED_SCALE = {{float(value)!r}}", source
-        )
-    elif "限行" in parameter and "开始" in parameter:
-        source = re.sub(r"(?m)^BAN_START\\s*=.*$", f"BAN_START = {{60.0 * float(value)!r}}", source)
-    elif "惩罚" in parameter and ("时间窗" in parameter or "晚到" in parameter):
-        source = re.sub(
-            r"(?m)^LATE_PENALTY\\s*=.*$", f"LATE_PENALTY = {{float(value)!r}}", source
-        )
-    elif parameter == "time_window_penalty_factor":
-        scale = float(value) / 100.0
-        source = re.sub(r"(?m)^EARLY_PENALTY\\s*=.*$", f"EARLY_PENALTY = {{0.2 * scale!r}}", source)
-        source = re.sub(r"(?m)^LATE_PENALTY\\s*=.*$", f"LATE_PENALTY = {{1.0 * scale!r}}", source)
-    elif parameter == "c_late":
-        source = re.sub(r"(?m)^LATE_PENALTY\\s*=.*$", f"LATE_PENALTY = {{float(value) / 100.0!r}}", source)
-    elif parameter == "carbon_emission_cost_coefficient":
-        coefficient = 0.1 * float(value) / 0.5
-        source = re.sub(r"carbon\\s*\\*\\s*0\\.1", f"carbon * {{coefficient!r}}", source)
-        source = re.sub(r"total_carbon\\s*\\*\\s*0\\.1", f"total_carbon * {{coefficient!r}}", source)
-    elif parameter == "beta_v(fuel)":
-        coefficient = float(value)
-        source = re.sub(r"carbon\\s*\\*\\s*0\\.1", f"carbon * {{coefficient!r}}", source)
-        source = re.sub(r"total_carbon\\s*\\*\\s*0\\.1", f"total_carbon * {{coefficient!r}}", source)
-    elif parameter == "green_zone_radius":
-        source = re.sub(r"(?m)^GREEN_ZONE_RADIUS\\s*=.*$", f"GREEN_ZONE_RADIUS = {{float(value)!r}}", source)
-    else:
-        raise ValueError(f"unsupported sensitivity parameter: {{parameter}}")
-    return source
-
-def solve_case(parameter, value, index):
-    source = perturb(BASE_SOURCE, parameter, value)
-    # 扫参只读取主 RESULT；随机交通和五类事件已由主证据独立完成，避免每个参数点
-    # 重复 200 个蒙特卡洛情景而稀释 15 次独立主模型重跑的计算预算。
-    source = re.sub(
-        r"(?m)^MONTE_CARLO_SCENARIOS\\s*=.*$", "MONTE_CARLO_SCENARIOS = 1", source
-    )
-    source = re.sub(
-        r"(?m)^event_scenarios_per_type\\s*=.*$",
-        "event_scenarios_per_type = min(1, max(1, len(event_candidates)))",
-        source,
-    )
-    path = Path(f"_case_{{index}}.py")
-    path.write_text(source, encoding="utf-8")
-    completed = subprocess.run(
-        [sys.executable, str(path)], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=20, check=False,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(completed.stderr[-1000:])
-    line = next((line for line in completed.stdout.splitlines() if line.startswith("RESULT:")), "")
-    metrics = {{key: float(value) for key, value in re.findall(
-        r"(\\w+)=(-?\\d+\\.?\\d*(?:[eE][+-]?\\d+)?)", line
-    )}}
-    return metrics
-
-for run_index, run in enumerate(RUNS):
-    values = [float(value) for value in run["values"]]
-    key = ALIASES.get(run["metric"], run["metric"])
-    results = []
-    for value_index, value in enumerate(values):
-        metrics = solve_case(run["parameter"], value, run_index * 100 + value_index)
-        if key not in metrics:
-            raise RuntimeError(f"primary RESULT missing metric {{key}}")
-        results.append(metrics[key])
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=180)
-    ax.plot(values, results, marker="o", linewidth=2, color="#2f6f9f")
-    ax.set_title(f"Sensitivity of {{run['metric']}} to {{run['parameter']}}")
-    ax.set_xlabel(run["parameter"])
-    ax.set_ylabel(run["metric"])
-    ax.grid(True, alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(f"sensitivity_scan_{{run_index}}.png", dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    print("RESULT: parameter=%s values=%s results=%s" % (run["parameter"], values, results))
-'''
-
-
-def _is_green_replay_parameter(parameter: str) -> bool:
-    """canonical replay 的 perturb() 只认绿色物流扫参 ABI。"""
-    name = str(parameter or "")
-    if "二维组合编码" in name:
-        return True
-    if ("速度" in name and "比例" in name) or name == "speed_multiplier":
-        return True
-    if "限行" in name and "开始" in name:
-        return True
-    if "惩罚" in name and ("时间窗" in name or "晚到" in name):
-        return True
-    return name in {
-        "time_window_penalty_factor",
-        "c_late",
-        "carbon_emission_cost_coefficient",
-        "beta_v(fuel)",
-        "green_zone_radius",
-    }
-
-
-def _should_use_canonical_replay(
-    plan: SensitivityPlan,
-    main_code: str,
-    *,
-    previous_error: str = "",
-) -> bool:
-    """有主源码时也不要无条件套物流 replay。
-
-    非物流参数（如 K/f/e）会被 perturb() 直接 ValueError；若仍走 replay，
-    重试只会重建同一包装脚本，LLM 扫参路径永远进不去。
-    """
-    if not main_code or previous_error:
-        return False
-    if "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in main_code:
-        return True
-    return bool(plan.runs) and all(
-        _is_green_replay_parameter(run.parameter) for run in plan.runs
-    )
-
-
 def _use_deterministic_sensitivity() -> bool:
     """显式离线应急开关；正常流程必须基于实际模型生成扫参代码。"""
     return os.getenv("MATH_AGENT_SENSITIVITY_DETERMINISTIC", "").strip() == "1"
@@ -620,47 +311,8 @@ def sensitivity_plan_node(state: MathModelingState) -> dict:
         build_plan_prompt(final, state.assumptions), schema=SensitivityPlan,
         system=PLAN_SYSTEM, model=MODEL_ROUTING.get("modeler"),
     )
-    main_code, _ = _canonical_primary(state)
-    if "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in main_code:
-        # 安全主求解器提供稳定的扫参 ABI；不允许 LLM 临时创造无法替换的参数名。
-        plan = SensitivityPlan(runs=[
-            {
-                "parameter": "速度比例×限行开始时刻二维组合编码",
-                "values": [
-                    8007, 8008, 8009,
-                    10007, 10008, 10009,
-                    12007, 12008, 12009,
-                ],
-                "metric": "Z",
-                "rationale": "用完整3×3网格同时估计速度、政策时点主效应与非加性交互。",
-            },
-            {
-                "parameter": "软时间窗单位惩罚成本系数（元/分钟）",
-                "values": [0.625, 0.8333333333333334, 1.0416666666666667], "metric": "Z",
-                "rationale": "检验客户准时服务定价对总成本的影响。",
-            },
-        ])
     if not plan.runs:
         return {"errors": ["sensitivity: no runnable plan returned"], "sensitivity_phase": "done"}
-    # 计划必须包含与正式主代码完全一致的中心点；二维网格保留完整9点，
-    # 以便计算可复核的差分之差，而不是用两条单因素曲线猜测交互。
-    for run in plan.runs:
-        if "二维组合编码" in run.parameter:
-            run.values = [
-                8007, 8008, 8009,
-                10007, 10008, 10009,
-                12007, 12008, 12009,
-            ]
-            run.metric = "Z"
-        elif "速度" in run.parameter and "比例" in run.parameter:
-            run.values = [0.8, 1.0, 1.2]
-            run.metric = "Z"
-        elif "限行" in run.parameter and "开始" in run.parameter:
-            run.values = [7.0, 8.0, 9.0]
-            run.metric = "Z"
-        elif "惩罚" in run.parameter and ("时间窗" in run.parameter or "晚到" in run.parameter):
-            run.values = [0.625, 0.8333333333333334, 1.0416666666666667]
-            run.metric = "Z"
     return {
         "sensitivity_phase": "code_generate", "sensitivity_plan_dump": plan.model_dump(),
         "sensitivity_formal_parameters": [run.parameter for run in plan.runs],
@@ -676,10 +328,6 @@ def sensitivity_code_generate_node(state: MathModelingState) -> dict:
     main_code, primary_metrics = _canonical_primary(state)
     if _use_deterministic_sensitivity():
         code_out = SensitivityCode(code=_build_sensitivity_template_code(plan))
-    elif _should_use_canonical_replay(
-        plan, main_code, previous_error=state.sensitivity_code_error,
-    ):
-        code_out = SensitivityCode(code=_build_canonical_replay_code(plan, main_code))
     else:
         final = next(
             (model for model in reversed(state.model_versions) if model.stage == "final"),
@@ -737,12 +385,6 @@ def sensitivity_code_execute_node(state: MathModelingState) -> dict:
     workdir.mkdir(parents=True, exist_ok=True)
     attempt = state.sensitivity_code_attempt
     code_to_run = state.sensitivity_pending_code
-    # 兼容已在 checkpoint 中持久化的旧版双情景重放代码：恢复时从正式主
-    # artifact 重新构造 Q2-only 扫参源码，避免继续执行已知会超时的 18 次求解。
-    if "SCENARIO_BEGIN: q1_no_policy" in code_to_run:
-        main_code, _ = _canonical_primary(state)
-        if main_code:
-            code_to_run = _build_canonical_replay_code(plan, main_code)
     result = run_python(
         code_to_run,
         workdir=workdir / f"attempt_{attempt}",
@@ -823,11 +465,7 @@ def sensitivity_interpret_node(state: MathModelingState) -> dict:
         for run in aligned[len(interpretations):]:
             interpretations.append(_fallback_interpretation(run))
     for run, text in zip(aligned, interpretations):
-        run.interpretation = (
-            _interaction_interpretation(run)
-            if "二维组合编码" in run.parameter and len(run.results) == 9
-            else text
-        )
+        run.interpretation = text
     return {
         "sensitivity_runs": aligned, "sensitivity_pending_runs": [],
         "sensitivity_plan_dump": {}, "sensitivity_pending_code": "",

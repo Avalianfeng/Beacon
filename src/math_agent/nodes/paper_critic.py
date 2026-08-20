@@ -60,23 +60,6 @@ def _offline_paper_review(state: MathModelingState) -> CriticReport:
         "sensitivity": 1_000,
         "conclusion": 1_500,
     }
-    required = {
-        "model_section": (
-            r"\mathcal G_{k,h}", "分段旅行时间与能耗核算", "绿色区政策扩展",
-        ),
-        "solution": (
-            "动态事件局部修复伪代码", "连续限行",
-            "不等于备用车辆启用率为零", "碳排机制",
-            "Q1无政策方案", "无邻域与发车优化",
-            "题面文字",
-        ),
-        "sensitivity": (
-            "3×3全因子", "描述性双因素平方和分解",
-        ),
-        "conclusion": (
-            "连续事件", "Held–Karp", "主方案不能被宣称为成本最优",
-        ),
-    }
     issues: list[CriticIssue] = []
     for section, minimum in minimum_lengths.items():
         if len(sections[section]) < minimum:
@@ -84,19 +67,10 @@ def _offline_paper_review(state: MathModelingState) -> CriticReport:
                 section=section,
                 problem=f"离线评审：章节有效字符数不足（{len(sections[section])}<{minimum}）。",
             ))
-    for section, phrases in required.items():
-        missing = [phrase for phrase in phrases if phrase not in sections[section]]
-        if missing:
-            issues.append(CriticIssue(
-                section=section,
-                problem="离线评审缺少可核验论证：" + "、".join(missing),
-            ))
     body = "\n".join(sections.values())
     forbidden = [
         term for term in (
-            "8007", "10008", "12009", "图Sensitivity", "模拟退火", "变邻域搜索",
-            "ALGORITHM_SEARCH", "DEPARTURE_SEARCH", "CROSS_ROUTE_SEARCH",
-            "无调度方案是只关闭限行",
+            "图Sensitivity",
         )
         if term in body
     ]

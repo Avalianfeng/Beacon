@@ -38,22 +38,10 @@ def figure_anchor_terms(figure: FigureArtifact) -> tuple[str, ...]:
     """给出寻找正文小节的高置信关键词，顺序即优先级。"""
     haystack = f"{figure.path} {figure.purpose} {figure.caption}".casefold()
     rules: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
-        (("data_profile", "数据画像", "附件数据"),
-         ("数据预处理与总体路线", "数据预处理", "数据画像", "数据说明")),
-        (("algorithm_flow", "求解与验证流程", "算法流程"),
-         ("求解算法与执行流程", "求解算法与流程", "验证层次", "求解流程")),
-        (("dynamic_stress", "动态局部", "压力测试"),
-         ("动态压力测试与局部重调度", "问题三动态调整", "动态调整", "问题三")),
-        (("green_delivery_network", "配送路径", "route", "network"),
-         ("问题二主方案与基线分析", "问题一结果解释", "主方案", "路径")),
-        (("robustness", "随机交通", "蒙特卡洛"),
-         ("随机交通蒙特卡洛稳健性", "随机交通样本外稳健性", "随机交通", "稳健性")),
-        (("service_diagnostics", "服务与线路", "服务诊断"),
-         ("客户与线路诊断", "服务质量、车队结构与环境指标", "服务质量", "线路诊断")),
         (("baseline_comparison", "基线比较", "方案比较", "对比"),
-         ("问题二主方案与基线分析", "各方案结果对比表", "基线比较", "对比分析")),
+         ("各方案结果对比表", "基线比较", "对比分析")),
         (("cost_composition", "cost_pie", "成本构成", "成本分解"),
-         ("主方案成本分解", "参数口径与成本分解", "成本分解", "成本结构")),
+         ("成本分解", "成本结构")),
     ]
     for markers, anchors in rules:
         if any(marker.casefold() in haystack for marker in markers):

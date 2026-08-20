@@ -100,12 +100,8 @@ def _truncate_caption(s: str, *, max_chars: int = 55) -> str:
 def _curate_code(code: str, max_lines: int = 80) -> str:
     """截取代码前 max_lines 行。"""
     lines = [
-        line for line in code.split("\n")
-        if "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" not in line
-    ]
-    lines = [
         re.sub(r"^\s*DATA_DIR\s*=\s*Path\(.+\)\s*$", 'DATA_DIR = Path("./data")', line)
-        for line in lines
+        for line in code.split("\n")
     ]
     if len(lines) <= max_lines:
         return "\n".join(lines)
@@ -131,37 +127,17 @@ def _curate_stdout(stdout: str) -> str:
 
 _RESULT_LABELS = {
     "RESULT": "方案结果", "BREAKDOWN": "成本分解", "DATA_PROFILE": "数据概况",
-    "DYNAMIC_STRESS": "动态压力测试", "ALGORITHM_SEARCH": "局部搜索",
-    "ROBUSTNESS": "随机交通稳健性", "SERVICE_DIAGNOSTICS": "服务诊断",
-    "DYNAMIC_EVENTS": "动态事件实验",
 }
 
 _RESULT_KEYS = {
     "baseline": "方案", "ours": "本文方案", "no_schedule": "无调度方案",
     "simple_pred": "定速预测方案", "greedy": "贪婪构造方案",
-    "total_cost": "总成本", "vehicles": "车辆数", "service_rate": "服务率",
-    "total_carbon": "碳排放", "total_distance": "总里程", "fuel_vehicles": "燃油车数",
-    "ev_vehicles": "新能源车数", "avg_delivery_time": "平均配送时间",
-    "timewin_rate": "时间窗满足率", "fuel_ratio": "燃油车比例",
-    "response_time": "响应时间", "dynamic_reinserted": "局部重插成功标志",
-    "dynamic_distance_change": "重插距离变化", "dynamic_distance_improved": "距离改善标志",
+    "total_cost": "总成本", "cost": "成本", "service_rate": "服务率",
+    "response_time": "响应时间",
     "samples": "样本数", "success": "成功数", "success_rate": "成功率",
-    "mean_response_ms": "平均响应时间（毫秒）", "p95_response_ms": "P95响应时间（毫秒）",
-    "mean_distance_change": "平均距离变化", "max_distance_change": "最大距离变化",
-    "improved": "改善样本数", "mean_late_change": "平均晚到变化",
     "initial_score": "初始目标", "final_score": "改进后目标", "improvement": "改善量",
     "improvement_rate": "改善率", "moves": "有效移动数", "passes": "搜索轮数",
     "runtime_ms": "计算耗时（毫秒）", "scenarios": "情景数", "seed": "随机种子",
-    "timewin_mean": "时间窗率均值", "timewin_std": "时间窗率标准差",
-    "timewin_p05": "时间窗率5%分位", "late_mean": "平均晚到量",
-    "late_p95": "晚到量P95", "cost_mean": "成本均值", "cost_p95": "成本P95",
-    "late_tasks": "晚到任务数", "mean_late_min": "平均晚到（分钟）",
-    "p95_late_min": "P95晚到（分钟）", "max_late_min": "最大晚到（分钟）",
-    "mean_weight_util": "平均载重利用率", "mean_volume_util": "平均容积利用率",
-    "empty_return_ratio": "空载返程比例", "cancellation_success_rate": "订单取消成功率",
-    "new_order_success_rate": "新增订单成功率", "address_change_success_rate": "地址变更成功率",
-    "time_window_success_rate": "时间窗变更成功率",
-    "vehicle_failure_success_rate": "车辆故障恢复成功率", "fallback_rate": "升级处理比例",
 }
 
 

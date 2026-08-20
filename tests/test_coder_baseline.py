@@ -69,20 +69,20 @@ def test_coder_node_skips_logistics_baselines_without_green_attachments(monkeypa
     assert not any(a.category.startswith("baseline:") for a in artifacts)
 
 
-def test_missing_baseline_items_only_for_green_logistics():
+def test_missing_baseline_items_always_empty_after_green_removal():
+    """绿色物流专属 baseline 轨道已移除，不再自动补生成 baseline 任务。"""
     from math_agent.nodes.coder import _missing_baseline_items
     from math_agent.state import DataFileInfo, MathModelingState
 
     empty = MathModelingState(problem="锚杆预紧")
     assert _missing_baseline_items(empty, []) == []
 
-    green = MathModelingState(problem="城市物流")
-    green.data_files = [
+    logistics_like = MathModelingState(problem="城市物流")
+    logistics_like.data_files = [
         DataFileInfo(filename=name, file_type="xlsx", path=name)
         for name in ("订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx")
     ]
-    items = _missing_baseline_items(green, [])
-    assert {item["category"] for item in items} == {"no_schedule", "simple_pred", "greedy"}
+    assert _missing_baseline_items(logistics_like, []) == []
 
 
 def test_main_figure_prompt_includes_ours_result_contract():
@@ -90,20 +90,20 @@ def test_main_figure_prompt_includes_ours_result_contract():
     from math_agent.prompts.coder_figure_one import build_prompt_figure_one
     from math_agent.state import DataFileInfo, ModelVersion
     m = ModelVersion(stage="final", description="test", variables={"x": "v"})
-    green_files = [
+    files = [
         DataFileInfo(filename=name, file_type="xlsx", path=name)
         for name in ("订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx")
     ]
-    prompt = build_prompt_figure_one(m, "plot1", data_files=green_files)
+    prompt = build_prompt_figure_one(m, "plot1", data_files=files)
     assert "RESULT: baseline=ours" in prompt
-    assert "O(n^2)" in prompt
     assert "内存不超过 1 GB" in prompt
-    assert "拆成容量可行的多次访问" in prompt
-    assert "while unserved" in prompt
-    assert "read_only" in prompt
+    assert "Excel 附件必须遍历全部工作表" in prompt
+    # 物流化石已清除：不再出现绿色物流专属求解提示
+    assert "while unserved" not in prompt
+    assert "拆成容量可行的多次访问" not in prompt
 
 
-def test_generic_figure_prompt_forbids_logistics_metrics():
+def test_generic_figure_prompt_has_no_logistics_fossils():
     from math_agent.prompts.coder_figure_one import build_prompt_figure_one
     from math_agent.state import ModelVersion
 
@@ -112,10 +112,9 @@ def test_generic_figure_prompt_forbids_logistics_metrics():
         "主图",
     )
     assert "RESULT: baseline=ours" in prompt
-    assert "total_cost" in prompt
-    assert "禁止输出与本题无关的物流指标" in prompt
     assert "while unserved" not in prompt
     assert "Branch-and-Cut" not in prompt
+    assert "禁止输出与本题无关的物流指标" not in prompt
     assert "Excel 附件必须遍历全部工作表" in prompt
 
 
@@ -174,8 +173,8 @@ def test_main_figure_prompt_forbids_nan_inf_output():
 
     prompt = build_prompt_figure_one(ModelVersion(stage="final", description="锚杆预紧"), "主图")
     assert "不得出现 nan 或 inf 字样" in prompt
-    assert "禁止用 np.inf 或 np.nan 占位" in prompt
     assert "所有打印数值必须是有限数" in prompt
+    assert "禁止 NaN/Inf" in prompt
 
 
 def test_main_figure_prompt_includes_limitation_protocol():
@@ -185,9 +184,8 @@ def test_main_figure_prompt_includes_limitation_protocol():
 
     prompt = build_prompt_figure_one(ModelVersion(stage="final", description="锚杆预紧"), "主图")
     assert "LIMITATION: <问题id或字段> <具体数学原因" in prompt
-    assert "模型不可用" in prompt
+    assert "数学上不可用" in prompt
     assert "禁止伪造一个数值凑数" in prompt
-    assert "不得用于掩盖代码 bug" in prompt
     assert "空洞声明" in prompt
 
 
@@ -212,7 +210,6 @@ def test_main_figure_prompt_metric_contract_exact_names():
     assert "RESULT: baseline=ours R²={m0} RMSE={m1} Tmax={m2} 安全裕度={m3}" in prompt
     assert "共 4 个：R²、RMSE、Tmax、安全裕度" in prompt
     assert "禁止改名" in prompt
-    assert "R² 不得写成 R_squared" in prompt
     assert "禁止只输出其中一部分" in prompt
     assert "禁止新增未要求的指标字段" in prompt
 
@@ -274,7 +271,7 @@ def test_supporting_figure_prompt_reuses_canonical_evidence():
     from math_agent.state import DataFileInfo, ModelVersion
 
     model = ModelVersion(stage="final", description="test")
-    green_files = [
+    files = [
         DataFileInfo(filename=name, file_type="xlsx", path=name)
         for name in ("订单信息.xlsx", "距离矩阵.xlsx", "时间窗.xlsx", "客户坐标信息.xlsx")
     ]
@@ -282,11 +279,11 @@ def test_supporting_figure_prompt_reuses_canonical_evidence():
         model,
         "补充图",
         canonical_evidence="RESULT: baseline=ours total_cost=100 service_rate=0.95",
-        data_files=green_files,
+        data_files=files,
     )
 
     assert "唯一主方案证据" in prompt
-    assert "禁止重新运行路径优化" in prompt
+    assert "不得重新求解出另一套主方案指标" in prompt
     assert "total_cost=100" in prompt
 
 

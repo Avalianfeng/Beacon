@@ -179,24 +179,19 @@ def test_sensitivity_table_uses_latest_run_per_parameter():
     assert "2.4e+05" not in table
 
 
-def test_sensitivity_table_decodes_interaction_parameter_for_readers():
+def test_sensitivity_table_keeps_parameter_name_verbatim():
+    """敏感性表不再做参数名专属解码，原样展示参数名与取值范围。"""
     run = SensitivityRun(
-        parameter="速度比例×限行开始时刻二维组合编码",
-        values=[8007, 8008, 8009, 10007, 10008, 10009, 12007, 12008, 12009],
-        metric="Z",
-        results=[
-            94541.15, 92673.57, 92817.31,
-            92704.02, 91544.49, 91425.33,
-            92301.92, 91006.45, 90933.57,
-        ],
+        parameter="speed_ratio",
+        values=[0.8, 1.0, 1.2],
+        metric="total_cost",
+        results=[94541.15, 91544.49, 90933.57],
     )
 
     table = _generate_sensitivity_table([run])
 
-    assert "速度比例与限行开始时刻（3×3全因子）" in table
-    assert "速度0.8–1.2；开始时刻7–9时" in table
-    assert "8007" not in table
-    assert "12009" not in table
+    assert "speed_ratio" in table
+    assert "total_cost" in table
 
 
 from math_agent.nodes.table_assembler import _inject_table
@@ -332,19 +327,14 @@ def test_comparison_table_from_baselines():
         ),
         CodeArtifact(
             purpose="主方案", code="", success=True,
-            stdout=(
-                "SCENARIO_Q1: baseline=no_policy total_cost=710.2 vehicles=6 "
-                "fuel_vehicles=5 ev_vehicles=1 total_carbon=80.0 timewin_rate=0.96\n"
-                "RESULT: baseline=ours total_cost=750.5 service_rate=0.95"
-            ),
+            stdout="RESULT: baseline=ours total_cost=750.5 service_rate=0.95",
             category="figure",
         ),
     ]
     table = _generate_comparison_table(artifacts)
     assert "| 方案 |" in table
     assert "无邻域与发车优化" in table
-    assert "Q1无政策方案" in table
-    assert "710.2" in table
+    assert "本文方案" in table
     assert "1245.3" in table
     assert "980.0" in table
     assert "750.5" in table

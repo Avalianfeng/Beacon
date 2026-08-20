@@ -191,16 +191,11 @@ def _generate_sensitivity_table(runs: list) -> str:
     for run in runs:
         latest[run.parameter] = run
     for r in latest.values():
-        is_interaction = "二维组合编码" in r.parameter and len(r.values) == 9
-        if is_interaction:
-            parameter = "速度比例与限行开始时刻（3×3全因子）"
-            vals = "速度0.8–1.2；开始时刻7–9时"
-        else:
-            parameter = r.parameter
-            vals = (
-                f"[{float(r.values[0]):.6g}, {float(r.values[-1]):.6g}]"
-                if r.values else "—"
-            )
+        parameter = r.parameter
+        vals = (
+            f"[{float(r.values[0]):.6g}, {float(r.values[-1]):.6g}]"
+            if r.values else "—"
+        )
         res = f"[{min(r.results):.4g}, {max(r.results):.4g}]" if r.results else "—"
         rating = _sensitivity_rating(r.results)
         lines.append(f"| {parameter} | {vals} | {r.metric} | {res} | {rating} |")
@@ -209,22 +204,11 @@ def _generate_sensitivity_table(runs: list) -> str:
 
 # baseline category → 中文显示名
 _BASELINE_NAMES = {
-    "q1_no_policy": "Q1无政策方案",
     "no_schedule": "无邻域与发车优化",
     "simple_pred": "定速预测",
     "greedy": "贪婪构造",
     "ours": "本文方案",
 }
-
-_COMPARISON_METRICS = [
-    ("total_cost", "总成本"),
-    ("vehicles", "车辆"),
-    ("fuel_vehicles", "油车"),
-    ("ev_vehicles", "电车"),
-    ("total_carbon", "碳排放"),
-    ("timewin_rate", "时间窗率"),
-]
-
 
 def _generate_comparison_table(artifacts: list, max_entity_count: int | None = None) -> str:
     """从 code_artifacts 中提取 baseline 对照结果生成对比表。
@@ -247,34 +231,22 @@ def _generate_comparison_table(artifacts: list, max_entity_count: int | None = N
         )
         if not valid:
             continue
-        if a.evidence_role == "primary":
-            q1_match = re.search(
-                r"(?m)^SCENARIO_Q1:\s*baseline=no_policy\s+(.+)$",
-                a.stdout,
-            )
-            if q1_match:
-                q1_metrics = {
-                    item.group(1): item.group(2)
-                    for item in re.finditer(
-                        r"([A-Za-z_][\w]*)=(-?\d+(?:\.\d+)?)",
-                        q1_match.group(1),
-                    )
-                }
-                results = {"q1_no_policy": q1_metrics, **results}
         if not results:
             continue
         for identifier, metrics in results.items():
             name = _BASELINE_NAMES.get(identifier, identifier)
             row = {"方案": name}
-            if "total_cost" not in metrics and "cost" in metrics:
-                metrics = {**metrics, "total_cost": metrics["cost"]}
-            row.update({label: str(metrics[key]) for key, label in _COMPARISON_METRICS if key in metrics})
+            row.update({str(key): str(value) for key, value in metrics.items()})
             rows.append(row)
 
     if not rows:
         return ""
 
-    all_metrics = [label for _, label in _COMPARISON_METRICS if any(label in row for row in rows)]
+    all_metrics: list[str] = []
+    for row in rows:
+        for key in row:
+            if key != "方案" and key not in all_metrics:
+                all_metrics.append(key)
 
     if not all_metrics:
         all_metrics = ["状态"]
@@ -343,13 +315,7 @@ def table_assembler_node(state: MathModelingState) -> dict:
     # 1) 生成并注入表格
     final_model = next((m for m in reversed(state.model_versions) if m.stage == "final"),
                        state.model_versions[-1] if state.model_versions else None)
-    has_verified_green_primary = any(
-        artifact.success
-        and artifact.evidence_role == "primary"
-        and "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" in artifact.code
-        for artifact in state.latest_code_artifacts()
-    )
-    if final_model and final_model.variables and not has_verified_green_primary:
+    if final_model and final_model.variables:
         var_table = _generate_variable_table(final_model.variables)
         paper.notation = _inject_table(paper.notation, "模型变量表", var_table)
 

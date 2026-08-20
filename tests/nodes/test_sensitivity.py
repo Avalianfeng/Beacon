@@ -295,45 +295,40 @@ def test_sensitivity_interpret_node_falls_back_for_missing_entries(mocker, workd
     assert "参数 beta" in delta["sensitivity_runs"][1].interpretation
 
 
-def test_interaction_sensitivity_renders_heatmap_and_reports_difference_in_differences(workdir):
-    from math_agent.nodes.sensitivity import (
-        _interaction_interpretation,
-        _render_verified_figure,
-    )
+def test_single_factor_sensitivity_renders_verified_figure(workdir):
+    from math_agent.nodes.sensitivity import _render_verified_figure
 
     run = SensitivityRun(
-        parameter="速度比例×限行开始时刻二维组合编码",
-        values=[8007, 8008, 8009, 10007, 10008, 10009, 12007, 12008, 12009],
-        metric="Z",
-        results=[100, 98, 97, 96, 95, 94, 93, 91, 90],
+        parameter="速度比例", values=[0.8, 1.0, 1.2], metric="total_cost",
+        results=[100.0, 95.0, 97.0],
     )
 
-    interpretation = _interaction_interpretation(run)
     path = _render_verified_figure(run, workdir)
 
-    assert "四角差分之差" in interpretation
-    assert "3×3" in interpretation
     assert Path(path).exists()
     assert Path(path).stat().st_size > 1000
 
 
-def test_green_formal_sensitivity_requires_nine_points_and_exact_center():
+def test_formal_sensitivity_requires_runs_and_aligned_center():
     from math_agent.nodes.sensitivity import formal_sensitivity_issues
     from math_agent.state import CodeArtifact
 
-    state = MathModelingState(problem="A题：城市绿色物流配送调度")
+    state = MathModelingState(problem="p")
     state.code_artifacts.append(CodeArtifact(
         purpose="main",
-        code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+        code="print('solver')",
         success=True,
         evidence_role="primary",
+        category="figure",
         stdout="RESULT: baseline=ours total_cost=100 service_rate=1",
     ))
+
+    assert any("缺少有效敏感性分析结果" in issue
+               for issue in formal_sensitivity_issues(state))
+
     run = SensitivityRun(
-        parameter="速度比例×限行开始时刻二维组合编码",
-        values=[8007, 8008, 8009, 10007, 10008, 10009, 12007, 12008, 12009],
-        metric="Z",
-        results=[110, 108, 106, 104, 100, 96, 98, 94, 90],
+        parameter="speed", values=[0.8, 1.0, 1.2], metric="total_cost",
+        results=[110, 100, 105],
     )
     state.sensitivity_runs = [run]
     state.sensitivity_formal_parameters = [run.parameter]
@@ -341,39 +336,9 @@ def test_green_formal_sensitivity_requires_nine_points_and_exact_center():
     assert formal_sensitivity_issues(state) == []
 
     state.sensitivity_runs = [run.model_copy(update={
-        "values": run.values[:2],
-        "results": run.results[:2],
-    })]
-    assert any("9 个网格点" in issue for issue in formal_sensitivity_issues(state))
-
-    state.sensitivity_runs = [run.model_copy(update={
-        "values": list(reversed(run.values)),
-    })]
-    assert any("固定顺序编码" in issue for issue in formal_sensitivity_issues(state))
-
-    state.sensitivity_runs = [run.model_copy(update={
-        "results": [110, 108, 106, 104, 101, 96, 98, 94, 90],
+        "results": [110, 500, 105],
     })]
     assert any("基准点口径不一致" in issue for issue in formal_sensitivity_issues(state))
-
-
-def test_canonical_replay_decodes_two_factor_grid_parameter():
-    from math_agent.nodes.sensitivity import _build_canonical_replay_code
-
-    plan = SensitivityPlan(runs=[{
-        "parameter": "速度比例×限行开始时刻二维组合编码",
-        "values": [8007, 10008, 12009],
-        "metric": "Z",
-    }])
-    code = _build_canonical_replay_code(
-        plan,
-        "SPEED_SCALE = 1.0\nBAN_START = 480.0\n"
-        "print('RESULT: baseline=ours total_cost=1')\n",
-    )
-
-    compile(code, "<interaction-replay>", "exec")
-    assert "speed_scale = (encoded // 1000) / 10.0" in code
-    assert "restriction_hour = encoded % 1000" in code
 
 
 def test_sensitivity_code_prompt_includes_data_paths():
@@ -409,66 +374,6 @@ def test_sensitivity_code_generation_uses_code_timeout_profile(mocker, workdir):
     sensitivity_code_generate_node(state)
     assert spy.call_args.kwargs["profile"] == "code"
 
-
-def test_canonical_replay_supports_model_plan_aliases(workdir):
-    from math_agent.nodes.sensitivity import _build_canonical_replay_code
-    from math_agent.tools.runner import run_python
-
-    plan = SensitivityPlan(runs=[
-        {"parameter": "c_late", "values": [75, 100], "metric": "Z"},
-        {"parameter": "beta_v(fuel)", "values": [0.05, 0.1], "metric": "Z"},
-        {"parameter": "green_zone_radius", "values": [7.5, 10], "metric": "Z"},
-    ])
-    main_code = """EARLY_PENALTY = 0.2
-LATE_PENALTY = 1.0
-GREEN_ZONE_RADIUS = 10.0
-carbon = 100.0
-total_carbon = carbon
-total_cost = 1000.0 + LATE_PENALTY + total_carbon * 0.1
-print(f'RESULT: baseline=ours total_cost={total_cost} total_carbon={total_carbon} fuel_ratio=0.5 vehicles=1 service_rate=1.0')
-"""
-
-    result = run_python(
-        _build_canonical_replay_code(plan, main_code),
-        workdir=workdir / "aliases",
-        timeout=30,
-    )
-
-    assert result.success, result.stderr
-    assert "parameter=c_late" in result.stdout
-    assert "parameter=beta_v(fuel)" in result.stdout
-    assert "parameter=green_zone_radius" in result.stdout
-
-
-def test_canonical_replay_supports_chinese_green_logistics_plan(workdir):
-    from math_agent.nodes.sensitivity import _build_canonical_replay_code
-    from math_agent.tools.runner import run_python
-
-    plan = SensitivityPlan(runs=[
-        {"parameter": "速度时变函数的比例因子（整体速度水平）", "values": [0.8, 1.0], "metric": "总成本 (Z)"},
-        {"parameter": "绿色区限行时段开始时间（小时）", "values": [7.0, 8.0], "metric": "总成本 (Z)"},
-        {"parameter": "软时间窗单位惩罚成本系数（元/分钟）", "values": [0.75, 1.0], "metric": "总成本 (Z)"},
-    ])
-    main_code = '''import numpy as np
-BAN_START = 480.0
-def speed(minute):
-    points_t = np.array([0, 1440], dtype=float)
-    points_v = np.array([40, 40], dtype=float)
-    return float(np.interp(float(minute) % 1440.0, points_t, points_v))
-late = 2.0
-total_cost = 1000.0 + 1.0 * late + speed(10) + BAN_START
-print(f"RESULT: baseline=ours total_cost={total_cost} vehicles=1 service_rate=1 total_carbon=1")
-'''
-
-    result = run_python(
-        _build_canonical_replay_code(plan, main_code),
-        workdir=workdir / "chinese-plan", timeout=30,
-    )
-
-    assert result.success, result.stderr
-    assert "速度时变函数的比例因子" in result.stdout
-    assert "绿色区限行时段开始时间" in result.stdout
-    assert "软时间窗单位惩罚成本系数" in result.stdout
 
 def test_data_hint_uses_safe_windows_paths_and_real_columns():
     from math_agent.prompts._data_hint import build_data_hint
@@ -559,7 +464,7 @@ def _primary_state(workdir, code: str) -> MathModelingState:
     return state
 
 
-def test_generate_uses_llm_when_primary_exists_but_plan_is_not_green(mocker, workdir):
+def test_generate_uses_llm_and_feeds_primary_code_and_metrics(mocker, workdir):
     from math_agent.nodes.sensitivity import sensitivity_code_generate_node
 
     state = _primary_state(workdir, "K = 0.18\nf = 5.0\ne = 5.0\nprint('RESULT: T_max=1')\n")
@@ -576,47 +481,23 @@ def test_generate_uses_llm_when_primary_exists_but_plan_is_not_green(mocker, wor
     delta = sensitivity_code_generate_node(state)
 
     spy.assert_called_once()
-    assert "unsupported sensitivity parameter" not in delta["sensitivity_pending_code"]
     assert delta["sensitivity_pending_code"] == "print('scan')"
     prompt = spy.call_args.args[0]
-    assert "禁止套用 SPEED_SCALE" in prompt
     assert "K = 0.18" in prompt
+    assert "正式主方案代码" in prompt
 
 
-def test_generate_uses_canonical_replay_for_green_solver(mocker, workdir):
+def test_generate_falls_back_to_llm_after_code_error(mocker, workdir):
     from math_agent.nodes.sensitivity import sensitivity_code_generate_node
 
     state = _primary_state(
         workdir,
-        "BEACON_GREEN_LOGISTICS_SAFE_SOLVER\nSPEED_SCALE = 1.0\n"
-        "print('RESULT: baseline=ours total_cost=1')\n",
+        "SPEED_SCALE = 1.0\nprint('RESULT: baseline=ours total_cost=1')\n",
     )
     state.sensitivity_plan_dump = SensitivityPlan(runs=[{
-        "parameter": "速度比例×限行开始时刻二维组合编码",
-        "values": [8007, 10008, 12009],
-        "metric": "Z",
-    }]).model_dump()
-    spy = mocker.patch("math_agent.nodes.sensitivity.complete")
-
-    delta = sensitivity_code_generate_node(state)
-
-    spy.assert_not_called()
-    assert "def perturb(" in delta["sensitivity_pending_code"]
-    assert "二维组合编码" in delta["sensitivity_pending_code"]
-
-
-def test_generate_falls_back_to_llm_after_replay_error(mocker, workdir):
-    from math_agent.nodes.sensitivity import sensitivity_code_generate_node
-
-    state = _primary_state(
-        workdir,
-        "BEACON_GREEN_LOGISTICS_SAFE_SOLVER\nSPEED_SCALE = 1.0\n"
-        "print('RESULT: baseline=ours total_cost=1')\n",
-    )
-    state.sensitivity_plan_dump = SensitivityPlan(runs=[{
-        "parameter": "速度比例×限行开始时刻二维组合编码",
-        "values": [8007, 10008, 12009],
-        "metric": "Z",
+        "parameter": "K",
+        "values": [0.12, 0.18, 0.24],
+        "metric": "T_max",
     }]).model_dump()
     state.sensitivity_code_error = "unsupported sensitivity parameter: K"
     spy = mocker.patch(
@@ -628,3 +509,4 @@ def test_generate_falls_back_to_llm_after_replay_error(mocker, workdir):
 
     spy.assert_called_once()
     assert delta["sensitivity_pending_code"] == "print('repaired')"
+    assert "unsupported sensitivity parameter" in spy.call_args.args[0]

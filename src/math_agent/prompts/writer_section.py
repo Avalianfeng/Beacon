@@ -169,12 +169,6 @@ _MAX_WRITER_EQUATIONS = 36
 _MAX_WRITER_VARIABLES = 20
 _MAX_WRITER_DERIVATIONS = 6
 _MAX_WRITER_CODE_ARTIFACTS = 3
-_DEPTH_EVIDENCE_LABELS = (
-    "SCENARIO_BEGIN", "SCENARIO_Q1", "RESULT", "BREAKDOWN", "DATA_PROFILE", "DYNAMIC_STRESS",
-    "DYNAMIC_FAILURES", "ENERGY_METHOD_AUDIT", "SMALL_EXACT", "CAPACITY_DIAGNOSTICS",
-    "ALGORITHM_SEARCH", "DEPARTURE_SEARCH", "CROSS_ROUTE_SEARCH",
-    "ROBUSTNESS", "SERVICE_DIAGNOSTICS", "DYNAMIC_EVENTS", "SCENARIO_END",
-)
 
 
 def _compact_text(text: str, max_chars: int) -> str:
@@ -212,20 +206,6 @@ def _compact_model_versions(state: MathModelingState):
     return compact
 
 
-def _depth_evidence_lines(artifact) -> list[str]:
-    """只为已验证绿色物流主证据保留可机读的扩展实验行。"""
-    if (
-        artifact.evidence_role != "primary"
-        or "BEACON_GREEN_LOGISTICS_SAFE_SOLVER" not in (artifact.code or "")
-    ):
-        return []
-    labels = "|".join(_re.escape(label) for label in _DEPTH_EVIDENCE_LABELS)
-    return [
-        match.group(0).strip()
-        for match in _re.finditer(rf"(?m)^(?:{labels}):\s+.+$", artifact.stdout or "")
-    ]
-
-
 def _compact_code_artifacts(state: MathModelingState):
     compact = []
     upper_bound = infer_entity_upper_bound(state.data_files)
@@ -242,10 +222,8 @@ def _compact_code_artifacts(state: MathModelingState):
         if not result_lines:
             continue
         # 结构化证据 = RESULT 行 + 逐问输出行（Q<id>:，r6 曾因只保留 RESULT 行
-        # 导致 writer 拿不到逐问数值而编造细节）+ LIMITATION 声明 + 绿色深度行。
-        evidence_lines = list(dict.fromkeys(
-            structured_evidence_lines(a.stdout) + _depth_evidence_lines(a)
-        ))
+        # 导致 writer 拿不到逐问数值而编造细节）+ LIMITATION 声明。
+        evidence_lines = list(dict.fromkeys(structured_evidence_lines(a.stdout)))
         code_limit = 14000 if a.evidence_role == "primary" else 1000
         compact.append(a.model_copy(update={
             "purpose": _compact_text(a.purpose, 120),
@@ -284,8 +262,6 @@ def _extract_available_numbers(state: MathModelingState) -> str:
         for line in structured_evidence_lines(a.stdout):
             if line.startswith("RESULT:"):
                 continue  # 已在上方以原始 RESULT 行加入
-            lines.append(f"  [{a.purpose}] {line}")
-        for line in _depth_evidence_lines(a):
             lines.append(f"  [{a.purpose}] {line}")
     for r in formal_sensitivity_runs(state):
         lines.append(f"  [sensitivity] {r.parameter}={r.values} → {r.metric}={r.results}")
@@ -407,21 +383,6 @@ def build_section_prompt(
             "“待验证”或删除，绝不编造。\n"
             "- 单位必须与清单一致（如清单无单位则正文不写死单位，或统一按题面单位说明来源）。\n"
         )
-        if "SCENARIO_Q1:" in numbers and "RESULT: baseline=ours" in numbers:
-            rendered += (
-                "\n\n## 场景身份硬约束\n"
-                "- 问题1（无政策）只能引用 `SCENARIO_Q1: baseline=no_policy` 行及紧随其后的"
-                " Q1 `BREAKDOWN`。\n"
-                "- 问题2（8:00—16:00 绿色区限行）只能引用"
-                " `RESULT: baseline=ours` 及 Q2 `BREAKDOWN`。\n"
-                "- 政策成本和碳排放的绝对/相对增量必须由上述两行现场计算并展示计算式，"
-                "不得凭记忆填写。\n"
-                "- 摘要、模型、结果、结论必须保持上述身份一致；不得把 Q2 主方案数值复制为 Q1，"
-                "不得把 `baseline:no_schedule` 构造初解当作问题1答案；它关闭路线内搜索、"
-                "跨路线交换和发车时刻优化，只用于量化算法改进幅度。\n"
-                "- `ALGORITHM_SEARCH`、`DEPARTURE_SEARCH`、`CROSS_ROUTE_SEARCH` 是证据标签；"
-                "正文应改写为“路线内邻域搜索”“发车时刻优化”“跨路线交换”，不直接暴露标签。\n"
-            )
     if retrieved_context:
         rendered = rendered + "\n\n" + retrieved_context
     return rendered

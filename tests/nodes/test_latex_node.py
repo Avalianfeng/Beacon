@@ -7,10 +7,8 @@ from math_agent.state import (
 from math_agent.nodes.latex_node import (
     latex_node,
     _formal_figures,
-    _refresh_verified_cost_figure,
     _sensitivity_figure_analysis,
     _verified_comparison_figure,
-    _green_publication_stdout,
 )
 
 
@@ -79,35 +77,12 @@ def test_latex_node_title_only_first_line(mocker, workdir):
     assert r"建立模型预测各站点未来" not in tex.split(r"\title{")[1].split("}")[0]
 
 
-def test_green_solver_uses_problem_specific_title_in_tex_and_markdown(mocker, workdir):
-    mocker.patch(
-        "math_agent.nodes.latex_node.compile_latex",
-        return_value=type("R", (), {"success": True, "pdf_path": "", "log": ""})(),
-    )
-    state = _state(workdir)
-    state.problem = "城市应急物资调度优化"
-    state.code_artifacts = [CodeArtifact(
-        purpose="主方案", code="# BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
-        stdout="RESULT: baseline=ours total_cost=1 vehicles=1 service_rate=1 total_carbon=1",
-        success=True, evidence_role="primary",
-    )]
-
-    latex_node(state)
-
-    tex = (workdir / "paper.tex").read_text(encoding="utf-8")
-    markdown = (workdir / "paper.md").read_text(encoding="utf-8")
-    title = "多约束异构车队绿色配送与动态局部重调度"
-    assert title in tex and markdown.startswith(f"# {title}")
-    assert r"\section{计算证据摘要}" in tex
-    assert r"\begin{lstlisting}[language=Python]" not in tex
-
-
 def test_verified_comparison_figure_is_derived_from_result_lines(workdir):
     state = _state(workdir)
     common = " vehicles=2 service_rate=1 total_carbon=3 timewin_rate=.9"
     state.code_artifacts = [
         CodeArtifact(
-            purpose="主方案", code="# BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+            purpose="主方案", code="print(0)",
             stdout="RESULT: baseline=ours total_cost=100" + common,
             success=True, evidence_role="primary",
         ),
@@ -123,45 +98,6 @@ def test_verified_comparison_figure_is_derived_from_result_lines(workdir):
     assert figure is not None
     assert figure.path.endswith("baseline_comparison.png")
     assert (workdir / "baseline_comparison.png").stat().st_size > 10_000
-
-
-def test_green_comparison_figure_uses_q1_and_q2_primary_scenarios(workdir):
-    state = _state(workdir)
-    state.code_artifacts = [CodeArtifact(
-        purpose="主方案",
-        code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
-        stdout=(
-            "SCENARIO_Q1: baseline=no_policy total_cost=91 total_carbon=11 "
-            "timewin_rate=.93 vehicles=3 service_rate=1\n"
-            "RESULT: baseline=ours total_cost=92 total_carbon=10 "
-            "timewin_rate=.90 vehicles=3 service_rate=1\n"
-        ),
-        success=True,
-        evidence_role="primary",
-    )]
-
-    figure = _verified_comparison_figure(state, workdir)
-
-    assert figure is not None
-    assert figure.path.endswith("policy_scenario_comparison.png")
-    assert "问题一与问题二" in figure.purpose
-    assert (workdir / "policy_scenario_comparison.png").stat().st_size > 10_000
-
-
-def test_green_publication_stdout_localizes_internal_labels():
-    value = (
-        "RESULT: baseline=ours total_cost=92 vehicles=3 service_rate=1 total_carbon=10\n"
-        "CROSS_ROUTE_SEARCH: initial_score=10 final_score=8 improvement=2 "
-        "swaps=1 evaluated_moves=20\n"
-        "SCENARIO_END: q2_green_policy\n"
-    )
-
-    curated = _green_publication_stdout(value)
-
-    assert "Cross Route Search" not in curated
-    assert "Scenario End" not in curated
-    assert "跨路线交换" in curated
-    assert "交换次数" in curated
 
 
 def test_latex_node_figure_caption_truncated(mocker, workdir):
@@ -228,32 +164,6 @@ def test_sensitivity_figure_analysis_states_conclusion_evidence_and_boundary():
     assert "非单调" in analysis
     assert "最低值 100.00" in analysis
     assert "连续响应拟合" in analysis
-
-
-def test_refresh_verified_cost_figure_accepts_cost_pie_filename(workdir):
-    """正式成本图沿用生成器的 cost_pie 文件名时也必须由主 RESULT 重绘。"""
-    target = workdir / "cost_pie.png"
-    state = _state(workdir)
-    state.code_artifacts = [CodeArtifact(
-        purpose="主方案",
-        code="# BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
-        stdout=(
-            "RESULT: baseline=ours total_cost=100 vehicles=2 service_rate=1 "
-            "total_carbon=3\n"
-            "BREAKDOWN: Z_fix=40 Z_wait=20 Z_late=10 Z_energy=25 Z_carbon=5\n"
-        ),
-        success=True,
-        evidence_role="primary",
-        batch=1,
-    )]
-    figures = [FigureArtifact(
-        path=str(target), purpose="成本构成饼图", caption="成本构成", analysis="",
-    )]
-
-    _refresh_verified_cost_figure(state, figures)
-
-    assert target.is_file()
-    assert target.stat().st_size > 10_000
 
 
 def test_latex_node_escapes_filename_like_figure_caption(mocker, workdir):
@@ -332,31 +242,33 @@ def test_latex_node_excludes_baseline_and_supporting_code(mocker, workdir):
     assert "SUPPORTING_SENTINEL" not in tex and "SUPPORTING_SENTINEL" not in markdown
 
 
-def test_formal_figures_excludes_green_supporting_and_algorithm_flow(workdir):
+def test_formal_figures_keeps_only_artifact_backed_figures(workdir):
+    """正式图集只保留主/辅证据 artifact 声明产出的图，孤立图被剔除。"""
     state = _state(workdir)
     main_path = str(workdir / "data_profile.png")
-    flow_path = str(workdir / "algorithm_flow.png")
     supporting_path = str(workdir / "supporting.png")
+    orphan_path = str(workdir / "orphan.png")
     state.code_artifacts = [
         CodeArtifact(
-            purpose="main", code="BEACON_GREEN_LOGISTICS_SAFE_SOLVER",
+            purpose="main", code="print(0)",
             success=True, evidence_role="primary",
-            artifact_paths=[main_path, flow_path],
+            artifact_paths=[main_path],
         ),
         CodeArtifact(
-            purpose="support", code="", success=True, evidence_role="supporting",
+            purpose="support", code="print(1)", success=True,
+            evidence_role="supporting",
             artifact_paths=[supporting_path],
         ),
     ]
     state.figures = [
         FigureArtifact(path=main_path, purpose="data"),
-        FigureArtifact(path=flow_path, purpose="flow"),
+        FigureArtifact(path=orphan_path, purpose="orphan"),
         FigureArtifact(path=supporting_path, purpose="support"),
     ]
 
     figures = _formal_figures(state, [])
 
-    assert [figure.path for figure in figures] == [main_path]
+    assert [figure.path for figure in figures] == [main_path, supporting_path]
 
 
 def test_latex_node_uses_only_latest_sensitivity_evidence(mocker, workdir):
