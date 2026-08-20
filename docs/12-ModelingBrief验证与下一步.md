@@ -6,7 +6,7 @@
   1. 信息够不够开下一轮「路线更迭」；
   2. 目标句现在实现到哪一层；
   3. 接手者按什么顺序验证、验证通过后才改 coder/modeler。
-- 工作区：HEAD `977a21f`（brief 全栈已提交）；全量 pytest **787 passed / 12 failed / 4 skipped**（共收集 803；12 失败为既有管线，非 `test_brief.py`）。
+- 工作区：HEAD `977a21f`（brief 全栈已提交）；全量 pytest **798 passed / 12 failed / 4 skipped**（共收集 814，2026-08-20 批次 0 新增 11 个测试后实测；12 失败为既有管线，非 brief 链路）。
 
 ---
 
@@ -20,7 +20,7 @@
 |---|---|---|---|
 | 任务开始前 | CLI `brief init/check/dialogue` 在主图之外；`run/supervise --brief` 启动时写入 `state.brief` | 未做带 `--brief` 的正式 run | **管道就绪，未实跑** |
 | 人 + AI 对话产出 | CLI `brief dialogue --assist`：每字段 LLM 起草 + 人工确认；失败可手填 | **从未**用 MCM-51 走完一轮对话 | **能力有，无使用证据** |
-| 八字段 `brief.json` | `ModelingBrief` schema + `docs/problems/mcm51-a/brief.json`（39 条 id，`brief check` [OK]） | 文件由人按迭代计划填写，不是对话产物 | **内容有，来源不是对话** |
+| 八字段 `brief.json` | `ModelingBrief` schema + `docs/problems/mcm51-a/brief.json`（40 条 id，`brief check` [OK]；M6 增 `1.2-reg-coef`） | 文件由人按迭代计划填写，不是对话产物 | **内容有，来源不是对话** |
 | 注入流水线 | 六处：analyst / blueprint_critic / model_critic / modeler / coder / writer_section；`run_manifest.brief_sha256`；`out/brief.json` 副本 | 仅单测 mock prompt 含块 | **接线已测，流水线未测** |
 | 在源头杜绝方向性错误 | `brief_coverage` 只校验「analyst 是否逐条回应」，**不评判方向对错**；方向错了只能改 brief 重跑 | 无论文/代码对照 1.2 变点检测等 | **防忽略 ≠ 防方向错；后者未验证** |
 | Web 对话 | 本迭代明确只做文件透传（`briefPath` → `--brief`） | 无对话 UI | **按决策后置** |
@@ -68,7 +68,7 @@
 .venv\Scripts\python.exe -m pytest tests\test_brief.py tests\test_routing.py tests\nodes\test_analyst.py tests\nodes\test_blueprint_critic.py tests\test_cli.py -q
 ```
 
-通过标准：`brief check` 输出 `[OK]` 且「共 39 条待回应条目」；上述 pytest 全绿（T4 曾 131 passed 子集）。
+通过标准：`brief check` 输出 `[OK]` 且「共 40 条待回应条目」（M6 增 1.2-reg-coef）；上述 pytest 全绿（T4 曾 131 passed 子集）。
 
 ### 3.2 无 brief 时行为不变（向后兼容）
 
@@ -112,7 +112,7 @@ math-agent supervise --problem <MCM-51 spec> --out runs/51mcm-a-brief-v1 --brief
 |---|---|---|
 | brief 进了这次 run | `runs/51mcm-a-brief-v1/brief.json` 与源文件一致；`run_manifest.json` 有 `brief_sha256` | 有副本、hash 对得上 |
 | 状态带 brief | checkpoint / `state_summary` / insights 中 analyst 输入含「人工建模预备」 | prompt 不是空注入 |
-| 传递完整性 | `problem_blueprint.brief_coverage` 覆盖全部 39 个 id；`followed` 或 `deviated`+非空 reason | 缺一条会 retry，预算尽则 **stop**（不是带病进 modeler） |
+| 传递完整性 | `problem_blueprint.brief_coverage` 覆盖全部 40 个 id（M6 后）；`followed` 或 `deviated`+非空 reason | 缺一条会 retry，预算尽则 **stop**（不是带病进 modeler） |
 | 方向是否落地（抽样） | 蓝图/模型/代码/论文是否出现：1.2 分段回归；F_bond 用钻孔直径；3.1 调心垫圈/e=0/233%；禁止 600.71 硬编码；禁止 `T_opt=0.8·T_max` | **人工抽 5 条红线+方向**；未出现 = 管道通、效果未通 |
 | writer 讨论点 | `paper.md` 对应章节是否含 `3.1-e0` 等 required_discussions | 按 `sections` 白名单 |
 
@@ -162,12 +162,12 @@ math-agent supervise --problem <MCM-51 spec> --out runs/51mcm-a-brief-v1 --brief
 
 | # | 机制项 | 证据（brief-v1 评审） | 内容 | 量级 | 设计债 |
 |---|---|---|---|---|---|
-| M1 | LaTeX 转义保护 | `paper.tex:183` 符号表裸 `[sigma]` → 编译失败 | `latex_transform._escape_text_chars_skip_math` 加 `[` 保护，或符号表符号列数学化 | 小 | B18 |
+| M1 | LaTeX 转义保护 | `paper.tex:183` 符号表裸 `[sigma]` → 编译失败 | **已完成（2026-08-20）**：根因=`\\` 后 `[` 被当可选参数；`_md_table_to_latex` 行首 `[` 加 `{[}` 守卫（`\[` 是 display math 不可用）。单测 3 例 + paper.md 全篇重转换 xelatex 两遍零错误 | 小 | B18（已解决） |
 | M2 | figure_plan 注入 | brief 计划 8 张图只落地 2 张，fig6（3 分）缺失归零 | injection-plan 阶段 1：figure 环节注入 figure_plan 子集 | 中 | B17 |
 | M3 | brief 红线确定性校验 | K_avg=0.1783 违反禁整体 K 红线仍 8 分压线放行 | 从 brief 解析禁止项 → consistency 门禁机器可读校验，违反即停（不再靠 LLM 压线） | 中 | B16 |
 | M4 | 对照方案执行机制 | 有效对照方案 0 个（门禁要求 ≥2），「基线对照」纯文字 | baseline/supporting 方案真实执行并注册证据 | 中 | B20 |
-| M5 | 单位/量纲口径约束 | T_VM(0)=2.20 MPa 应力与力矩混比（P 用 500 N 而非 500 kN） | coder prompt 或校验层加量纲口径约束 | 小 | B19 |
-| M6 | 回归方程数值要求 | 1.2 稳定段回归系数缺失（官方 P≈0.217T+4.02 类可得分项未落） | brief data_notes 补「必须输出稳定段回归系数数值」要求（前置层） | 小 | —（论文级） |
+| M5 | 单位/量纲口径约束 | T_VM(0)=2.20 MPa 应力与力矩混比（P 用 500 N 而非 500 kN） | **prompt 层已完成（2026-08-20）**：render_coder_brief/render_modeler_brief 加量纲口径块；校验层量纲检查待评估（07 待决策） | 小 | B19（处理中） |
+| M6 | 回归方程数值要求 | 1.2 稳定段回归系数缺失（官方 P≈0.217T+4.02 类可得分项未落） | **已落地（2026-08-20）**：brief.json data_notes 新增 `1.2-reg-coef`（40 条，brief check [OK]）；sample_brief_direction.py 加第 6 项检查 | 小 | —（论文级） |
 
 > 机制修复完成并跑过 brief-v2 后，才有「修 vs 新问题」的干净对比；
 > 在此之前不宣称方向问题已闭环（承接 4.3 判定语言与 9.5 近期顺序）。

@@ -23,7 +23,8 @@
 - [`15-智慧中枢评估与处置.md`](15-智慧中枢评估与处置.md)：外部独立评估要点 + 逐条处置（H01–H20）+ 原则修订提案（C1–C4 待批）。
 - [`16-中长远路线图.md`](16-中长远路线图.md)：战略三选项 + 门控阈值 + 阶段 0–4 + Go/No-Go 与投入护栏。
 - [`17-资料补全清单.md`](17-资料补全清单.md)：智慧中枢建议补充的 11 项证据采购跟踪。
-- `problems/mcm51-a/brief.json`：MCM-51 方向约束（39 条，当前参考题特例）。
+- [`实现计划-8-20/`](实现计划-8-20/README.md)：执行层落地批次（0 简单修复 → 1–4 机制工程 → 5 验证实验；07 待决策指针）。
+- `problems/mcm51-a/brief.json`：MCM-51 方向约束（40 条，M6 增 1.2-reg-coef；当前参考题特例）。
 
 ## 四、历史归档（不再维护，链接可能失效，以本索引为准）
 
@@ -33,7 +34,7 @@
 ## 五、验证入口
 
 ```powershell
-.venv\Scripts\python.exe -m pytest -q            # 全量基线 787 passed / 12 failed / 4 skipped（12 失败=另案）
+.venv\Scripts\python.exe -m pytest -q            # 全量基线 798 passed / 12 failed / 4 skipped（收集 814；12 失败=另案）
 npm.cmd test -- --run                            # Web 测试
 .venv\Scripts\python.exe -m math_agent.cli status --out runs/<run> --thread <thread>
 .venv\Scripts\python.exe scripts\sample_brief_direction.py runs\<run> --brief-source docs\problems\mcm51-a\brief.json
