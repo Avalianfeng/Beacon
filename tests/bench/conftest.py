@@ -77,10 +77,11 @@ def _setup_mocks(stack: ExitStack, *, paper: PaperSections,
            side_effect=itertools.cycle([CoderDraft(
                purpose="主结果",
                code=(
+                   "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt\n"
+                   "plt.plot([1, 2], [3, 4]); plt.savefig('main_result.png')\n"
                    "for name, cost in [('ours', 100), ('no_schedule', 110), "
                    "('simple_pred', 105), ('greedy', 120)]:\n"
-                   " print(f'RESULT: baseline={name} total_cost={cost} vehicles=1 '"
-                   "'service_rate=1 total_carbon=1')"
+                   " print(f'RESULT: baseline={name} T_max={cost} K=0.18')"
                ),
            )]))
 

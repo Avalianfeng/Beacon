@@ -2796,28 +2796,8 @@ def coder_generate_node(state: MathModelingState) -> dict:
                         profile="code", temperature=0.1,
                         max_tokens=_CODER_GENERATE_MAX_TOKENS,
                     )
-                except Exception as exc:
-                    # LLM 输出截断/JSON 无效（r6 中 flash 在 12000 token 上限处
-                    # 截断 JSON，CoderDraft 校验失败直接炸掉 worker 触发 supervisor
-                    # 恢复，恢复后同 prompt 重试再次截断）。这里在节点内先做有界
-                    # 重试：把“输出被截断，请精简”作为反馈送回生成，预算耗尽才上抛。
-                    if item["attempt"] < MAX_CODE_RETRIES:
-                        item.update(
-                            attempt=item["attempt"] + 1,
-                            prev_err=(
-                                "LLM 生成的代码 JSON 被截断或无效："
-                                f"{str(exc)[:200]}。请显著精简代码与注释，"
-                                "不要复述 previous_code 全文，确保输出完整闭合。"
-                            ),
-                            prev_kind="generation",
-                        )
-                        queue[0] = item
-                        return {
-                            "coder_work_queue": queue,
-                            "coder_work_artifacts": list(state.coder_work_artifacts),
-                            "coder_pending_draft": {},
-                            "coder_phase": "generate",
-                        }
+                except Exception:
+                    # B10: figure 生成异常上抛走崩溃→checkpoint→recover，不再节点内吞错消耗 502 预算。
                     raise
     else:
         main_code = _current_primary_code(state)

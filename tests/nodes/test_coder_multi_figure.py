@@ -6,16 +6,26 @@
 - 每张图独立重试
 - 每张图独立 workdir 子目录 fig_{i}_attempt_{j}
 """
+from pathlib import Path
+
+from PIL import Image
+
 from math_agent.state import MathModelingState, ModelVersion
 from math_agent.nodes.coder import coder_node, CoderDraft
+
+_PNG_FIGURE_CODE = (
+    "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; "
+    "plt.plot([1, 2], [3, 4]); plt.savefig('fig.png'); "
+    "print('RESULT: baseline=ours T_max=10 K=0.18')"
+)
 
 
 def test_coder_calls_once_per_figure_purpose(mocker, workdir):
     """modeler 给 3 个 figure_purposes → coder 发 3 次 complete（每次首跑即成功）。"""
     drafts = [
-        CoderDraft(purpose="时序图", code="print('RESULT: baseline=ours total_cost=10 service_rate=0.9')"),
-        CoderDraft(purpose="路径图", code="print('RESULT: baseline=ours total_cost=10 service_rate=0.9')"),
-        CoderDraft(purpose="饼图", code="print('RESULT: baseline=ours total_cost=10 service_rate=0.9')"),
+        CoderDraft(purpose="时序图", code=_PNG_FIGURE_CODE),
+        CoderDraft(purpose="路径图", code=_PNG_FIGURE_CODE),
+        CoderDraft(purpose="饼图", code=_PNG_FIGURE_CODE),
     ]
     spy = mocker.patch("math_agent.nodes.coder.complete", side_effect=drafts)
     s = MathModelingState(problem="p", output_dir=str(workdir))
@@ -42,7 +52,7 @@ def test_coder_falls_back_to_single_call_without_figure_purposes(mocker, workdir
         "math_agent.nodes.coder.complete",
         return_value=CoderDraft(
             purpose="solve",
-            code="print('RESULT: baseline=ours total_cost=10 service_rate=0.9')",
+            code=_PNG_FIGURE_CODE,
         ),
     )
     s = MathModelingState(problem="p", output_dir=str(workdir))
@@ -59,8 +69,8 @@ def test_coder_retries_per_figure_independently(mocker, workdir):
     """fig0 先失败后成功，fig1 首跑成功 → 共 3 次 complete、3 个 artifact。"""
     drafts = [
         CoderDraft(purpose="fig0a", code="raise RuntimeError('x')"),
-        CoderDraft(purpose="fig0b", code="print('RESULT: baseline=ours total_cost=10 service_rate=0.9')"),
-        CoderDraft(purpose="fig1", code="print('RESULT: baseline=ours total_cost=10 service_rate=0.9')"),
+        CoderDraft(purpose="fig0b", code=_PNG_FIGURE_CODE),
+        CoderDraft(purpose="fig1", code=_PNG_FIGURE_CODE),
     ]
     mocker.patch("math_agent.nodes.coder.complete", side_effect=drafts)
     s = MathModelingState(problem="p", output_dir=str(workdir))
@@ -86,16 +96,25 @@ def test_coder_workdir_uses_fig_index(mocker, workdir):
         "math_agent.nodes.coder.complete",
         return_value=CoderDraft(
             purpose="p",
-            code="print('RESULT: baseline=ours total_cost=10 service_rate=0.9')",
+            code=_PNG_FIGURE_CODE,
         ),
     )
+
+    def fake_run(*_args, **kwargs):
+        wd = Path(kwargs["workdir"])
+        wd.mkdir(parents=True, exist_ok=True)
+        png = wd / "fig.png"
+        Image.new("RGB", (8, 8), "white").save(png)
+        return RunResult(
+            success=True,
+            stdout="RESULT: baseline=ours T_max=10 K=0.18",
+            artifact_paths=[str(png)],
+            error_kind="",
+        )
+
     spy_run = mocker.patch(
         "math_agent.nodes.coder.run_python",
-        return_value=RunResult(
-            success=True,
-            stdout="RESULT: baseline=ours total_cost=10 service_rate=0.9",
-            error_kind="",
-        ),
+        side_effect=fake_run,
     )
     s = MathModelingState(problem="p", output_dir=str(workdir))
     s.model_versions.append(ModelVersion(

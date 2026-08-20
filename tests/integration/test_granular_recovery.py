@@ -111,15 +111,23 @@ def test_coder_recover_does_not_repeat_finished_purposes(tmp_path, monkeypatch):
         purpose = next((p for p in ("P1", "P2", "P3") if p in prompt), "unknown")
         return CoderDraft(
             purpose=purpose,
-            code="print('RESULT: baseline=ours total_cost=10 service_rate=0.9')",
+            code="print('RESULT: baseline=ours T_max=10 K=0.18')",
+        )
+
+    def fake_run(*_a, **kwargs):
+        from pathlib import Path
+        wd = Path(kwargs.get("workdir") or tmp_path)
+        wd.mkdir(parents=True, exist_ok=True)
+        png = wd / "fig.png"
+        Image.new("RGB", (8, 8), "white").save(png)
+        return SimpleNamespace(
+            stdout="RESULT: baseline=ours T_max=10 K=0.18",
+            stderr="", success=True, artifact_paths=[str(png)], error_kind="",
         )
 
     monkeypatch.setattr("math_agent.nodes.coder.complete", fake_complete)
     monkeypatch.setattr("math_agent.nodes.coder._baseline_items", lambda: [])
-    monkeypatch.setattr("math_agent.nodes.coder.run_python", lambda *_a, **_k: SimpleNamespace(
-        stdout="RESULT: baseline=ours total_cost=10 service_rate=0.9",
-        stderr="", success=True, artifact_paths=[], error_kind="",
-    ))
+    monkeypatch.setattr("math_agent.nodes.coder.run_python", fake_run)
 
     graph = StateGraph(MathModelingState)
     graph.add_node("prepare", coder_prepare_node)
@@ -157,17 +165,22 @@ def test_coder_execution_crash_reuses_checkpointed_draft(tmp_path, monkeypatch):
         calls["complete"] += 1
         return CoderDraft(
             purpose="P1",
-            code="print('RESULT: baseline=ours total_cost=10 service_rate=0.9')",
+            code="print('RESULT: baseline=ours T_max=10 K=0.18')",
         )
 
-    def fake_run(*_args, **_kwargs):
+    def fake_run(*_args, **kwargs):
         calls["run"] += 1
         if calls["run"] == 1:
             raise RuntimeError("injected process kill")
+        from pathlib import Path
+        wd = Path(kwargs.get("workdir") or tmp_path)
+        wd.mkdir(parents=True, exist_ok=True)
+        png = wd / "fig.png"
+        Image.new("RGB", (8, 8), "white").save(png)
         return SimpleNamespace(
-                               stdout="RESULT: baseline=ours total_cost=10 service_rate=0.9",
+                               stdout="RESULT: baseline=ours T_max=10 K=0.18",
                                stderr="", success=True,
-                               artifact_paths=[], error_kind="")
+                               artifact_paths=[str(png)], error_kind="")
 
     monkeypatch.setattr("math_agent.nodes.coder.complete", fake_complete)
     monkeypatch.setattr("math_agent.nodes.coder.run_python", fake_run)
@@ -206,9 +219,9 @@ def test_sensitivity_recover_only_retries_interpretation(tmp_path, monkeypatch):
             return SensitivityPlan(runs=[{
                 "parameter": "x", "values": [1, 2], "metric": "y", "rationale": "r",
             }])
-        if schema is None:
+        if schema is SensitivityCode:
             calls["code"] += 1
-            return "print('RESULT')"
+            return SensitivityCode(code="print('RESULT')")
         if schema is Interpretations:
             calls["interpret"] += 1
             if calls["interpret"] == 1:

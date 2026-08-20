@@ -6,6 +6,7 @@ from pypdf import PdfWriter
 
 from math_agent.errors import FinalizationError
 from math_agent.nodes.finalizer import (
+    _minimum_paper_body_pages,
     _pdf_body_metrics,
     finalizer_node,
     load_verified_completion,
@@ -249,8 +250,9 @@ def test_finalizer_marks_short_competition_paper_body_degraded(workdir):
 
     report = finalizer_node(state)["finalization"]
 
+    minimum = _minimum_paper_body_pages()
     assert report.status == "degraded"
-    assert any("正文页数 8" in warning and "至少需要 12 页" in warning
+    assert any("正文页数 8" in warning and f"至少需要 {minimum} 页" in warning
                for warning in report.warnings)
 
 

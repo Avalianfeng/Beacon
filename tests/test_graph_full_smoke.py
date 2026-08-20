@@ -55,10 +55,11 @@ def _setup_all_mocks(mocker, workdir):
                  return_value=CoderDraft(
                      purpose="主结果",
                      code=(
+                         "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt\n"
+                         "plt.plot([1, 2], [3, 4]); plt.savefig('main_result.png')\n"
                          "for name, cost in [('ours', 100), ('no_schedule', 110), "
                          "('simple_pred', 105), ('greedy', 120)]:\n"
-                         " print(f'RESULT: baseline={name} total_cost={cost} vehicles=1 '"
-                         "'service_rate=1 total_carbon=1')"
+                         " print(f'RESULT: baseline={name} T_max={cost} K=0.18')"
                      ),
                  ))
 
@@ -88,11 +89,14 @@ def _setup_all_mocks(mocker, workdir):
     mocker.patch("math_agent.nodes.sensitivity.complete",
                  side_effect=_sensitivity_complete)
 
-    # figure pipeline：sensitivity 图 = 1 张
-    fc = FigureCriticOut(score=9, approved=True)
-    fa = FigureAnalysisOut(analysis="趋势单调，敏感度中等。")
+    # figure pipeline：主图 + sensitivity（及可能的对照方案图）均需 critic/analysis
+    def _figure_complete(prompt, *, schema, **kw):
+        if schema is FigureCriticOut:
+            return FigureCriticOut(score=9, approved=True)
+        return FigureAnalysisOut(analysis="趋势单调，敏感度中等。")
+
     mocker.patch("math_agent.nodes.figure_pipeline.complete",
-                 side_effect=[fc, fa])
+                 side_effect=_figure_complete)
 
     # writer prep：大纲（WriterOutline schema）
     # writer section：7 节，每节返回对应精简 schema。
