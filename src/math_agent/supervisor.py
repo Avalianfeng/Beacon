@@ -195,6 +195,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def write_supervisor_state(out, state: dict) -> None:
+    """原子写 supervisor.json（供前台命令如 restart 自注册观察状态）。
+
+    watch/status/Web 均读 supervisor.json；非监督前台命令（restart/recover）
+    不写它会导致观察面显示旧 worker 的过期状态（2026-08-21 restart 实证）。
+    """
+    _atomic_json(Path(out) / "supervisor.json", state)
+
+
 def _parse_utc(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None

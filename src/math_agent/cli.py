@@ -354,7 +354,7 @@ def _prepare_run_output(out: Path, thread: str, force: bool) -> None:
     for stale_name in (
         "trace.json", "state_summary.json", "paper.md", "paper.tex", "paper.pdf",
         "completion.json", "final_state.json", "failure.json", "supervisor.json",
-        "run_manifest.json", "progress.jsonl",
+        "run_manifest.json", "progress.jsonl", "gate_diagnostics.json",
     ):
         (out / stale_name).unlink(missing_ok=True)
     (out / pause_control.PAUSE_MARKER_NAME).unlink(missing_ok=True)
@@ -1382,45 +1382,116 @@ def restart(
         )
         raise typer.Exit(1)
 
-    # 3. 回退到目标节点前并重置计数器、标注血缘
-    with RunLock(out), _saver_cm(out) as saver:
-        g = build_graph(checkpointer=saver, interrupt_before=[] if state.human_decision else ["human_review"])
-        target = _find_restart_checkpoint(g, config, from_node)
-        if target is None:
-            typer.echo(
-                f"[FAIL] 未在 checkpoint 历史中找 next={from_node} 的快照，无法 restart。",
-                err=True,
+    # 3.5 自注册监督状态（restart 是前台进程；不写 supervisor.json 会让
+    #     watch/status 显示旧 worker 的过期状态——2026-08-21 实证）
+    import threading
+    from math_agent.supervisor import _now, write_supervisor_state
+
+    _pid = os.getpid()
+    _started_at = _now()
+
+    def _supervisor_payload(**kw) -> dict:
+        payload = {
+            "thread": thread,
+            "status": "running",
+            "mode": "restart",
+            "supervisor_pid": _pid,
+            "worker_pid": _pid,
+            "started_at": _started_at,
+            "heartbeat_at": _now(),
+            "command": ["math-agent", "restart", "--from", from_node, "--reason", reason],
+        }
+        payload.update(kw)
+        return payload
+
+    write_supervisor_state(out, _supervisor_payload())
+    _heartbeat_stop = threading.Event()
+
+    def _heartbeat() -> None:
+        while not _heartbeat_stop.wait(5.0):
+            try:
+                write_supervisor_state(out, _supervisor_payload())
+            except Exception:
+                pass
+
+    _heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+    _heartbeat_thread.start()
+
+    try:
+        # 3. 回退到目标节点前并重置计数器、标注血缘
+        with RunLock(out), _saver_cm(out) as saver:
+            g = build_graph(checkpointer=saver, interrupt_before=[] if state.human_decision else ["human_review"])
+            target = _find_restart_checkpoint(g, config, from_node)
+            if target is None:
+                typer.echo(
+                    f"[FAIL] 未在 checkpoint 历史中找 next={from_node} 的快照，无法 restart。",
+                    err=True,
+                )
+                raise typer.Exit(1)
+            checkpoint_id = _checkpoint_id_of(target)
+            if checkpoint_id is None:
+                typer.echo("[FAIL] 无法读取目标 checkpoint 的 id。", err=True)
+                raise typer.Exit(1)
+            # fork 配置必须带 checkpoint_ns（LangGraph 要求 thread_id+ns+checkpoint_id 三元组），
+            # 直接从目标快照的 config 继承，避免手写缺键。
+            restart_config = {"configurable": {**target.config.get("configurable", {}), "checkpoint_id": checkpoint_id}}
+            g.update_state(
+                restart_config,
+                {
+                    "code_verify_iteration": 0,
+                    "code_verify_low_score_iteration": 0,
+                },
+                as_node="model_code_consistency",
             )
-            raise typer.Exit(1)
-        checkpoint_id = _checkpoint_id_of(target)
-        if checkpoint_id is None:
-            typer.echo("[FAIL] 无法读取目标 checkpoint 的 id。", err=True)
-            raise typer.Exit(1)
-        # fork 配置必须带 checkpoint_ns（LangGraph 要求 thread_id+ns+checkpoint_id 三元组），
-        # 直接从目标快照的 config 继承，避免手写缺键。
-        restart_config = {"configurable": {**target.config.get("configurable", {}), "checkpoint_id": checkpoint_id}}
-        g.update_state(
-            restart_config,
-            {
-                "code_verify_iteration": 0,
-                "code_verify_low_score_iteration": 0,
-            },
-            as_node="model_code_consistency",
-        )
-        _append_restart_record(out, from_node, reason, checkpoint_id)
-        _supersede_gate_diagnostics(out)
-        clear_failure_report(out)
-        pause_control.clear_pause(out)
-        _emit_restart_boundary(out)
-        try:
-            g.invoke(None, config=restart_config)
-        except PauseRequested as e:
-            typer.echo(
-                f"[PAUSED] 节点 '{e.node}' 边界捕获暂停请求；checkpoint 已保存。\n"
-                f"  使用 `math-agent recover --out {out} --thread {thread}` 续跑。",
-                err=True,
-            )
-            raise typer.Exit(0)
+            _append_restart_record(out, from_node, reason, checkpoint_id)
+            _supersede_gate_diagnostics(out)
+            clear_failure_report(out)
+            pause_control.clear_pause(out)
+            _emit_restart_boundary(out)
+            try:
+                g.invoke(None, config=restart_config)
+            except PauseRequested as e:
+                write_supervisor_state(
+                    out, _supervisor_payload(status="paused", last_node=str(e.node)),
+                )
+                typer.echo(
+                    f"[PAUSED] 节点 '{e.node}' 边界捕获暂停请求；checkpoint 已保存。\n"
+                    f"  使用 `math-agent recover --out {out} --thread {thread}` 续跑。",
+                    err=True,
+                )
+                raise typer.Exit(0)
+            except (LLMTransportError, LLMRateLimitError, LLMError) as e:
+                failure = _record_failure(out, e)
+                write_supervisor_state(
+                    out, _supervisor_payload(status="blocked", last_node=failure.node, message=str(e)),
+                )
+                typer.echo(f"\n[FAILED] LLM error at node '{failure.node}': {e}", err=True)
+                typer.echo(f"  Checkpoint saved (thread={thread}).", err=True)
+                raise typer.Exit(1)
+            except typer.Exit:
+                raise
+            except Exception as e:
+                failure = _record_failure(out, e)
+                write_supervisor_state(
+                    out, _supervisor_payload(status="blocked", last_node=failure.node, message=str(e)),
+                )
+                typer.echo(f"\n[FAILED] Unexpected error: {type(e).__name__}: {e}", err=True)
+                raise typer.Exit(1)
+            # 正常完成：按 checkpoint 判定终态（人审暂停 / 门禁停机 / 收口）
+            inspection = inspect_checkpoint(out, thread)
+            if inspection.next_node == "human_review":
+                write_supervisor_state(out, _supervisor_payload(status="paused", last_node="human_review"))
+            elif inspection.final_status:
+                write_supervisor_state(out, _supervisor_payload(
+                    status=inspection.final_status,
+                    last_node=getattr(inspection, "last_node", "") or "",
+                ))
+            else:
+                write_supervisor_state(out, _supervisor_payload(
+                    status="stopped", last_node=inspection.next_node or "",
+                ))
+    finally:
+        _heartbeat_stop.set()
     _dump_state_summary(out, thread)
     _echo_run_outcome(out, thread)
 

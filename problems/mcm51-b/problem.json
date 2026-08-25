@@ -12,17 +12,41 @@
   "source": {
     "md_path": "problem.md",
     "source_files": [
-      {"path": "source/题目信息.md", "sha256": "661273574d64cb5c291e4373336632de9d79a10b2eeb6642cd4dfec6c787d99d"},
-      {"path": "source/B-附件.xlsx", "sha256": "1225594ab737977271fd43004ea6e407c28c1b659dbb3993e98599a5dceebfca"},
-      {"path": "source/2026-51MCM-Problem B.docx", "sha256": "6ee2c4ff1a5c2388160d57b542f2b44ed538daec8d901c11fff55d8a9f1ead81"},
-      {"path": "source/2026-51MCM-Problem B-English.docx", "sha256": "4b1caf5493d24d6784be7b617fd6bc85a99a714fd3a7be8161c1e111b8c70526"},
-      {"path": "source/B-attachment.xlsx", "sha256": "2cc5957c09839e94744ace5c56167b3be765a7ecb345815b818bb664be00d5af"}
+      {
+        "path": "source/题目信息.md",
+        "sha256": "661273574d64cb5c291e4373336632de9d79a10b2eeb6642cd4dfec6c787d99d"
+      },
+      {
+        "path": "source/B-附件.xlsx",
+        "sha256": "1225594ab737977271fd43004ea6e407c28c1b659dbb3993e98599a5dceebfca"
+      },
+      {
+        "path": "source/2026-51MCM-Problem B.docx",
+        "sha256": "6ee2c4ff1a5c2388160d57b542f2b44ed538daec8d901c11fff55d8a9f1ead81"
+      },
+      {
+        "path": "source/2026-51MCM-Problem B-English.docx",
+        "sha256": "4b1caf5493d24d6784be7b617fd6bc85a99a714fd3a7be8161c1e111b8c70526"
+      },
+      {
+        "path": "source/B-attachment.xlsx",
+        "sha256": "2cc5957c09839e94744ace5c56167b3be765a7ecb345815b818bb664be00d5af"
+      },
+      {
+        "path": "source/reference_solver.py",
+        "sha256": "504ecc0a8fa5c006bf31174c31a520437c339d2461392926ec761694a8cc7f0d"
+      }
     ],
     "imported_at": "2026-08-21T00:00:00+08:00",
     "imported_by": "human"
   },
   "feasibility": {
-    "checklist": ["external_data", "simulation", "survey", "supercomputer"],
+    "checklist": [
+      "external_data",
+      "simulation",
+      "survey",
+      "supercomputer"
+    ],
     "blockers": [],
     "assessment": "纯数据驱动（附件 xlsx 三表：工序流程表/班组配置表/车间距离表），无真实调研/仿真平台/实物实验依赖，可达。"
   },
@@ -33,9 +57,42 @@
       "path": "B-附件.xlsx",
       "summary": {
         "sheets": [
-          {"name": "工序流程表", "rows": 21, "cols": 5, "columns": ["任务", "工序", "设备作业效率", "工程量", "备注"]},
-          {"name": "班组配置表", "rows": 5, "cols": 7, "columns": ["设备名称", "班组1设备编号", "班组2设备编号", "班组1", "班组2", "移动速度(m/s)", "设备单价(元/台)"]},
-          {"name": "车间距离表", "rows": 20, "cols": 3, "columns": ["起点", "终点", "距离"]}
+          {
+            "name": "工序流程表",
+            "rows": 21,
+            "cols": 5,
+            "columns": [
+              "任务",
+              "工序",
+              "设备作业效率",
+              "工程量",
+              "备注"
+            ]
+          },
+          {
+            "name": "班组配置表",
+            "rows": 5,
+            "cols": 7,
+            "columns": [
+              "设备名称",
+              "班组1设备编号",
+              "班组2设备编号",
+              "班组1",
+              "班组2",
+              "移动速度(m/s)",
+              "设备单价(元/台)"
+            ]
+          },
+          {
+            "name": "车间距离表",
+            "rows": 20,
+            "cols": 3,
+            "columns": [
+              "起点",
+              "终点",
+              "距离"
+            ]
+          }
         ],
         "rows": 21
       }

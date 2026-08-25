@@ -67,54 +67,89 @@
       "id": "formula-makespan",
       "question_id": "",
       "note": "目标 min Cmax=各车间最后一道工序完成时间的最大值；排程表用时刻、最短时长用秒，两者一致（口径41）"
+    },
+    {
+      "id": "formula-solver",
+      "question_id": "",
+      "note": "主方案必须采用附件 reference_solver.py（人工供给、已本地验证）；生成代码 exec/import 该文件并复用其 main()/solve_*，只做输出格式与绘图适配，禁止重写解析与调度核心。若脱离参考实现自写代码，必须用精确优化器（CP-SAT/MILP）且遵守本 brief 全部口径"
+    },
+    {
+      "id": "formula-cloop-impl",
+      "question_id": "",
+      "note": "C 车间展开为 9 个活动：C1→C2→(C3_1,C4_1,C5_1)→(C3_2,C4_2,C5_2)→(C3_3,C4_3,C5_3)；每轮整链顺序，轮间前驱 C5_k→C3_{k+1}；工序键名与信息字典必须一致（保留全名或统一别名，禁止混用）"
+    },
+    {
+      "id": "formula-reference",
+      "question_id": "",
+      "note": "参考实现路径：data_dir/reference_solver.py。用法：exec(Path(data_dir)/'reference_solver.py' 内容) 或 import main()；它已输出 RESULT 行、表1-5、gantt_q1..q4.png。包装代码=exec 后**原样透传 stdout**：禁止重新解析/改写 RESULT 行、禁止自己画甘特图（参考已产出 PNG）。RESULT 字段顺序：makespan total_cost budget_utilization q1_makespan q2_makespan q3_makespan。生成代码须附带「模型变量对照」注释：C_max/makespan、S_i、C_i、C_{i,r}、x_{i,k}、n_{m,l}、T_{l,l'}、d_{l,l'}、v、l_i、l_0、K_r、B、P"
     }
   ],
   "required_discussions": [
     {
       "id": "disc-assumptions",
-      "sections": ["assumptions", "model_section"],
+      "sections": [
+        "assumptions",
+        "model_section"
+      ],
       "topic": "52 条口径裁决的核心必须进模型假设：初始设备在班组驻地且进场运输计入；设备完成后不回班组、车间间直接运输（无向距离）；运输只占具体设备；一设备一工序（不允许多台同类分摊）；不可抢占；双设备异步完成且先完成者立即释放；新购设备00:00可用+归属班组由决策决定；购置整数、预算≤500000 允许恰好花满",
       "requirement": "假设逐条声明，避免不同解释产生不同答案"
     },
     {
       "id": "disc-framework",
-      "sections": ["model_section", "solution"],
+      "sections": [
+        "model_section",
+        "solution"
+      ],
       "topic": "统一移动资源 RCPSP 主模型：多项目工序网络+有限设备+移动资源+多资源联合工序+离散设备投资；Q1→Q4 由同一母模型逐级退化/扩展",
       "requirement": "必须呈现主模型形式化（precedence/容量/运输/联合完成约束），不得并列多核心模型"
     },
     {
       "id": "disc-dual-core",
-      "sections": ["model_section"],
+      "sections": [
+        "model_section"
+      ],
       "topic": "「设备完成≠工序完成」是核心口径不是脚注：双设备异步完成、先完成者立即释放并可开始转运，而工序作为整体尚未完成——本题与普通同步机器作业模型的最大区别",
       "requirement": "必须明确“工序完成”与“设备完成”的区别并贯穿求解"
     },
     {
       "id": "disc-device",
-      "sections": ["model_section", "solution"],
+      "sections": [
+        "model_section",
+        "solution"
+      ],
       "topic": "设备实例+位置是数学决策实体：设备编号不是展示信息；跨车间运输可能改变资源分配（最快设备未必服务当前任务）；Q2 甘特图以设备编号为纵轴",
       "requirement": "必须解释运输与空间布局为何改变最优调度"
     },
     {
       "id": "disc-cloop",
-      "sections": ["solution"],
+      "sections": [
+        "solution"
+      ],
       "topic": "C 车间 C3–C5 三轮重复链：展开为 9 个活动，轮间整链顺序（第二轮不能在第一轮未结束时开始）",
       "requirement": "必须呈现循环链展开与约束"
     },
     {
       "id": "disc-q4",
-      "sections": ["solution"],
+      "sections": [
+        "solution"
+      ],
       "topic": "Q4 购置-调度联合优化：预算约束下联合决定购置台数×班组归属×调度；「买给谁」是关键决策；给出预算-工期曲线与“为什么买这些设备”的解释",
       "requirement": "必须呈现购置变量与调度变量耦合，总费用≤500000"
     },
     {
       "id": "disc-progress",
-      "sections": ["model_section", "conclusion"],
+      "sections": [
+        "model_section",
+        "conclusion"
+      ],
       "topic": "Q1→Q4 同一模型递进扩展（单车间→空间迁移→第二资源池→离散投资）；给出 T1..T4 与 ΔT 的递进解释与结果比较",
       "requirement": "必须体现模型统一性而非四个孤立问题"
     },
     {
       "id": "disc-sensitivity",
-      "sections": ["sensitivity"],
+      "sections": [
+        "sensitivity"
+      ],
       "topic": "至少一次资源数量敏感性（某设备+1台对 Cmax 边际改善）+ 一次运输敏感性 + Q4 预算边际价值（B→T*(B) 判断 500000 是否投资临界点）",
       "requirement": "敏感性服务瓶颈解释，不把参数扰动做成独立研究"
     }
@@ -159,6 +194,31 @@
       "id": "rl-scope",
       "question_id": "",
       "prohibition": "把 RCPSP/Job-Shop/遗传算法/两层分解并列成多个“核心模型”——论文重心只允许一个主主线"
+    },
+    {
+      "id": "rl-greedy",
+      "question_id": "",
+      "prohibition": "生成代码自写贪心/启发式冒充主方案（主方案必须来自附件 reference_solver.py；其本身为人工供给的构造式启发式，论文须如实声明非全局最优）"
+    },
+    {
+      "id": "rl-single-device",
+      "question_id": "",
+      "prohibition": "用单台设备替代双设备工序（两类设备都必须完成各自工程量，工序完成 C_i=max(C_{i,r1},C_{i,r2})）"
+    },
+    {
+      "id": "rl-route-direct",
+      "question_id": "",
+      "prohibition": "跨车间运输经班组驻地往返（必须按车间间距离表直接运输；初始进场才用班组→车间距离）"
+    },
+    {
+      "id": "rl-q1-scope",
+      "question_id": "1",
+      "prohibition": "Q1 调度 A 车间以外的工序（Q1 只含 A 车间；Q2 起才是五车间）"
+    },
+    {
+      "id": "rl-result-format",
+      "question_id": "",
+      "prohibition": "臆造 RESULT 行字段或格式（必须原样透传参考实现的 RESULT 行；参考实现已输出完整 label=value 序列）"
     }
   ],
   "figure_plan": [
@@ -235,6 +295,26 @@
       "id": "data-newid",
       "question_id": "",
       "note": "Q4 新增设备唯一编号由模型内部生成（表4 需具体设备编号，表5 只报台数）"
+    },
+    {
+      "id": "data-cnames",
+      "question_id": "",
+      "note": "C 车间工序名保留全名（如 'C1.旧涂层剥离'/'C2.基底填充'），展开 C3–C5 为 C3_1..C5_3 时信息字典键名必须与之一致；禁止短名（'C1'）与全名混用导致查找失败"
+    },
+    {
+      "id": "data-reference",
+      "question_id": "",
+      "note": "附件目录含 reference_solver.py（人工参考实现，2026-08-21 已本地验证：Q1=41600/Q2=147143/Q3=135068/Q4=116209@75000元）；读取：Path(data_dir)/'reference_solver.py'"
+    },
+    {
+      "id": "data-reuse-impl",
+      "question_id": "",
+      "note": "口径一致性（冻结版参考实现，2026-08-21）：sensitivity/图表等后续节点若自行生成代码，必须与参考实现同口径（27 活动、C 链 11 道、双设备异步+先完成立即释放、直接运输+初始进场计入、秒向上取整）；优先复用参考实现（import/exec），禁止自写与口径冲突的简化实现"
+    },
+    {
+      "id": "data-anchor",
+      "question_id": "",
+      "note": "冻结版参考实现输出锚点（自检/对账用，非官方答案）：Q1=41600、Q2=215303、Q3=127085、Q4=123844、购置费 155000（自动传感多功能机×1+高速抛光机×1 班组1）；论文数值必须来自执行输出并与锚点一致，不得抄锚点代替执行"
     }
   ],
   "reference_direction": [
