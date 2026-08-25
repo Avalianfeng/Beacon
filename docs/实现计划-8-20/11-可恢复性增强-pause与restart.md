@@ -81,3 +81,7 @@ P0 → P1（共享 checkpoint/状态工具，但互不阻塞，可并行设计�
 ## 更新记录
 
 - 2026-08-21 建立（评估结论：P0 0.5–1 天 / P1 1–2 天；不阻塞 mcm51-b 重跑）。
+- 2026-08-21 追加修复（mcm51-b restart 首次真跑实证）：`restart` 是前台进程，不写 supervisor.json
+  → watch/status 显示旧 worker 的过期状态且不跟随。修复：`restart` 自注册监督状态（supervisor.py 新增
+  `write_supervisor_state`；cli.py restart 启动时写 running+pid+心跳线程，结束按 checkpoint 判定
+  paused/stopped/终态，异常写 blocked+failure.json）。recover（前台）同类问题暂不改，走 supervise-recover。
