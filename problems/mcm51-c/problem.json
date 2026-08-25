@@ -56,6 +56,10 @@
       {
         "path": "附件5：监测数据-问题5.xlsx",
         "sha256": "35d315e97e19688a8a5f284dbbee044249428989ce9913c6c8a0b495f1aacb71"
+      },
+      {
+        "path": "reference_solver.py",
+        "sha256": "8f635ae2a803a997b0ed03d346715eae56150a152031c2b1ea85d361f638c2ef"
       }
     ],
     "imported_at": "2026-08-25T20:20:53.336401+00:00",

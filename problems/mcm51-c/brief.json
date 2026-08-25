@@ -58,6 +58,16 @@
       "id": "formula-q2-speed",
       "question_id": "2",
       "note": "附件2 阶段平均速度口径：注2.2 阶段平均速度=该阶段表面位移变化总量/该阶段总持续时间；数据含负回退（负差分 31.99%、日12 回退），裁决主口径=阶段末位移−阶段初位移（净变化），备选口径=Σ|Δ| 总路径长（回退幅度小，阶段均速差异≤0.1 mm/h，须声明口径）；负回退段不构成新阶段，变点检测须对此鲁棒。"
+    },
+    {
+      "id": "formula-solver",
+      "question_id": "",
+      "note": "主方案必须采用附件 reference_solver.py（人工供给、已本地验证，2026-08-26 锚点：Q1增益0.8817/Q2节点8148·9573/Q3共同异常246/Q4增量RMSE0.4692/Q5增量RMSE0.6929）；生成代码 exec 该文件复用其全部求解逻辑，只做输出透传与绘图适配，禁止重写变点/鲁棒回归/分阶段预测核心。若脱离参考实现自写，必须纯 numpy/scipy 实现且遵守本 brief 全部口径，并承担从零实现 5 问的风险。"
+    },
+    {
+      "id": "formula-reference",
+      "question_id": "",
+      "note": "参考实现=data_dir/reference_solver.py（data_dir 为数据提示给出的绝对路径）。包装脚本四步：① import matplotlib; matplotlib.use('Agg')；② data_dir = Path(r'<绝对路径>')；③ DATA_FILES = ['附件1：两组位移时序数据-问题1.xlsx','附件2：位移时序数据-问题2.xlsx','附件3：监测数据（训练集与实验集）-问题3.xlsx','附件4：监测数据（训练集与实验集）-问题4.xlsx','附件5：监测数据-问题5.xlsx']（血缘门禁要求真实附件名出现在 wrapper 源码）；④ exec((data_dir/'reference_solver.py').read_text(encoding='utf-8'))。参考实现顶层即执行全部 Q1–Q5，已输出 RESULT 行+各问 Q<id> 行+13 张 PNG（落 cwd）。exec 后原样透传 stdout，禁止重解析/改写 RESULT、禁止自画（参考已产出 PNG）。RESULT 字段顺序：baseline=ours q1_gain q1_rmse q2_node1 q2_node2 q3_common q4_rmse q5_rmse。"
     }
   ],
   "required_discussions": [
@@ -171,6 +181,16 @@
       "id": "rl-q1-points",
       "question_id": "1",
       "prohibition": "把表1.1 的 x=7.132/18.526/84.337/123.554/167.667 当作时间或索引——它们是附件1 A 列的位移取值(mm)，精确命中唯一行（idx 1325/8790/2255/4672/8205，对应 B=5.729/15.801/73.838/108.395/147.348），校正后 y 应对齐 B 同刻读数。"
+    },
+    {
+      "id": "rl-greedy",
+      "question_id": "",
+      "prohibition": "生成代码自写贪心/启发式/简化回归冒充主方案——主方案必须来自附件 reference_solver.py（其本身为人工供给的已本地验证实现，论文须如实声明参考实现来源）。"
+    },
+    {
+      "id": "rl-result-format",
+      "question_id": "",
+      "prohibition": "臆造 RESULT 行字段或格式——必须原样透传 reference_solver.py 的 RESULT 行（参考实现已输出完整 baseline=ours 序列，禁止改名/增删指标/改格式）。"
     }
   ],
   "figure_plan": [
