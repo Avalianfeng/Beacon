@@ -1,0 +1,73 @@
+{
+  "problem_id": "mcm51-b",
+  "calibration_version": 1,
+  "obtained_at": "2026-08-24",
+  "source": "D:\\数学建模\\工作面\\51mcm-b-word-r1\\赛后评估\\参考答案.md",
+  "note": "唯一外部锚点。供 E2 自动口径偏差报告使用；人读版见 官方参考答案要点.md",
+  "scoring": {
+    "summary": 10,
+    "modeling_total": 85,
+    "writing": 5,
+    "total": 100,
+    "bands": {
+      "first": [85, 95],
+      "second": [70, 84],
+      "third": [55, 69],
+      "none": [40, 54]
+    }
+  },
+  "q1": {
+    "range_s": [37000, 39500],
+    "declared_s": 37280,
+    "checks": {
+      "a2_a3_duration_s": 18000,
+      "tolerance_s": 1
+    },
+    "note": "官方附录表1：A1 由 4 输送臂 + 5 灌装机同时执行各 1080s → 官方允许同类多机分摊"
+  },
+  "q2": {
+    "declared_s": 142965,
+    "range_s": null,
+    "errata": "官方附录表2 末行时刻 178965s，与声明值差整 10 小时（官方内部不自洽，评审以声明值为准）",
+    "note": "官方贪心示例『每个任务每次分配同种类型的机械一台』暗示分摊口径"
+  },
+  "q3": {
+    "range_s": [72500, 85000],
+    "declared_s": 72860,
+    "mercy": {
+      "rule": "q3 <= q2 * 0.55",
+      "points": [3, 5]
+    }
+  },
+  "q4": {
+    "range_s": [30750, 38500],
+    "declared_s": 30755,
+    "purchase": {
+      "D_自动传感多功能机": 3,
+      "E_高速抛光机": 3,
+      "total": 7
+    },
+    "range_points": 5,
+    "purchase_points": 15,
+    "mercy": {
+      "rule": "q4 <= q3 / 2（较自身问题三缩短一倍以上）",
+      "points": [8, 10]
+    }
+  },
+  "penalties": {
+    "no_code_per_question": 3,
+    "min_start_score": 30
+  },
+  "ours_20260824": {
+    "q1_s": 41600,
+    "q2_s": 215303,
+    "q3_s": 127085,
+    "q4_s": 123844,
+    "q4_spent_yuan": 155000,
+    "q4_purchase": {
+      "D_自动传感多功能机": 1,
+      "E_高速抛光机": 1
+    },
+    "root_cause": "假设9（禁止同类多机分摊，52 条裁决第 8 条弱依据）与官方口径冲突，详见 docs/20"
+  }
+}
