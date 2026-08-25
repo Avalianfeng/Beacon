@@ -1,0 +1,9 @@
+{
+  "meta": {"speed_ms": 2.0, "year": 2026},
+  "crew_counts": {"1": 4, "2": 5},
+  "budget_curve": [
+    {"budget": 100000, "makespan": 124944},
+    {"budget": 200000, "makespan": 123844}
+  ],
+  "note": "双拐点 100000 / 200000 元"
+}
