@@ -1,0 +1,143 @@
+{
+  "schema_version": 2,
+  "problem_id": "mcm51-c",
+  "title": "2026-51MCM-Problem C（2026年第二十三届五一数学建模竞赛 C题）边坡预警问题",
+  "background": "在水利工程、交通路网、露天矿山等关键工程领域，边坡稳定性是突出的核心安全问题。受地质条件、气象变化与工程扰动多因素耦合作用，边坡崩塌滑坡频发。'三段式形变'是边坡破坏前典型的位移演化规律，依次为缓慢匀速形变→加速形变→快速形变。受工程爆破、气候变化、电磁干扰等环境影响，多源监测数据普遍存在噪声强、异常跳变频繁、设备故障导致数据缺失等问题。本题提供边坡多源监测数据（表面位移/深部位移/降雨量/孔隙水压力/微震事件数/爆破点距离/单段最大药量/干湿入渗系数，采集频率10分钟一次，含训练集与实验集），要求建立数学模型完成位移数据校正、形变阶段转换节点识别、去噪与缺失补齐、异常检测与关联分析、分阶段预测、变量组合选优与滑坡预警机制构建。",
+  "questions": [
+    "问题1：附件1给出同一边坡同一监测点的两组位移时序数据A与B，B为传统振弦式位移计监测数据（经验证为基准参考），A为新型光纤位移计获取数据（因传感器零漂、安装偏差等存在偏移）。请建立数学模型对数据A进行校正，使校正后结果与数据B的偏差尽可能小；采用交叉验证并给出偏差量化指标，客观评估模型性能和效果；对表1.1中5个数据（校正前x=7.132/18.526/84.337/123.554/167.667）进行验证并将校正后数据y填入表1.1。注：附件1时间序列从2024年1月1日0时起，采集频率10分钟一次。",
+    "问题2：建立数学模型，识别附件2中位移时序的三段式形变阶段的转换节点（缓慢匀速形变→加速形变、加速形变→快速形变），给出区分'噪声/工程扰动引起的瞬时跳变'与'真实的阶段转换节点'的核心准则；根据识别出的阶段转换节点，依据不同形变阶段对位移时序进行划分，对各阶段分别建立数学模型、给出模型参数并进行检验，同时计算各阶段表面位移平均速度（mm/h，=该阶段表面位移变化总量/该阶段总持续时间）。注：附件2编号对应数据采集时刻，从2024年5月4日0时起，采集频率10分钟一次。",
+    "问题3：附件3提供降雨量、表面位移、深部位移、孔隙水压力、微震事件数5变量时序监测数据，存在传感器故障、环境干扰引发的异常值与缺失值（表中未填写）。3.1 建立数学模型对训练集各变量数据高效去噪和缺失值补齐，并详细阐述各步骤数学依据；3.2 基于预处理后数据对各变量开展异常值检测，识别共同异常点（同一时间点≥2个监测变量同时异常），将结果填入表3.1（单变量异常点数量）和表3.2（多变量共同异常点清单）；3.3 依据预处理后训练集建立数学模型，定量分析表面位移与降雨量、深部位移、孔隙水压力、微震事件数之间的关联，评估各因素对表面位移变化的贡献程度，并应用于附件3实验集估计对应表面位移并绘制散点图。",
+    "问题4：附件4提供训练集与实验集数据，训练集含表面位移、降雨量、孔隙水压力、微震事件数、爆破点距离、单段最大药量6维时序，爆破为偶发事件、非爆破时刻爆破点距离和单段最大药量字段为空值；实验集含降雨量、孔隙水压力、微震事件数、爆破点距离、单段最大药量5维（不含表面位移）。4.1 训练集包含缓慢匀速、加速、快速三阶段演变，不同阶段中降雨、爆破、微震等外界扰动对位移的影响可能显著变化，请据5项特征指标建立分阶段数学模型分析并预测表面位移变化规律；4.2 实验集同样包含三阶段演变且与训练集在对应阶段的表面位移变化规律一致，阶段转换节点已在实验集阶段标签中给出（训练集与实验集阶段转换节点不一致），请据4.1模型对实验集预测表面位移、分析结果并绘制表面位移随时间变化图像，补全表4.1的5个时间点表面位移预测值（2025-05-09 12:00 / 2025-05-27 08:00 / 2025-06-01 12:00 / 2025-06-03 22:00 / 2025-06-04 01:40）。",
+    "问题5：附件5提供表面位移、降雨量、孔隙水压力、微震事件数、干湿入渗系数、爆破点距离、单段最大药量7维时序监测数据，爆破偶发、非爆破时刻爆破两字段为空值。5.1 从降雨量、孔隙水压力、微震事件数、干湿入渗系数、爆破点距离、单段最大药量中选取5类变量构建数学模型定量分析边坡表面位移，评估不同变量组合下的表面位移数据误差，给出最优变量组合模型并解释原理；5.2 边坡介质差异会导致阶段划分与预警阈值不同，请以表面位移速度为预警指标，据5.1最优模型分阶段分析数据变化规律，据此构建滑坡预警机制（如表面位移速度达到何阈值时发出预警等）并解释其合理性。"
+  ],
+  "source": {
+    "md_path": "problem.md",
+    "source_files": [
+      {
+        "path": "题目信息.md",
+        "sha256": "dae747350eac221af5a402002ac275ea97dfef0e03738fa23e7231518e0d5a8f"
+      },
+      {
+        "path": "Attachment 1：Two sets of displacement time series data – Question 1.xlsx",
+        "sha256": "0021d00e2b0eb37d8a1df5ce3513c486c570475202d918325e4fec1d6f1c2f6c"
+      },
+      {
+        "path": "Attachment 2：Displacement time series data – Question 2.xlsx",
+        "sha256": "9cb24a7a8c02ac0d91b32cc84355fc18e2bad030794acb7f9855fe22d959cdca"
+      },
+      {
+        "path": "Attachment 3：Monitoring data (training set & experimental set) – Question 3.xlsx",
+        "sha256": "d8f27db77f59454a463e5a457119ee5422b06f0df8e03f65fa46d832eeb06974"
+      },
+      {
+        "path": "Attachment 4：Monitoring data (training set & experimental set) – Question 4.xlsx",
+        "sha256": "777ead341e116130c4ed7a7ccd06c78dd1a7c294eb09a9ece44fa75cafb104c7"
+      },
+      {
+        "path": "Attachment 5：Monitoring data – Question 5.xlsx",
+        "sha256": "34cbb61dafbc5e561a61e3593ed0cde9abf3a65f39d93268f8fb2137a5f59db8"
+      },
+      {
+        "path": "附件1：两组位移时序数据-问题1.xlsx",
+        "sha256": "6bd2dc578bdf98d8e62010690c28ec656f546277a66178df2e577ee6a11da5ae"
+      },
+      {
+        "path": "附件2：位移时序数据-问题2.xlsx",
+        "sha256": "d0f88eb1c0b00263bd8b4baed519c60a026cb146d25853c3384cdc1890aa3756"
+      },
+      {
+        "path": "附件3：监测数据（训练集与实验集）-问题3.xlsx",
+        "sha256": "c4e0bb544b8d9796020e76c1016cc0a25fcc1d493c8ffc19283bbfd806981f19"
+      },
+      {
+        "path": "附件4：监测数据（训练集与实验集）-问题4.xlsx",
+        "sha256": "808cf1f6277e20aaac52303e35e97662044695630f1a35a8fc035c4bac63bf79"
+      },
+      {
+        "path": "附件5：监测数据-问题5.xlsx",
+        "sha256": "35d315e97e19688a8a5f284dbbee044249428989ce9913c6c8a0b495f1aacb71"
+      }
+    ],
+    "imported_at": "2026-08-25T20:20:53.336401+00:00",
+    "imported_by": "cli"
+  },
+  "feasibility": {
+    "checklist": [
+      "external_data",
+      "simulation",
+      "survey",
+      "supercomputer"
+    ],
+    "blockers": [],
+    "assessment": "纯数据驱动（5 个 xlsx 附件：表面位移/深部位移/降雨量/孔隙水压力/微震事件数/爆破点距离/单段最大药量/干湿入渗系数时序，10 分钟采样，含训练集与实验集），无真实调研/仿真平台/实物实验依赖，可达。"
+  },
+  "data_files": [
+    {
+      "filename": "题目信息.md",
+      "file_type": "md",
+      "path": "题目信息.md",
+      "summary": {}
+    },
+    {
+      "filename": "Attachment 1：Two sets of displacement time series data – Question 1.xlsx",
+      "file_type": "xlsx",
+      "path": "Attachment 1：Two sets of displacement time series data – Question 1.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "Attachment 2：Displacement time series data – Question 2.xlsx",
+      "file_type": "xlsx",
+      "path": "Attachment 2：Displacement time series data – Question 2.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "Attachment 3：Monitoring data (training set & experimental set) – Question 3.xlsx",
+      "file_type": "xlsx",
+      "path": "Attachment 3：Monitoring data (training set & experimental set) – Question 3.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "Attachment 4：Monitoring data (training set & experimental set) – Question 4.xlsx",
+      "file_type": "xlsx",
+      "path": "Attachment 4：Monitoring data (training set & experimental set) – Question 4.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "Attachment 5：Monitoring data – Question 5.xlsx",
+      "file_type": "xlsx",
+      "path": "Attachment 5：Monitoring data – Question 5.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "附件1：两组位移时序数据-问题1.xlsx",
+      "file_type": "xlsx",
+      "path": "附件1：两组位移时序数据-问题1.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "附件2：位移时序数据-问题2.xlsx",
+      "file_type": "xlsx",
+      "path": "附件2：位移时序数据-问题2.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "附件3：监测数据（训练集与实验集）-问题3.xlsx",
+      "file_type": "xlsx",
+      "path": "附件3：监测数据（训练集与实验集）-问题3.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "附件4：监测数据（训练集与实验集）-问题4.xlsx",
+      "file_type": "xlsx",
+      "path": "附件4：监测数据（训练集与实验集）-问题4.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "附件5：监测数据-问题5.xlsx",
+      "file_type": "xlsx",
+      "path": "附件5：监测数据-问题5.xlsx",
+      "summary": {}
+    }
+  ],
+  "data_dir": "source"
+}
