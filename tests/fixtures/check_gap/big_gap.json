@@ -1,0 +1,1 @@
+{"cpm_lower_bounds": {"Q1": {"lb_pure_duration": 41400, "makespan": 41600, "gap_s_pure": 200, "gap_pct_pure": 0.4831}, "Q2": {"lb": 123614, "makespan": 215303, "gap_s": 91689, "gap_pct": 74.1736}, "Q3": {"lb": 123614, "makespan": 127085, "gap_s": 3471, "gap_pct": 2.8079}}}
