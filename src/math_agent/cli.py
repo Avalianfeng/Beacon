@@ -902,6 +902,582 @@ def reference_tables(
     typer.echo("[提示] 表3.2（共同异常点清单）需参考实现额外输出清单数据，暂不装配")
 
 
+# ---------------------------------------------------------------------------
+# reference paper：evidence + brief → paper.md 骨架（零编造）
+# ---------------------------------------------------------------------------
+
+# 摘要模板：内置 C 题默认模板（题级占位符模板，不是结果数字）。
+# 覆盖方式：problems/<problem_id>/paper_abstract.md 存在时优先读取（纯文本/markdown，
+# 数字一律用 {占位符}；占位符 = result.ours 字段名 或 <qid>.<字段名>，如 {q1_gain}、
+# {q1.table11}）。装配时占位符由 evidence.json 填充；缺失的占位符渲染为
+# 【待展开：<key> 未在 evidence 中】，不编造数字。
+_DEFAULT_PAPER_ABSTRACT = """针对边坡多源监测数据下的位移校正、阶段识别、数据治理、分阶段预测与滑坡预警问题，本文以统一状态观为主线，构建数据驱动的时序建模链（校正 → 变点识别 → 数据治理 → 分阶段预测 → 变量组合与预警）。主要量化结果：
+
+- 问题一（位移校正）：校正增益 {q1_gain}，校正后 RMSE {q1_rmse}；表1.1 校正后 y = {q1.table11}；
+- 问题二（阶段识别）：两个转换节点编号 {q2_node1}、{q2_node2}；
+- 问题三（异常检测）：共同异常点 {q3_common} 个；
+- 问题四（分阶段预测）：实验集预测增量 RMSE {q4_rmse}；表4.1 五点预测 {q4.table41}；
+- 问题五（变量组合与预警）：最优组合增量 RMSE {q5_rmse}；各阶段速度阈值 {q5.thresholds_slow} / {q5.thresholds_accel} / {q5.thresholds_fast}。"""
+
+_PAPER_NUM_RE = re.compile(
+    r"(?<!\d)(\d{1,3}:\d{2}:\d{2})(?!\d)"          # 时间戳 h:mm:ss（整体）
+    r"|-?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?!\d)"       # 千分位整数/小数
+    r"|-?\d+\.\d+"                                 # 小数
+    r"|-?\d+"                                      # 整数
+)
+_CN_NUMS = "一二三四五六七八九十"
+
+
+def _cn_num(n: int) -> str:
+    """1..10 → 中文数字（章节/假设序号用，避免引入 ASCII 数字 token）。"""
+    return _CN_NUMS[n - 1] if 1 <= n <= 10 else str(n)
+
+
+def _count_paper_numbers(text: str) -> int:
+    """数字 token 计数（口径与 scripts/check_paper_numbers.py 一致，仅用于回显统计）。"""
+    return len(_PAPER_NUM_RE.findall(text.replace("\u2212", "-")))
+
+
+def _load_paper_abstract_template(problem_id: str) -> tuple[str, str]:
+    """摘要模板：problems/<id>/paper_abstract.md 优先，缺省内置 C 题默认模板。
+
+    返回 (模板文本, 模板来源说明)。模板为纯文本/markdown，数字一律用 {占位符}。
+    """
+    override = Path("problems") / problem_id / "paper_abstract.md"
+    if override.is_file():
+        try:
+            return override.read_text(encoding="utf-8"), f"problems/{problem_id}/paper_abstract.md"
+        except OSError:
+            pass
+    return _DEFAULT_PAPER_ABSTRACT, "内置 C 题默认模板（src/math_agent/cli.py _DEFAULT_PAPER_ABSTRACT）"
+
+
+def _fill_paper_abstract(template: str, result_ours: dict, q_fields: dict) -> str:
+    """把模板 {占位符} 用 evidence 值替换（正则替换，兼容模板中的字面花括号）。
+
+    - ``{q1_gain}`` 等 → result.ours 字段（整数形浮点按 _cell_text 去尾零）；
+    - ``{q1.table11}`` 等 → q_fields 的 <qid>.<字段>（列表以 ", " 连接，保留原文精度）；
+    - 缺失的占位符 → 【待展开：<key> 未在 evidence 中】（不编造数字）。
+    """
+
+    def _repl(match: re.Match) -> str:
+        key = match.group(1).strip()
+        if "." in key:
+            qid, _, field = key.partition(".")
+            qf = q_fields.get(qid) or {}
+            if field in qf:
+                value = qf[field]
+                return ", ".join(str(v) for v in value) if isinstance(value, list) else str(value)
+        elif key in result_ours:
+            return _cell_text(result_ours[key])
+        return f"【待展开：{key} 未在 evidence 中】"
+
+    return re.sub(r"\{([^{}]+)\}", _repl, template)
+
+
+def _load_paper_brief(brief: Path | None, problem_id: str) -> dict | None:
+    """读 brief.json：--brief 缺省尝试 problems/<id>/brief.json；都没有返回 None。"""
+    if brief is None:
+        candidate = Path("problems") / problem_id / "brief.json"
+        if candidate.is_file():
+            brief = candidate
+        else:
+            return None
+    try:
+        obj = json.loads(brief.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(f"brief.json 不是有效的 UTF-8 JSON：{exc}", param_hint="--brief") from exc
+    if not isinstance(obj, dict):
+        raise typer.BadParameter("brief.json 顶层必须是对象", param_hint="--brief")
+    return obj
+
+
+def _split_numbered_items(text: str) -> list[str]:
+    """把文本按 ①②③… 条目拆分：条目以（文本开头或 ；；：: 之后的）①②③ 开头。
+
+    分级标注（如"（分级①题面原文）"）里的 ① 前面是普通字符、非分隔符，不误拆；
+    条目保留各自的 ①②③ 前缀（由调用方决定是否剥离）。
+    """
+    out: list[str] = []
+    buf = ""
+    for ch in text:
+        if ch in "①②③④⑤⑥⑦⑧⑨⑩" and (
+            not buf or buf.rstrip().endswith(("；", ";", "：", ":"))
+        ):
+            if buf.strip():
+                out.append(buf.strip())
+            buf = ch
+        else:
+            buf += ch
+    if buf.strip():
+        out.append(buf.strip())
+    return out
+
+
+def _paper_assumptions(brief: dict | None) -> tuple[str, list[str], str]:
+    """从 brief.required_discussions 取 disc-assumptions。
+
+    返回 (导语, 假设条目列表, 要求说明)；条目保留 brief 原文（含分级标注 ①/②/③），
+    只机械去掉条目开头的 ①②③ 编号，不重写、不编造。
+    """
+    if not brief:
+        return "", [], ""
+    for item in brief.get("required_discussions") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("id") == "disc-assumptions":
+            topic = item.get("topic")
+            if isinstance(topic, str) and topic.strip():
+                parts = _split_numbered_items(topic)
+                preamble = parts[0] if parts and not parts[0].startswith("①") else ""
+                items = [
+                    re.sub(r"^[①②③④⑤⑥⑦⑧⑨⑩]\s*", "", p)
+                    for p in parts
+                    if p.startswith(("①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"))
+                ]
+                requirement = item.get("requirement")
+                return preamble, items, requirement if isinstance(requirement, str) else ""
+    return "", [], ""
+
+
+def _direction_first_clause(text: str) -> str:
+    """取 direction 的第一句（到首个 ；或 。 为止），作为"方向一句话"。"""
+    for sep in ("；", "。", "\n"):
+        idx = text.find(sep)
+        if idx > 0:
+            return text[:idx].strip()
+    return text.strip()
+
+
+def _question_direction(brief: dict | None, qid: str) -> str:
+    """per_question_direction 里 question_id==qid 的 direction 第一句；无则空串。"""
+    if not brief:
+        return ""
+    for item in brief.get("per_question_direction") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("question_id", "")) == qid:
+            direction = item.get("direction")
+            if isinstance(direction, str) and direction.strip():
+                return _direction_first_clause(direction)
+    return ""
+
+
+def _evidence_line_no(lines: list[str], needle: str) -> int | None:
+    """找文件行列表里包含 needle 的行号（1 起）；找不到返回 None。"""
+    for i, line in enumerate(lines, 1):
+        if needle in line:
+            return i
+    return None
+
+
+def _relpath_from(path: Path, base_dir: Path) -> str:
+    """path 相对 base_dir 的路径（正斜杠），供溯源表"来源"列引用。"""
+    try:
+        return os.path.relpath(str(path), str(base_dir)).replace("\\", "/")
+    except ValueError:
+        return str(path)
+
+
+def _table_md(table: dict, rows: list[list[str]]) -> str:
+    """表 → markdown 表字符串（不含标题行；标题由调用方作为小标题渲染）。"""
+    header = [_cell_text(c) for c in table["columns"]]
+    lines = ["| " + " | ".join(header) + " |", "|" + "|".join(["---"] * len(header)) + "|"]
+    for row in rows:
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
+def _reference_file_hashes(problem_id: str) -> list[tuple[str, str]]:
+    """reference 目录 *.py 的文件名（reference/xxx.py）+ sha256：重算自 source/reference/。"""
+    base = Path("problems") / problem_id / "source" / "reference"
+    if not base.is_dir():
+        return []
+    return sorted(
+        (f"reference/{f.name}", hashlib.sha256(f.read_bytes()).hexdigest())
+        for f in base.glob("*.py")
+    )
+
+
+def _paper_section_stats(paper_text: str) -> list[tuple[str, int, int]]:
+    """按 ## 顶级章节统计（章节名, 字数, 数字数）；标题前内容并入"（引言）"。"""
+    stats: list[tuple[str, int, int]] = []
+    current = "（引言）"
+    buffer: list[str] = []
+    for line in paper_text.splitlines():
+        if line.startswith("## "):
+            if buffer:
+                text = "\n".join(buffer)
+                stats.append((current, len(text), _count_paper_numbers(text)))
+            current = line[3:].strip()
+            buffer = []
+        else:
+            buffer.append(line)
+    if buffer:
+        text = "\n".join(buffer)
+        stats.append((current, len(text), _count_paper_numbers(text)))
+    return stats
+
+
+def _build_trace_table(
+    result_ours: dict,
+    q_fields: dict,
+    evidence_lines: list[str],
+    tables_spec: dict,
+    tables_path: Path | None,
+    out: Path,
+) -> str:
+    """附录 A 溯源表：每个关键数字 → evidence.json（或 tables.json）「文件 + 行号」。
+
+    行号在生成时实扫文件得到，保证 scripts/check_paper_numbers.py --traceability --strict
+    可逐条断言；多值字段（表行）一行断言全部值。标签一律不含 ASCII 数字，
+    避免被当作所声称数字。
+    """
+    rows: list[str] = []
+    seen: set[str] = set()
+
+    def add(*cells: str) -> None:
+        rows.append("| " + " | ".join(cells) + " |")
+
+    def cite_evidence(needle: str) -> str:
+        # Q 行列表值可能以 ", "（含空格）或 "," 分隔，两种 needle 都试
+        line_no = _evidence_line_no(evidence_lines, needle)
+        if line_no is None:
+            line_no = _evidence_line_no(evidence_lines, needle.replace(",", ", "))
+        if line_no is not None:
+            return f"`evidence.json` 第 {line_no} 行"
+        return "`evidence.json`（全文）"
+
+    # result.ours 7 指标（RESULT 行）
+    for key, label in (
+        ("q1_gain", "Q1 校正增益"),
+        ("q1_rmse", "Q1 校正后 RMSE"),
+        ("q2_node1", "Q2 转换节点一编号"),
+        ("q2_node2", "Q2 转换节点二编号"),
+        ("q3_common", "Q3 共同异常点数量"),
+        ("q4_rmse", "Q4 预测增量 RMSE"),
+        ("q5_rmse", "Q5 最优组合增量 RMSE"),
+    ):
+        value = result_ours.get(key)
+        if value is None:
+            continue
+        rendered = _cell_text(value)
+        if rendered in seen:
+            continue
+        seen.add(rendered)
+        needle = json.dumps({key: value})[1:-1]
+        add(rendered, label, cite_evidence(needle))
+
+    # Q 行字段（多值一行，值来自该 Q 行原文）
+    qfield_groups = (
+        ("q1", "table11", "Q1 校正后 y（五行）"),
+        ("q2", "speeds", "Q2 各阶段平均速度（mm/h）"),
+        ("q3", "table31", "Q3 单变量异常点数量（五列）"),
+        ("q4", "table41", "Q4 实验集预测值（五点）"),
+        ("q5", "thresholds_slow", "Q5 缓慢阶段速度阈值"),
+        ("q5", "thresholds_accel", "Q5 加速阶段速度阈值"),
+        ("q5", "thresholds_fast", "Q5 快速阶段速度阈值"),
+    )
+    for qid, field, label in qfield_groups:
+        qf = q_fields.get(qid) or {}
+        value = qf.get(field)
+        if not isinstance(value, list) or not value:
+            continue
+        cells = [str(v) for v in value]
+        if all(c in seen for c in cells):
+            continue
+        seen.update(cells)
+        add(*cells, label, cite_evidence(f"{field}=[" + ",".join(cells) + "]"))
+
+    # tables.json 题面静态列（lead_columns）：数字列一行断言；字符串列（时间点）逐行断言
+    if tables_path is not None and isinstance(tables_spec, dict):
+        try:
+            tlines = tables_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            tlines = []
+        if tlines:
+            src = _relpath_from(tables_path, out.parent)
+            for table in tables_spec.get("tables") or []:
+                if not isinstance(table, dict):
+                    continue
+                lead = table.get("lead_columns") or {}
+                if not isinstance(lead, dict):
+                    continue
+                for col, values in lead.items():
+                    if not isinstance(values, list) or not values:
+                        continue
+                    numeric = all(isinstance(v, (int, float)) for v in values)
+                    if numeric:
+                        cells = [_cell_text(v) for v in values]
+                        if all(c in seen for c in cells):
+                            continue
+                        seen.update(cells)
+                        joined = ", ".join(cells)
+                        line_no = _evidence_line_no(tlines, joined)
+                        if line_no is not None:
+                            label = f"{col}（题面静态列）"
+                            add(*cells, label, f"`{src}` 第 {line_no} 行")
+                    else:
+                        for v in values:
+                            text = str(v)
+                            line_no = _evidence_line_no(tlines, text)
+                            if line_no is None:
+                                continue
+                            label = f"{col}（题面静态列）"
+                            add(text, label, f"`{src}` 第 {line_no} 行")
+    return "\n".join(rows)
+
+
+def _build_paper_md(
+    *,
+    title: str,
+    questions: list,
+    abstract: str,
+    template_source: str,
+    brief: dict | None,
+    q_lines: list[str],
+    q_fields: dict,
+    result_ours: dict,
+    table_rows: list,
+    evidence_lines: list[str],
+    tables_spec: dict,
+    tables_path: Path | None,
+    out: Path,
+    problem_id: str,
+) -> str:
+    """装配 paper.md 全文（骨架）：数字全部来自 evidence/tables/题面/brief，prose 用占位行。"""
+    parts: list[str] = []
+    parts.append("# " + title + "\n")
+    parts.append(
+        "<!-- 本文档由 `math-agent reference paper` 自动装配（论文骨架，零编造）："
+        "数字唯一事实源=evidence.json；题面静态列来源 tables.json；"
+        "prose 分析以 【待展开】 占位，待人工或后续阶段展开 -->\n"
+    )
+
+    # 摘要（题级模板，占位符由 evidence 填充）
+    parts.append("## 摘要\n")
+    parts.append(abstract + "\n")
+    parts.append(f"<!-- 摘要模板来源：{template_source}；占位符由 evidence.json 填充 -->\n")
+
+    # 问题重述（题面原文）
+    parts.append("## 问题重述\n")
+    for q in questions:
+        if isinstance(q, str) and q.strip():
+            parts.append(q + "\n")
+    parts.append("> 注：本节为题目原文（problem.json questions），数字属题面常量，非结果数字。\n")
+
+    # 模型假设（brief disc-assumptions，分级标注）
+    parts.append("## 模型假设\n")
+    preamble, assumptions, requirement = _paper_assumptions(brief)
+    if assumptions:
+        parts.append("> 来源：brief.json required_discussions[\"disc-assumptions\"]（人工起草口径，非本文生成）。\n")
+        if preamble:
+            parts.append(preamble + "\n")
+        for i, item in enumerate(assumptions, 1):
+            parts.append(f"- 假设{_cn_num(i)}：{item}")
+        parts.append("")
+        if requirement:
+            parts.append(f"> 要求：{requirement}")
+            parts.append("")
+    else:
+        parts.append(
+            "> 【待展开：brief.json 缺失（--brief 未给且 problems/<id>/brief.json 不存在），"
+            "模型假设待人工补充】\n"
+        )
+    parts.append("> 【待展开：逐条论证假设的建模影响与依据讨论】\n")
+
+    # 求解结果（Q1~Q5：方向一句话 + Q 行原文数字）
+    parts.append("## 求解结果\n")
+    for qid in ("1", "2", "3", "4", "5"):
+        direction = _question_direction(brief, qid)
+        qline = next((ln for ln in q_lines if re.match(rf"^Q{qid}:", ln.strip())), None)
+        parts.append(f"### 问题{qid}\n")
+        if direction:
+            parts.append(f"- **方向**（brief per_question_direction q{qid}-direction 首句）：{direction}")
+        else:
+            parts.append(f"- **方向**：> 【待展开：brief 缺失，问题{qid}方向待补充】")
+        if qline:
+            parts.append(f"- **Q{qid} 行数字**（evidence.json q_lines 原文）：`{qline}`")
+        else:
+            parts.append(f"- **Q{qid} 行数字**：> 【待展开：evidence 缺 Q{qid} 行，该问数字待补充】")
+        parts.append("")
+        parts.append(f"> 【待展开：问题{qid}的模型推导/分析/检验 prose】\n")
+
+    # 交付表（三张表，复用 P3 装配逻辑）
+    parts.append("## 交付表\n")
+    parts.append("> 来源：evidence.json q_lines（Q 行字段）+ tables.json 题面静态列；装配逻辑与 `reference tables` 一致。\n")
+    for table, rows in table_rows:
+        parts.append(f"### {table['title']}\n")
+        parts.append(_table_md(table, rows) + "\n")
+    parts.append("> 注：题面表3.2（多变量共同异常点清单）不在 evidence 范围（Q 行只输出计数），骨架不装配该清单。\n")
+
+    # 附录 A 数字溯源
+    parts.append("## 附录 A 数字溯源\n")
+    parts.append(
+        "> 格式约定：每行「论文数字 … | 来源」，来源 = evidence.json（result.ours / Q 行字段）"
+        "或 tables.json（题面静态列）的「文件 + 行号」；"
+        "可用 scripts/check_paper_numbers.py --traceability 核对。"
+        "问题重述/模型假设/方向摘要中的数字为题面与 brief 原文（problem.json / brief.json），"
+        "非结果数字，不逐条列入本表。\n"
+    )
+    trace_md = _build_trace_table(
+        result_ours, q_fields, evidence_lines, tables_spec, tables_path, out
+    )
+    if trace_md:
+        parts.append("| 论文数字 | 来源 |")
+        parts.append("| --- | --- |")
+        parts.append(trace_md + "\n")
+    parts.append(
+        "> 注：表3.1 总数列为派生值（Q3 table31 五行求和），不在 evidence 原文中，"
+        "属允许标注的派生值；表3.2 清单不在 evidence 范围。\n"
+    )
+
+    # 附录 B 代码清单（reference 目录 7 文件 + sha256，重算）
+    parts.append("## 附录 B 代码清单\n")
+    hashes = _reference_file_hashes(problem_id)
+    if hashes:
+        parts.append("> 来源：重算自 problems/<problem_id>/source/reference/（sha256 与 problem.json source_files 登记一致）。\n")
+        parts.append("| 文件 | sha256 |")
+        parts.append("| --- | --- |")
+        for name, digest in hashes:
+            parts.append(f"| {name} | {digest} |")
+        parts.append("")
+    else:
+        parts.append("> 【待展开：problems/<problem_id>/source/reference/ 不存在，代码清单待补充】\n")
+
+    return "\n".join(parts)
+
+
+@reference_app.command("paper")
+def reference_paper(
+    problem: Path = typer.Option(
+        ..., "--problem", exists=True, readable=True, help="题目 spec JSON"
+    ),
+    evidence: Path = typer.Option(
+        ..., "--evidence", exists=True, readable=True,
+        help="reference run 产出的 evidence.json",
+    ),
+    brief: Path | None = typer.Option(
+        None, "--brief", exists=True, readable=True,
+        help="brief.json（缺省尝试 problems/<id>/brief.json）",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="paper.md 输出路径（默认 runs/<problem_id>-reference/paper.md）"
+    ),
+):
+    """evidence + brief → paper.md 骨架：摘要/问题重述/模型假设/求解结果/交付表/附录A溯源/附录B代码清单。
+
+    零编造：所有数字均来自 evidence.json（result.ours + Q 行）、tables.json（题面静态列）
+    或题面/brief 原文；分析 prose 留 【待展开】 占位行。摘要模板可被
+    problems/<problem_id>/paper_abstract.md 覆盖（占位符 = result.ours 字段名或 <qid>.<字段>）。
+    """
+    _read_problem_spec(problem)
+    try:
+        raw = json.loads(problem.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"题目文件不是有效的 UTF-8 JSON：{exc}", param_hint="--problem"
+        ) from exc
+    problem_id = raw.get("problem_id")
+    if not isinstance(problem_id, str) or not problem_id.strip():
+        problem_id = problem.parent.name
+    if not re.fullmatch(r"[A-Za-z0-9-]+", problem_id):
+        raise typer.BadParameter(
+            f"无法确定 problem_id（problem.json 无 problem_id 且目录名 {problem.parent.name!r} 非法）",
+            param_hint="--problem",
+        )
+    title = raw.get("title", "")
+    questions = raw.get("questions", [])
+    if not isinstance(title, str):
+        title = ""
+    if not isinstance(questions, list):
+        questions = []
+
+    # evidence.json：result.ours / q_lines（数字唯一事实源）
+    try:
+        ev = json.loads(evidence.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"evidence.json 不是有效的 UTF-8 JSON：{exc}", param_hint="--evidence"
+        ) from exc
+    if not isinstance(ev, dict):
+        raise typer.BadParameter("evidence.json 顶层必须是对象", param_hint="--evidence")
+    result_map = ev.get("result")
+    result_ours = result_map.get("ours", {}) if isinstance(result_map, dict) else {}
+    if not isinstance(result_ours, dict):
+        result_ours = {}
+    q_lines = ev.get("q_lines")
+    if not isinstance(q_lines, list):
+        raise typer.BadParameter("evidence.json 缺少 q_lines 列表", param_hint="--evidence")
+    q_fields = _parse_q_lines_to_fields(q_lines)
+    if not q_fields:
+        typer.echo("[FAIL] evidence 中没有 Q<id>: 行，无可装配数据", err=True)
+        raise typer.Exit(1)
+
+    brief_data = _load_paper_brief(brief, problem_id)
+
+    # 表 spec + 装配（与 reference tables 同一套逻辑）
+    tables_path = Path("problems") / problem_id / "tables.json"
+    if tables_path.is_file():
+        try:
+            tables_spec = json.loads(tables_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise typer.BadParameter(f"{tables_path} 不是有效的 UTF-8 JSON：{exc}") from exc
+    else:
+        tables_spec = _DEFAULT_TABLES_SPEC
+    if not isinstance(tables_spec, dict) or not isinstance(tables_spec.get("tables"), list):
+        raise typer.BadParameter("表 spec 顶层必须是 {tables: [...]}")
+    table_rows: list[tuple[dict, list[list[str]]]] = []
+    for table in tables_spec["tables"]:
+        if not isinstance(table, dict):
+            raise typer.BadParameter(f"表定义必须是对象：{table!r}")
+        try:
+            table_rows.append((table, _build_table_rows(table, q_fields)))
+        except ValueError as exc:
+            raise typer.BadParameter(f"表 {table.get('id')} 装配失败：{exc}") from exc
+
+    if out is None:
+        out = Path("runs") / f"{problem_id}-reference" / "paper.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    template, template_source = _load_paper_abstract_template(problem_id)
+    abstract = _fill_paper_abstract(template, result_ours, q_fields)
+    evidence_lines = evidence.read_text(encoding="utf-8").splitlines()
+    paper = _build_paper_md(
+        title=title,
+        questions=questions,
+        abstract=abstract,
+        template_source=template_source,
+        brief=brief_data,
+        q_lines=q_lines,
+        q_fields=q_fields,
+        result_ours=result_ours,
+        table_rows=table_rows,
+        evidence_lines=evidence_lines,
+        tables_spec=tables_spec,
+        tables_path=tables_path if tables_path.is_file() else None,
+        out=out,
+        problem_id=problem_id,
+    )
+    out.write_text(paper, encoding="utf-8")
+
+    brief_note = "--brief 指定"
+    if brief is None:
+        cand = Path("problems") / problem_id / "brief.json"
+        brief_note = str(cand) if cand.is_file() else "缺失（假设/方向用【待展开】占位）"
+    typer.echo(f"[OK] reference paper：{problem_id}")
+    typer.echo(f"paper.md：{out.resolve()}")
+    typer.echo(f"摘要模板：{template_source}")
+    typer.echo(f"brief：{brief_note}")
+    typer.echo("[章节统计]（字数 / 数字数）")
+    for name, chars, nums in _paper_section_stats(paper):
+        typer.echo(f"  ## {name}：{chars} 字 / {nums} 数字")
+    typer.echo(
+        "[提示] 数字红线校验：python scripts/check_paper_numbers.py "
+        f"--paper {out} --evidence {evidence}"
+    )
+
+
 problem_app = typer.Typer(
     help="题目资产：导入/归档/总览（纯机械，智能内容按 brief-playbook 外置给人 + 外部强模型）",
     no_args_is_help=True,
