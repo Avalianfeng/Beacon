@@ -12,3 +12,4 @@
 | [第一论](第一论.md) | 2026-08-21 | mcm51-b | GPT | 开放探索（提示词 0）：3364 行思考路径 / 75 个候选点，未收敛 | → 第二轮消化（提示词 0.5）→ 认知地图 v1 → `problems/mcm51-b/exploration.md` |
 | [第二轮](第二轮.md) | 2026-08-21 | mcm51-b | GPT | 探索消化（提示词 0.5）：认知地图 v1（10 小节、优先级、不兼容标注、5–8 论文点、收敛判断：移动资源 RCPSP） | → 已映射进 `problems/mcm51-b/brief.json`（实验初稿 40 条） |
 | [第三轮](第三轮.md) | 2026-08-21 | mcm51-b | GPT | 逐问最终清点 + 52 条隐藏约束/歧义裁决 + 核心口径「设备完成≠工序完成」+ 附件消耗清单 + 反向审查 | → 已映射进 `problems/mcm51-b/brief.json`（口径→assumptions/red_lines/data_notes） |
+| [第一论-C](第一论-C.md) | 2026-08-26 | mcm51-c | deepseek | 开放探索思考路径归档（C 题边坡预警） | → 认知地图 `problems/mcm51-c/exploration.md` + brief.json（过程见 `docs/8-26-C题记录.md`） |
