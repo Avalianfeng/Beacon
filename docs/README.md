@@ -23,6 +23,7 @@
 - **type**：state（事实源）/ decision（决策登记）/ contract（契约）/ plan（计划）/ design（设计）/ practice（范例）/ evaluation（复盘）/ protocol（协议）/ log（清单）
 - **status**：draft（草稿）/ active（活跃）/ blocked（等待外部条件）/ deprecated（不再维护仅参考）/ superseded（已被后继取代）/ archived（archive/ 默认）
 - **30 秒判定法**：看 status——非 active 的文档不得作为当前行为依据（frozen 类文件已标 deprecated）。
+- 完整治理约定（分层边界/六态/决策登记/读取优先级/操作纪律/归档四件套）见 [文档治理约定.md](文档治理约定.md)；只读审计一条命令：`python scripts/audit_docs.py`。
 
 ## 一、现在在哪 → 先读这个
 

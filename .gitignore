@@ -40,3 +40,7 @@ nul
 test.png
 *.err.log
 *.out.log
+
+# Probe/temp (one-shot scripts, keep untracked)
+.probe_tmp/
+.codegraph/
