@@ -1,3 +1,4 @@
+<!-- doc: type=plan status=active updated=2026-08-27 -->
 # Modeling Brief（建模预备 A2）实施计划书与交接文档
 
 - 建立日期：2026-08-19

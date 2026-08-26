@@ -1,3 +1,4 @@
+<!-- doc: type=plan status=active updated=2026-08-27 -->
 # Modeling Brief：实现到哪一步、如何验证、下一步路线
 
 - 建立日期：2026-08-19

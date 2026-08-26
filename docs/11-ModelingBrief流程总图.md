@@ -1,3 +1,4 @@
+<!-- doc: type=contract status=active updated=2026-08-27 -->
 # Modeling Brief 全流程总图（前置对话 → 注入 → 门禁 → 主图）
 
 - 建立日期：2026-08-19

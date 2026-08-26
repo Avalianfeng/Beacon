@@ -1,3 +1,4 @@
+<!-- doc: type=protocol status=active updated=2026-08-26 -->
 # brief 生产手册（Brief Playbook）——方向生产协议：从题目探索到 Modeling Brief
 
 - 建立日期：2026-08-21；**2026-08-21 晚 v2：升级为「方向生产协议」，新增题目探索（Problem Exploration）前置阶段**

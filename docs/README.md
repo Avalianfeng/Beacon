@@ -5,7 +5,9 @@
 
 ## 〇、读取优先级（新会话/人首次进入按此顺序）
 
-1. **[00-体系现状与原则.md](00-体系现状与原则.md)** — 当前状态、原则、待办池（事实源，持续更新）
+**人类控制面：[current/](current/README.md)（4 页摘要：状态/计划/待决策/导航）——只想快速上手先读这个。** 完整链路：
+
+1. [current/](current/README.md) → [00-体系现状与原则.md](00-体系现状与原则.md) — 当前状态、原则、待办池（事实源，持续更新）
 2. **[07-待决策与超范围](实现计划-8-20/07-待决策与超范围.md)** — 决策登记与超范围事项
 3. **[实现计划-8-20/README.md](实现计划-8-20/README.md)** — 当前执行计划（v2 主线）
 4. **[brief-playbook.md](brief-playbook.md)** — 方向生产协议（新题开工必读）
@@ -13,6 +15,14 @@
 6. `archive/` — 不再作为当前事实来源，除非被当前文件明确引用
 
 > 判断「现在是什么状态」禁止默认从 archive 或历史日志推断；判断「为什么这么做」优先查正式决策（07）。
+
+## 文档状态标注约定（2026-08-26 治理阶段 2）
+
+每个活文档文件头第一行有状态注释：`<!-- doc: type=<类型> status=<状态> updated=<日期> -->`
+
+- **type**：state（事实源）/ contract（契约）/ plan（计划）/ design（设计）/ practice（范例）/ evaluation（复盘）/ protocol（协议）/ log（清单）
+- **status**：draft（草稿）/ active（活跃）/ blocked（等待外部条件）/ deprecated（不再维护仅参考）/ superseded（已被后继取代）/ archived（archive/ 默认）
+- **30 秒判定法**：看 status——非 active 的文档不得作为当前行为依据（frozen 类文件已标 deprecated）。
 
 ## 一、现在在哪 → 先读这个
 
