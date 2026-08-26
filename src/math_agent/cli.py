@@ -606,6 +606,302 @@ def reference_run(
     typer.echo(f"evidence.json：{evidence_path.resolve()}")
 
 
+# ---------------------------------------------------------------------------
+# reference tables：Q 行结构化字段 → 交付表（md/csv）
+# ---------------------------------------------------------------------------
+
+# C 题内置默认表 spec：problems/<problem_id>/tables.json 缺失时兜底（与落盘文件同构）。
+# 结构：每张表 {id, title, columns, lead_columns?, field?, total?}
+#   - lead_columns: {列名: 静态题面值列表}（如校正前 x / 时间点），各列等长，定行数 N
+#   - field: "<qid>.<字段名>"，指向 q_fields 里某问的某字段（值必须为列表），
+#     按行主序填"未被 lead_columns 覆盖的剩余列"：长度须等于 N×剩余列数
+#     （无 lead_columns 时 N=1，单行汇总表；如表3.1 5 个值填 5 列）
+#   - total: true 时末列填本行数值格之和（如表3.1 的"总数"）
+_DEFAULT_TABLES_SPEC = {
+    "tables": [
+        {
+            "id": "table11",
+            "title": "表1.1 位移数据校正验证",
+            "columns": ["校正前 x (mm)", "校正后 y (mm)"],
+            "lead_columns": {
+                "校正前 x (mm)": [7.132, 18.526, 84.337, 123.554, 167.667]
+            },
+            "field": "q1.table11",
+        },
+        {
+            "id": "table31",
+            "title": "表3.1 单变量异常点数量",
+            "columns": ["降雨量 a", "孔压 b", "微震 c", "深部位移 d", "表面位移 e", "总数"],
+            "field": "q3.table31",
+            "total": True,
+        },
+        {
+            "id": "table41",
+            "title": "表4.1 实验集表面位移预测值",
+            "columns": ["时间点", "预测位移 (mm)"],
+            "lead_columns": {
+                "时间点": [
+                    "2025-05-09 12:00", "2025-05-27 08:00",
+                    "2025-06-01 12:00", "2025-06-03 22:00", "2025-06-04 01:40",
+                ]
+            },
+            "field": "q4.table41",
+        },
+    ]
+}
+
+
+def _parse_evidence_value(raw: str):
+    """Q 行 ``k=v`` 的值解析：``[...]`` → 元素保留原文的字符串列表；纯数字 → float；否则原串。
+
+    列表元素保留 evidence 原文（不转 float），保证表格输出逐字一致、不丢精度
+    （如 ``268.700`` 不会被压成 ``268.7``）；需要数值计算（total 求和）时再转。
+    """
+    raw = raw.strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        inner = raw[1:-1].strip()
+        if not inner:
+            return []
+        return [p.strip() for p in inner.split(",")]
+    try:
+        return float(raw)
+    except ValueError:
+        return raw
+
+
+def _parse_q_lines_to_fields(q_lines: list[str]) -> dict:
+    """把 evidence.q_lines 里每条 ``Q<id>:`` 行解析成结构化字段。
+
+    返回 ``{"q1": {"gain": 0.8817, "table11": ["5.764", ...], ...}, ...}``；
+    RESULT:/LIMITATION: 等非 Q 行忽略（表格装配只消费 Q 行）。
+    """
+    fields: dict[str, dict] = {}
+    for line in q_lines or []:
+        m = re.match(r"^Q(\d+):\s*(.+)$", line.strip())
+        if not m:
+            continue
+        q_fields = fields.setdefault(f"q{m.group(1)}", {})
+        for km in re.finditer(r"([A-Za-z_][\w]*)=(\[[^\]]*\]|[^\s]+)", m.group(2)):
+            q_fields[km.group(1)] = _parse_evidence_value(km.group(2))
+    return fields
+
+
+def _cell_text(value) -> str:
+    """单元格显示文本：整数型浮点去尾零；其余 str() 原样（字符串/浮点/整型）。"""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _format_number(x: float) -> str:
+    """合计列数值格式化：整数输出整数；小数去掉浮点噪声尾零。"""
+    if x.is_integer() and abs(x) < 1e15:
+        return str(int(x))
+    return format(x, ".10f").rstrip("0").rstrip(".")
+
+
+def _lookup_field(q_fields: dict, field_ref: str, table_id: str) -> list:
+    """解析 ``q1.table11`` 式字段引用 → evidence 值列表；失败抛 ValueError。"""
+    qid, _, key = field_ref.partition(".")
+    if not qid or not key:
+        raise ValueError(f"field 必须形如 <qid>.<字段名>（当前 {field_ref!r}）")
+    qf = q_fields.get(qid)
+    if qf is None:
+        raise ValueError(f"evidence 缺 {qid} 行（表 {table_id} 引用 {field_ref}）")
+    if key not in qf:
+        raise ValueError(f"evidence {qid} 行缺字段 {key}（表 {table_id} 引用 {field_ref}）")
+    value = qf[key]
+    if not isinstance(value, list):
+        raise ValueError(f"{field_ref} 的值必须是列表（当前 {type(value).__name__}）")
+    return value
+
+
+def _build_table_rows(table: dict, q_fields: dict) -> list[list[str]]:
+    """按表声明装配行：lead_columns（题面静态列）+ field（evidence 值，行主序填剩余列）。
+
+    行数 N 由 lead_columns 各列长度决定；无 lead_columns 时 N=1（单行汇总表）。
+    field 列表长度必须等于 ``N × 剩余列数``（``total: true`` 时剩余列去掉末列），
+    按行主序填充：第 i 行依次取第 ``i×R`` 到 ``(i+1)×R-1`` 个值填入剩余列。
+    这样表1.1（5 行 × 1 列）与表3.1（1 行 × 5 列）可用同一条规则。
+    ``total: true`` 时末列填本行数值格之和。返回已格式化的数据行（不含表头）。
+    """
+    table_id = table.get("id") or "?"
+    columns = table.get("columns")
+    if not isinstance(columns, list) or not columns or not all(
+        isinstance(c, str) for c in columns
+    ):
+        raise ValueError("columns 必须是非空字符串列表")
+
+    lead = table.get("lead_columns") or {}
+    if not isinstance(lead, dict):
+        raise ValueError("lead_columns 必须是对象")
+    lead_values: dict[str, list] = {}
+    for name, values in lead.items():
+        if not isinstance(values, list):
+            raise ValueError(f"lead_columns[{name!r}] 必须是列表")
+        lead_values[name] = values
+
+    field_ref = table.get("field")
+    field_values = _lookup_field(q_fields, field_ref, table_id) if field_ref else None
+    want_total = bool(table.get("total", False))
+
+    lead_lengths = [len(v) for v in lead_values.values()]
+    if lead_lengths:
+        n = lead_lengths[0]
+        if any(length != n for length in lead_lengths):
+            raise ValueError(f"lead_columns 各列行数不一致：{lead_lengths}")
+    elif field_values is not None:
+        n = 1  # 无 lead_columns → 单行汇总表（如表3.1）
+    else:
+        raise ValueError("表没有行数据来源（lead_columns/field 至少其一）")
+
+    remaining = [c for c in columns if c not in lead_values]
+    field_cols = remaining[:-1] if (want_total and remaining) else remaining
+    if field_values is None:
+        if len(field_cols) > 0 or (want_total and not remaining):
+            raise ValueError(
+                f"无 field，但剩余列未填：{remaining}（lead_columns 外需 field 或 total）"
+            )
+    else:
+        expected = n * len(field_cols)
+        if len(field_values) != expected:
+            raise ValueError(
+                f"field {field_ref} 有 {len(field_values)} 个值，"
+                f"期望 {n} 行 × {len(field_cols)} 列（剩余列{'去掉末列' if want_total else ''}）"
+                f"= {expected}"
+            )
+
+    rows: list[list[str]] = []
+    for i in range(n):
+        cells = {name: _cell_text(values[i]) for name, values in lead_values.items()}
+        if field_values is not None:
+            base = i * len(field_cols)
+            for j, col in enumerate(field_cols):
+                cells[col] = _cell_text(field_values[base + j])
+        row = [cells.get(col, "") for col in columns]
+        if want_total:
+            acc = 0.0
+            counted = False
+            for cell in row[:-1]:
+                try:
+                    acc += float(cell)
+                    counted = True
+                except (TypeError, ValueError):
+                    continue
+            row[-1] = _format_number(acc) if counted else ""
+        rows.append(row)
+    return rows
+
+
+def _write_table_files(out_dir: Path, table: dict, rows: list[list[str]]) -> tuple[Path, Path]:
+    """写 <table_id>.md（标题 + markdown 表）与 <table_id>.csv（UTF-8/LF）。"""
+    import csv
+
+    table_id = table["id"]
+    header = [_cell_text(c) for c in table["columns"]]
+
+    md_path = out_dir / f"{table_id}.md"
+    md_lines = [f"# {table['title']}", ""]
+    md_lines.append("| " + " | ".join(header) + " |")
+    md_lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    for row in rows:
+        md_lines.append("| " + " | ".join(row) + " |")
+    md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+
+    csv_path = out_dir / f"{table_id}.csv"
+    with open(csv_path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh, lineterminator="\n")
+        writer.writerow(header)
+        writer.writerows(rows)
+    return md_path, csv_path
+
+
+@reference_app.command("tables")
+def reference_tables(
+    problem: Path = typer.Option(
+        ..., "--problem", exists=True, readable=True, help="题目 spec JSON"
+    ),
+    evidence: Path = typer.Option(
+        ..., "--evidence", exists=True, readable=True,
+        help="reference run 产出的 evidence.json",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="表格输出目录（默认 runs/<problem_id>-reference/tables）"
+    ),
+):
+    """Q 行结构化字段 → 交付表（md/csv）：按题级 tables.json 声明装配，evidence 为唯一事实源。"""
+    # problem_id（与 reference add/run 同一取法）
+    try:
+        raw = json.loads(problem.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"题目文件不是有效的 UTF-8 JSON：{exc}", param_hint="--problem"
+        ) from exc
+    problem_id = raw.get("problem_id")
+    if not isinstance(problem_id, str) or not problem_id.strip():
+        problem_id = problem.parent.name
+    if not re.fullmatch(r"[A-Za-z0-9-]+", problem_id):
+        raise typer.BadParameter(
+            f"无法确定 problem_id（problem.json 无 problem_id 且目录名 {problem.parent.name!r} 非法）",
+            param_hint="--problem",
+        )
+
+    # evidence.json：取 result / q_lines
+    try:
+        ev = json.loads(evidence.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"evidence.json 不是有效的 UTF-8 JSON：{exc}", param_hint="--evidence"
+        ) from exc
+    if not isinstance(ev, dict):
+        raise typer.BadParameter("evidence.json 顶层必须是对象", param_hint="--evidence")
+    q_lines = ev.get("q_lines")
+    if not isinstance(q_lines, list):
+        raise typer.BadParameter("evidence.json 缺少 q_lines 列表", param_hint="--evidence")
+
+    q_fields = _parse_q_lines_to_fields(q_lines)
+    if not q_fields:
+        typer.echo("[FAIL] evidence 中没有 Q<id>: 行，无可装配数据", err=True)
+        raise typer.Exit(1)
+
+    # 表 spec：题级 tables.json 优先，缺省用内置 C 题默认
+    tables_path = Path("problems") / problem_id / "tables.json"
+    if tables_path.is_file():
+        try:
+            tables_spec = json.loads(tables_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise typer.BadParameter(f"{tables_path} 不是有效的 UTF-8 JSON：{exc}") from exc
+        spec_note = str(tables_path)
+    else:
+        tables_spec = _DEFAULT_TABLES_SPEC
+        spec_note = "内置 C 题默认 spec（problems/mcm51-c/tables.json 不存在）"
+    if not isinstance(tables_spec, dict) or not isinstance(tables_spec.get("tables"), list):
+        raise typer.BadParameter("表 spec 顶层必须是 {tables: [...]}")
+
+    if out is None:
+        out = Path("runs") / f"{problem_id}-reference" / "tables"
+    out.mkdir(parents=True, exist_ok=True)
+
+    typer.echo(f"[OK] reference tables：{problem_id}")
+    typer.echo(f"表 spec：{spec_note}")
+    for table in tables_spec["tables"]:
+        if not isinstance(table, dict):
+            raise typer.BadParameter(f"表定义必须是对象：{table!r}")
+        if not isinstance(table.get("id"), str) or not isinstance(table.get("title"), str):
+            raise typer.BadParameter(f"表定义缺 id/title（字符串）：{table!r}")
+        try:
+            rows = _build_table_rows(table, q_fields)
+        except ValueError as exc:
+            raise typer.BadParameter(f"表 {table.get('id')} 装配失败：{exc}") from exc
+        md_path, csv_path = _write_table_files(out, table, rows)
+        typer.echo(
+            f"[OK] {table['id']}  {table['title']}  {len(rows)} 行 → "
+            f"{md_path.resolve()}, {csv_path.resolve()}"
+        )
+
+    typer.echo("[提示] 表3.2（共同异常点清单）需参考实现额外输出清单数据，暂不装配")
+
+
 problem_app = typer.Typer(
     help="题目资产：导入/归档/总览（纯机械，智能内容按 brief-playbook 外置给人 + 外部强模型）",
     no_args_is_help=True,
