@@ -8,7 +8,7 @@
   ④ 未执行部分（接手者按序执行）；⑤ 当前工作区状态与紧急修复指引；⑥ 重要注意事项。
 - 事实基线：git `f70fc7e`（A2 设计落文档）；测试基线 708 passed / 4 skipped（2026-08-18，本次改动前）
 - 现状（T7 收口）：**`cli.py` 语法错误已修复**（`except` 补 `pass`、删除 `dialogue` 后孤立 `pass`）；
-  `nodes/blueprint_critic.py` 本轮已补传 `brief=state.brief`；前端透传、测试与 `docs/problems/mcm51-a/brief.json` 已落地；
+  `nodes/blueprint_critic.py` 本轮已补传 `brief=state.brief`；前端透传、测试与 `problems/mcm51-a/brief.json` 已落地；
   **全量回归已跑**：778 passed / 12 failed / 4 skipped（相对 708 基线 +70 passed）；12 失败为既有管线/coder/recovery/smoke，非 `test_brief.py`；**尚未 commit**（见第五节、第七节）。
 
 ---
@@ -113,7 +113,7 @@ MCM-51 锚杆题 r1–r11 实证：体系"知识闭包"（题面 + 附件摘要 
    - `brief dialogue --problem <spec> --out <path> [--assist/--no-assist] [--force]`：
      逐字段问答；`--assist` 时 LLM（`STRONG_MODEL`）按题面 + `build_data_summary_hint`
      数据摘要起草，人工确认/修改；`auto_fill_ids` 自动补全缺失 id；落盘前 `ModelingBrief.model_validate`。
-3. 沉淀路径：`docs/problems/<题号>/brief.json`（跨题复用，衔接知识沉淀通道）。
+3. 沉淀路径：`problems/<题号>/brief.json`（跨题复用，衔接知识沉淀通道）。
 
 ### 3.4 六处注入点（文件级）
 
@@ -193,7 +193,7 @@ MCM-51 锚杆题 r1–r11 实证：体系"知识闭包"（题面 + 附件摘要 
   - `frontend/app.js` / `index.html`：启动表单可选 brief.json；
   - `frontend/server.test.mjs`：透传场景测试；`npm.cmd test -- --run` 已跑（brief 相关场景绿）；
 - [x] **文档沉淀**：
-  - `docs/problems/mcm51-a/brief.json`：八字段已填写，`brief check` 可验；
+  - `problems/mcm51-a/brief.json`：八字段已填写，`brief check` 可验；
   - `docs/README.md`：索引条目已更新（文首质量基准段未动）；
   - `docs/2026-08-19-modeling-brief.md`（独立实施说明）：**可选**，本计划书已含主体设计；
 - [x] **新增测试**（全部 mock LLM，不联网）：
@@ -276,7 +276,7 @@ brief_app = typer.Typer(
   五组 prompt+node（analyst / blueprint_critic / model_critic / modeler / coder）、`prompts/writer_section.py`；
   其中 **`nodes/blueprint_critic.py` 为本轮才改**（补传 `brief=state.brief`），其余多为早前会话；
 - **新建（2）**：`src/math_agent/brief.py`、`src/math_agent/brief_dialogue.py`；
-- **未跟踪（??）**：本文档 `docs/10-ModelingBrief实施计划书.md`、`docs/problems/mcm51-a/brief.json`；
+- **未跟踪（??）**：本文档 `docs/10-ModelingBrief实施计划书.md`、`problems/mcm51-a/brief.json`；
 - **另有**：`frontend/` 四文件（brief 透传）、`tests/` 扩展与 `tests/test_brief.py` 新建；
 - `.tmp_brief_edits/`：T7 已删除（曾为 apply1–8 / debug1–4 临时脚本）；
 - 不修改原始题目附件，不使用 `scripts/repair_final_run.py`。
@@ -293,7 +293,7 @@ brief_app = typer.Typer(
 ## 八、验收标准（最终）
 
 - 全量 `pytest` 绿（708 + 新增）——**当前未达成**（778 passed / 12 failed / 4 skipped）；`npm.cmd test -- --run` brief 透传 4 场景绿，active-run 曾因 `runs/.beacon-active.json` 指向仓外 pytest 临时目录而 403；
-- `docs/problems/mcm51-a/brief.json` 八字段齐全，`math-agent brief check` 通过；
+- `problems/mcm51-a/brief.json` 八字段齐全，`math-agent brief check` 通过；
 - 门禁行为有测试覆盖：缺回应 → retry → 预算耗尽 stop；全回应 → 放行；无 brief → 原逻辑；
 - 无 brief 的既有测试零改动通过（向后兼容证明）；
 - 六处注入有参数化测试（有 brief 含 / 无 brief 不含）；
@@ -309,7 +309,7 @@ brief_app = typer.Typer(
 
 ### 9.1 原则 A：参考答案不可得假设（数值注入不是通用能力）
 
-- 本次 `docs/problems/mcm51-a/brief.json` 中的数值锚点（T_c 区间、233%、e_cr≈3.66、
+- 本次 `problems/mcm51-a/brief.json` 中的数值锚点（T_c 区间、233%、e_cr≈3.66、
   ±5% 容差、工况 A/B 参考数值等）来自**意外获得的官方参考答案**。真实使用中
   **不存在参考答案，也不存在"数值准确性范围需要注入"这类输入**。
 - 因此：把参考答案数值注入 brief / 对话 / prompt 的做法**不是体系的通用能力**。

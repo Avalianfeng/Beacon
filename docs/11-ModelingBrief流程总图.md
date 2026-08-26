@@ -20,7 +20,7 @@
 │        brief.json（八字段 · 39 条 id ✅ brief check [OK]）                  │
 │            │                                                              │
 │            ▼ 沉淀跨题复用                                                   │
-│   docs/problems/mcm51-a/brief.json（人工整理 · 官方标准 + 数值量化）          │
+│   problems/mcm51-a/brief.json（人工整理 · 官方标准 + 数值量化）          │
 └────────────┬───────────────────────────────────────────────────────────────┘
              │ --brief <path>（run / supervise / start · Web 高级选项透传）
              ▼
@@ -60,7 +60,7 @@ flowchart TB
     subgraph PRE["前置阶段 · 流水线之外 · 方向正确性只在这里确定"]
         D1["人 + AI 对话<br/>brief dialogue --assist<br/>LLM 逐字段起草 + 人工确认"] --> D2["brief.json<br/>八字段 · 39 条 id"]
         D3["brief init 模板 / brief check 校验"] --> D2
-        D2 --> D4["沉淀 docs/problems/mcm51-a/brief.json<br/>跨题复用"]
+        D2 --> D4["沉淀 problems/mcm51-a/brief.json<br/>跨题复用"]
     end
     D2 -->|"--brief 路径"| RUN
     subgraph RUN["启动 · run / supervise / start · Web 高级选项透传"]
@@ -99,7 +99,7 @@ flowchart TB
 
 ## 四、当前可走路径（2026-08-19）
 
-- **直接跑 MCM-51**：`--brief docs/problems/mcm51-a/brief.json`（现有 39 条版本，不依赖对话产物）；
+- **直接跑 MCM-51**：`--brief problems/mcm51-a/brief.json`（现有 39 条版本，不依赖对话产物）；
   对话产物另存为 `brief-from-dialogue.json` 作对比，跑通后 `brief check` 校验。
 - 对话产物的定位：**能力证据 + 人工兜底**，不是本轮 run 的注入版本；
   未来"更直接的接口"（Web 对话 UI / 评分标准结构化注入 reference_material）落地后，

@@ -588,7 +588,7 @@ def _warn_brief_problem_mismatch(brief_obj, spec: dict) -> None:
 def brief_init(
     problem: Path = typer.Option(..., exists=True, readable=True, help="题目 spec JSON"),
     out: Path = typer.Option(
-        Path("docs/problems/brief.json"), help="brief.json 输出路径"
+        Path("problems/brief.json"), help="brief.json 输出路径"
     ),
     force: bool = typer.Option(False, "--force", help="覆盖已存在的文件"),
 ):
@@ -614,7 +614,7 @@ def brief_init(
     typer.echo(f"题目：{title[:60]}")
     typer.echo("八字段结构与示例见 docs/10-ModelingBrief实施计划书.md；")
     typer.echo("填写后运行 `math-agent brief check --brief <path>` 校验；")
-    typer.echo("建议沉淀到 docs/problems/<题号>/brief.json 跨题复用。")
+    typer.echo("建议沉淀到 problems/<题号>/brief.json 跨题复用。")
 
 
 @brief_app.command("check")
@@ -644,7 +644,7 @@ def brief_check(
 def brief_dialogue(
     problem: Path = typer.Option(..., exists=True, readable=True, help="题目 spec JSON"),
     out: Path = typer.Option(
-        Path("docs/problems/brief.json"), help="brief.json 输出路径"
+        Path("problems/brief.json"), help="brief.json 输出路径"
     ),
     assist: bool = typer.Option(
         True, "--assist/--no-assist",

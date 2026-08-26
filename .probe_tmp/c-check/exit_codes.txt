@@ -1,0 +1,5 @@
+hit1_brief exit=0
+hit2_word exit=0
+clean_skill exit=0
+strict_brief exit=1
+strict_word exit=1

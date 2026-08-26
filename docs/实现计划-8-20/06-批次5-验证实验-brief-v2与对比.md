@@ -13,7 +13,7 @@
 
 - 前置：批次 0（M1/M5/M6 + 成本遥测 v0）+ 批次 1（M3）+ 批次 2（M4）+ 批次 4 模板。
 - 运行模式：**全自动**（D4 决策，2026-08-20）——不加人工介入检查点，保持无人工自动跑通以做干净对照；检查点 2（首个数值证据后检查）先以 M3 确定性反证实现，人工介入版本延后到盲测条件④（16 阶段 1）。
-- 命令：`math-agent supervise --problem <MCM-51 spec> --out runs/51mcm-a-brief-v2 --brief docs/problems/mcm51-a/brief.json --thread default`（**新目录，禁止 recover 旧 run**）。
+- 命令：`math-agent supervise --problem <MCM-51 spec> --out runs/51mcm-a-brief-v2 --brief problems/mcm51-a/brief.json --thread default`（**新目录，禁止 recover 旧 run**）。
 - 验收清单（对照 12 §4.2 + 本批次新增）：
   1. 管道：`brief.json` 副本 + sha256 对上；coverage 全 followed（40 条，含 M6 新增）；
   2. **红线确定性校验（M3）**：`gate_diagnostics.json` redline 段为空；2.2 不再出现 K_avg 整体用法（12 §7 硬伤 1 闭环）；

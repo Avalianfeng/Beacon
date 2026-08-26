@@ -2,7 +2,7 @@
 
 定位（与《体系流程优化报告》A2 一致）：
 - brief 是 run 的可选输入（``run --brief brief.json``），在流水线之外由人机对话产生，
-  可沉淀为 ``docs/problems/<题号>/brief.json`` 跨题复用；
+  可沉淀为 ``problems/<题号>/brief.json`` 跨题复用；
 - 流水线内**不评审 brief 的方向正确性**（方向只在前置对话中定，方向错了的反馈回路
   是回到前置对话修订 brief 重跑），只做两件事：
   1. 把 brief 作为约束注入各 prompt（analyst / blueprint_critic / model_critic /

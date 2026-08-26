@@ -20,7 +20,7 @@
 |---|---|---|---|
 | 任务开始前 | CLI `brief init/check/dialogue` 在主图之外；`run/supervise --brief` 启动时写入 `state.brief` | 未做带 `--brief` 的正式 run | **管道就绪，未实跑** |
 | 人 + AI 对话产出 | CLI `brief dialogue --assist`：每字段 LLM 起草 + 人工确认；失败可手填 | **从未**用 MCM-51 走完一轮对话 | **能力有，无使用证据** |
-| 八字段 `brief.json` | `ModelingBrief` schema + `docs/problems/mcm51-a/brief.json`（40 条 id，`brief check` [OK]；M6 增 `1.2-reg-coef`） | 文件由人按迭代计划填写，不是对话产物 | **内容有，来源不是对话** |
+| 八字段 `brief.json` | `ModelingBrief` schema + `problems/mcm51-a/brief.json`（40 条 id，`brief check` [OK]；M6 增 `1.2-reg-coef`） | 文件由人按迭代计划填写，不是对话产物 | **内容有，来源不是对话** |
 | 注入流水线 | 六处：analyst / blueprint_critic / model_critic / modeler / coder / writer_section；`run_manifest.brief_sha256`；`out/brief.json` 副本 | 仅单测 mock prompt 含块 | **接线已测，流水线未测** |
 | 在源头杜绝方向性错误 | `brief_coverage` 只校验「analyst 是否逐条回应」，**不评判方向对错**；方向错了只能改 brief 重跑 | 无论文/代码对照 1.2 变点检测等 | **防忽略 ≠ 防方向错；后者未验证** |
 | Web 对话 | 本迭代明确只做文件透传（`briefPath` → `--brief`） | 无对话 UI | **按决策后置** |
@@ -43,7 +43,7 @@
 已经足够、不必再调研就能动手的：
 
 - 方向对不对：见 [iteration-plan](08-MCM51整改迭代计划.md) 第三、四节（变点检测、F_bond 钻孔直径、调心垫圈 233%、偏心压陷、围岩分级）。
-- 注入什么约束：见 `docs/problems/mcm51-a/brief.json` 的 39 个稳定 id。
+- 注入什么约束：见 `problems/mcm51-a/brief.json` 的 39 个稳定 id。
 - 流水线怎么吃 brief：见计划书第三、四节 + 本仓库未提交的 `brief.py` / 六处 prompt。
 
 还必须补证据、否则「路线更迭」会和 r11 一样盲改：
@@ -82,11 +82,11 @@
 ```
 
 通过标准：能逐字段出草稿或提示起草失败后手填；落盘后再 `brief check`。  
-**失败不算 A2 管道失败**（无密钥/网关时 `draft_field` 返回 None 是设计）。失败则继续用已有 `docs/problems/mcm51-a/brief.json`。
+**失败不算 A2 管道失败**（无密钥/网关时 `draft_field` 返回 None 是设计）。失败则继续用已有 `problems/mcm51-a/brief.json`。
 
 ### 3.4 Web 透传（不要求对话 UI）
 
-高级选项填 `docs/problems/mcm51-a/brief.json`，启动后 `run.log` / `run.command` 含 `--brief` 与经 `safeProjectPath` 的路径。  
+高级选项填 `problems/mcm51-a/brief.json`，启动后 `run.log` / `run.command` 含 `--brief` 与经 `safeProjectPath` 的路径。  
 `npm.cmd test -- --run`：brief 四场景应绿；若 `GET /api/active-run` 403，先看 `runs/.beacon-active.json` 是否指向仓外 pytest 临时目录（环境脏，与 brief 无关）。
 
 ---
@@ -100,7 +100,7 @@
 新目录，禁止 recover 旧 `51mcm-a-*`：
 
 ```text
-math-agent supervise --problem <MCM-51 spec> --out runs/51mcm-a-brief-v1 --brief docs/problems/mcm51-a/brief.json --thread default
+math-agent supervise --problem <MCM-51 spec> --out runs/51mcm-a-brief-v1 --brief problems/mcm51-a/brief.json --thread default
 ```
 
 （Web 等价：同一 `--out` + 高级选项 brief 路径。）
