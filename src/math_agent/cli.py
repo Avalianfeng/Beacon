@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -378,6 +379,231 @@ brief_app = typer.Typer(
     help="建模预备（Modeling Brief）：人机协同前置阶段，生成/校验 brief.json（不进主图）"
 )
 app.add_typer(brief_app, name="brief")
+
+
+reference_app = typer.Typer(
+    help="参考实现登记：轨 B 求解脚本 → 题参考实现"
+)
+app.add_typer(reference_app, name="reference")
+
+
+@reference_app.command("add")
+def reference_add(
+    problem: Path = typer.Option(
+        ..., "--problem", exists=True, readable=True, help="题目 spec JSON"
+    ),
+    solver: Path = typer.Option(
+        ..., "--solver", exists=True, file_okay=False, help="求解脚本目录"
+    ),
+    entry: str = typer.Option(
+        ..., "--entry", help="入口文件相对 solver 目录的路径（如 _entry.py）"
+    ),
+    force: bool = typer.Option(False, "--force", help="覆盖已有 reference 目录"),
+):
+    """登记参考实现：把 solver 目录的 *.py 归档为 problems/<id>/source/reference/ 并更新清单。"""
+    import shutil
+
+    # 校验 spec（title/background/questions/data_dir 等）；problem_id 与 source 从原始 JSON 另取
+    _read_problem_spec(problem)
+    try:
+        raw = json.loads(problem.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"题目文件不是有效的 UTF-8 JSON：{exc}", param_hint="--problem"
+        ) from exc
+
+    problem_id = raw.get("problem_id")
+    if not isinstance(problem_id, str) or not problem_id.strip():
+        problem_id = problem.parent.name
+    if not re.fullmatch(r"[A-Za-z0-9-]+", problem_id):
+        raise typer.BadParameter(
+            f"无法确定 problem_id（problem.json 无 problem_id 且目录名 {problem.parent.name!r} 非法）",
+            param_hint="--problem",
+        )
+
+    target = Path("problems") / problem_id / "source" / "reference"
+    if target.exists() and not force:
+        raise typer.BadParameter(
+            f"problems/{problem_id}/source/reference 已存在；换 solver 目录或 --force 覆盖"
+        )
+    target.mkdir(parents=True, exist_ok=True)
+    if force:
+        for old in target.iterdir():
+            if old.is_file() and old.suffix == ".py":
+                old.unlink()
+
+    py_files = sorted(
+        (f for f in solver.iterdir() if f.is_file() and f.suffix == ".py"),
+        key=lambda p: p.name,
+    )
+    if not py_files:
+        raise typer.BadParameter("solver 目录下没有 *.py 文件", param_hint="--solver")
+
+    ref_files = []
+    for f in py_files:
+        dest = target / f.name
+        shutil.copyfile(f, dest)
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+        ref_files.append({"path": f"reference/{f.name}", "sha256": digest})
+
+    source = raw.get("source")
+    if not isinstance(source, dict):
+        source = {}
+        raw["source"] = source
+    source_files = source.get("source_files")
+    if not isinstance(source_files, list):
+        source_files = []
+        source["source_files"] = source_files
+    source_files[:] = [
+        item for item in source_files
+        if not (
+            isinstance(item, dict)
+            and str(item.get("path", "")).startswith("reference/")
+        )
+    ]
+    source_files.extend(ref_files)
+    problem.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    ref_path = Path("problems") / problem_id / "reference.json"
+    ref_path.write_text(
+        json.dumps(
+            {
+                "entry": entry,
+                "files": ref_files,
+                "added_at": datetime.now(timezone.utc).isoformat(),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    typer.echo(f"[OK] reference 登记完成：problems/{problem_id}")
+    typer.echo(f"入口：{entry}")
+    typer.echo(f"文件数：{len(ref_files)}")
+    for item in ref_files:
+        typer.echo(f"  {item['path']}  sha256={item['sha256'][:12]}")
+
+
+@reference_app.command("run")
+def reference_run(
+    problem: Path = typer.Option(
+        ..., "--problem", exists=True, readable=True, help="题目 spec JSON"
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="evidence 输出目录（默认 runs/<problem_id>-reference）"
+    ),
+):
+    """运行参考实现入口，提取 RESULT/Q 行/PNG 并写 evidence.json。"""
+    from math_agent.tools.runner import (
+        extract_numeric_results,
+        run_python,
+        structured_evidence_lines,
+    )
+
+    spec = _read_problem_spec(problem)
+    try:
+        raw = json.loads(problem.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"题目文件不是有效的 UTF-8 JSON：{exc}", param_hint="--problem"
+        ) from exc
+
+    problem_id = raw.get("problem_id")
+    if not isinstance(problem_id, str) or not problem_id.strip():
+        problem_id = problem.parent.name
+    if not re.fullmatch(r"[A-Za-z0-9-]+", problem_id):
+        raise typer.BadParameter(
+            f"无法确定 problem_id（problem.json 无 problem_id 且目录名 {problem.parent.name!r} 非法）",
+            param_hint="--problem",
+        )
+
+    ref_path = Path("problems") / problem_id / "reference.json"
+    entry = None
+    if ref_path.is_file():
+        try:
+            ref = json.loads(ref_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            ref = {}
+        candidate = ref.get("entry") if isinstance(ref, dict) else None
+        if isinstance(candidate, str) and candidate.strip():
+            entry = candidate.strip()
+    if entry is None:
+        typer.echo("未登记参考实现，先 `reference add`", err=True)
+        raise typer.Exit(1)
+
+    data_dir = spec.get("data_dir") or ""
+    data_dir_posix = Path(data_dir).as_posix() if data_dir else "."
+    wrapper_code = (
+        "import matplotlib; matplotlib.use('Agg')\n"
+        "from pathlib import Path\n"
+        f"data_dir = Path({data_dir_posix!r})\n"
+        f"exec((data_dir / 'reference' / {entry!r}).read_text(encoding='utf-8'), "
+        "{'data_dir': data_dir})\n"
+    )
+
+    expected_input_paths: list[Path] = []
+    for df in spec.get("data_files", []):
+        if not isinstance(df, dict):
+            continue
+        rel = (df.get("path") or df.get("filename") or "").strip()
+        if not rel:
+            continue
+        path = Path(rel)
+        if not path.is_absolute():
+            path = (Path(data_dir) / path) if data_dir else path
+        expected_input_paths.append(path.resolve())
+
+    if out is None:
+        out = Path("runs") / f"{problem_id}-reference"
+    out.mkdir(parents=True, exist_ok=True)
+
+    start = time.monotonic()
+    result = run_python(
+        wrapper_code,
+        workdir=out,
+        timeout=120,
+        expected_input_paths=expected_input_paths,
+    )
+    elapsed = time.monotonic() - start
+
+    if not result.success:
+        typer.echo(f"[FAIL] 参考实现运行失败：{(result.stderr or '')[-800:]}", err=True)
+        raise typer.Exit(1)
+
+    result_map = extract_numeric_results(result.stdout)
+    q_lines = structured_evidence_lines(result.stdout)
+    png = sorted(
+        Path(a).name
+        for a in result.artifact_paths
+        if Path(a).name.lower().endswith(".png")
+    )
+
+    evidence = {
+        "problem_id": problem_id,
+        "entry": f"reference/{entry}",
+        "result": result_map,
+        "q_lines": q_lines,
+        "artifacts": {"png": png},
+        "run": {
+            "success": result.success,
+            "elapsed_s": round(elapsed, 1),
+            "stdout_chars": len(result.stdout or ""),
+        },
+    }
+    evidence_path = out / "evidence.json"
+    evidence_path.write_text(
+        json.dumps(evidence, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    ours_count = len(result_map.get("ours", {}))
+    q_count = sum(1 for line in q_lines if re.match(r"^Q\d", line))
+    typer.echo(f"[OK] reference 运行完成：{problem_id}")
+    typer.echo(f"RESULT 指标数（ours）：{ours_count}")
+    typer.echo(f"Q 行数：{q_count}")
+    typer.echo(f"PNG 数：{len(png)}")
+    typer.echo(f"evidence.json：{evidence_path.resolve()}")
 
 
 problem_app = typer.Typer(
