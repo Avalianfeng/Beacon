@@ -62,12 +62,12 @@
     {
       "id": "formula-solver",
       "question_id": "",
-      "note": "主方案必须采用附件 reference_solver.py（人工供给、已本地验证，2026-08-26 锚点：Q1增益0.8817/Q2节点8148·9573/Q3共同异常246/Q4增量RMSE0.4692/Q5增量RMSE0.6929）；生成代码 exec 该文件复用其全部求解逻辑，只做输出透传与绘图适配，禁止重写变点/鲁棒回归/分阶段预测核心。若脱离参考实现自写，必须纯 numpy/scipy 实现且遵守本 brief 全部口径，并承担从零实现 5 问的风险。"
+      "note": "主方案必须采用附件 reference/ 目录（入口 reference/_entry.py，人工供给、已本地验证，2026-08-26 锚点：Q1增益0.8817/Q2节点8148·9573/Q3共同异常246/Q4增量RMSE0.4692/Q5增量RMSE0.6929）；生成代码 exec 入口文件复用其全部求解逻辑，只做输出透传与绘图适配，禁止重写变点/鲁棒回归/分阶段预测核心。若脱离参考实现自写，必须纯 numpy/scipy 实现且遵守本 brief 全部口径，并承担从零实现 5 问的风险。"
     },
     {
       "id": "formula-reference",
       "question_id": "",
-      "note": "参考实现=data_dir/reference_solver.py（data_dir 为数据提示给出的绝对路径）。包装脚本四步：① import matplotlib; matplotlib.use('Agg')；② data_dir = Path(r'<绝对路径>')；③ DATA_FILES = ['附件1：两组位移时序数据-问题1.xlsx','附件2：位移时序数据-问题2.xlsx','附件3：监测数据（训练集与实验集）-问题3.xlsx','附件4：监测数据（训练集与实验集）-问题4.xlsx','附件5：监测数据-问题5.xlsx']（血缘门禁要求真实附件名出现在 wrapper 源码）；④ exec((data_dir/'reference_solver.py').read_text(encoding='utf-8'))。参考实现顶层即执行全部 Q1–Q5，已输出 RESULT 行+各问 Q<id> 行+13 张 PNG（落 cwd）。exec 后原样透传 stdout，禁止重解析/改写 RESULT、禁止自画（参考已产出 PNG）。RESULT 字段顺序：baseline=ours q1_gain q1_rmse q2_node1 q2_node2 q3_common q4_rmse q5_rmse。"
+      "note": "参考实现=data_dir/reference/_entry.py（data_dir 为数据提示给出的绝对路径；入口从 reference/ 目录按序 exec common.py→q1→q2→q3→q4→q5.py，共享命名空间）。包装脚本四步：① import matplotlib; matplotlib.use('Agg')；② data_dir = Path(r'<绝对路径>')；③ DATA_FILES = ['附件1：两组位移时序数据-问题1.xlsx','附件2：位移时序数据-问题2.xlsx','附件3：监测数据（训练集与实验集）-问题3.xlsx','附件4：监测数据（训练集与实验集）-问题4.xlsx','附件5：监测数据-问题5.xlsx']（血缘门禁要求真实附件名出现在 wrapper 源码）；④ exec((data_dir/'reference/_entry.py').read_text(encoding='utf-8'))。入口 exec 全部模块后打印唯一 RESULT 行+各问 Q<id> 行+13 张 PNG（落 cwd）。exec 后原样透传 stdout，禁止重解析/改写 RESULT、禁止自画（参考已产出 PNG）。RESULT 字段顺序：baseline=ours q1_gain q1_rmse q2_node1 q2_node2 q3_common q4_rmse q5_rmse。"
     }
   ],
   "required_discussions": [

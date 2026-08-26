@@ -58,8 +58,32 @@
         "sha256": "35d315e97e19688a8a5f284dbbee044249428989ce9913c6c8a0b495f1aacb71"
       },
       {
-        "path": "reference_solver.py",
-        "sha256": "8f635ae2a803a997b0ed03d346715eae56150a152031c2b1ea85d361f638c2ef"
+        "path": "reference/_entry.py",
+        "sha256": "603329f1505292bb27fb57cf1d1bafbfca342ccf56e9ee35a88e5ceec246c182"
+      },
+      {
+        "path": "reference/common.py",
+        "sha256": "cde72f53de63e6c82103bc47026396f0d47f3c6a0a2638a50f82814e3574fba3"
+      },
+      {
+        "path": "reference/q1.py",
+        "sha256": "d93fa748bdb7870b15c15436a6ceb5c2e504e72eab1559b4931d678537805cbe"
+      },
+      {
+        "path": "reference/q2.py",
+        "sha256": "a884e3939dd803fffc123c18586c825703ee62473cd81ac2cf1ccc1b9064d650"
+      },
+      {
+        "path": "reference/q3.py",
+        "sha256": "57f7cd65864395e1252d4bf3c664e3cff1a887d73b35909c1e38669249ee0087"
+      },
+      {
+        "path": "reference/q4.py",
+        "sha256": "b5459f5e69457582dbef02bb601790c7bc0f368e2cb45c3881362cbfe9973d14"
+      },
+      {
+        "path": "reference/q5.py",
+        "sha256": "5c964e05ca56b235a94913e0a3f87499d3d23711ad2dadec128669ed4ca80abc"
       }
     ],
     "imported_at": "2026-08-25T20:20:53.336401+00:00",

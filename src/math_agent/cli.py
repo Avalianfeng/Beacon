@@ -9,6 +9,7 @@ bench   : 真跑历年题回归基准（live 模式）
 """
 from __future__ import annotations
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -719,6 +720,10 @@ def brief_dialogue(
     typer.echo("运行：math-agent run --problem <spec> --brief <path>")
 
 
+# 可选 ML 库清单：dry-run 预检时探测；缺库只 WARN 不阻断（方向阶段勿选依赖它们的方法）。
+_OPTIONAL_ML_LIBS = ["sklearn", "ruptures", "statsmodels", "xgboost", "lightgbm", "pywt", "shap"]
+
+
 def _dry_run_preflight(
     problem_path: Path, spec: dict, brief_path: Path | None,
     brief_obj, out: Path, thread: str, force: bool,
@@ -768,6 +773,14 @@ def _dry_run_preflight(
             typer.echo(f"  [FAIL] {msg}", err=True)
         typer.echo(f"预检未通过（{len(problems_found)} 项），禁止启动。", err=True)
         raise typer.Exit(1)
+
+    # 可选库探测：只 WARN 不阻断。缺库时求解/敏感性代码只能用 numpy/scipy 替代。
+    for lib in _OPTIONAL_ML_LIBS:
+        if importlib.util.find_spec(lib) is not None:
+            typer.echo(f"  [OK] lib {lib} 可用")
+        else:
+            typer.echo(f"  [WARN] 缺库 {lib}——求解/敏感性代码只能用 numpy/scipy 替代（方向阶段勿选依赖它的方法）")
+
     typer.echo("  [OK] 全部通过，可启动 run（烧 token 前请确认预算）。")
 
 
