@@ -6,7 +6,12 @@ import json
 from pathlib import Path
 
 _CHECK_NAMES = frozenset(
-    {"check_paper_numbers", "check_assumption_claims", "check_gap_trigger"}
+    {
+        "check_paper_numbers",
+        "check_assumption_claims",
+        "check_gap_trigger",
+        "check_l4_gates",
+    }
 )
 
 
@@ -15,7 +20,7 @@ def _scripts_dir() -> Path:
 
 
 def load_check_module(name: str):
-    """name in {'check_paper_numbers','check_assumption_claims','check_gap_trigger'}
+    """name in {'check_paper_numbers','check_assumption_claims','check_gap_trigger','check_l4_gates'}
 
     Load scripts/<name>.py via importlib.util.spec_from_file_location.
     """
@@ -49,7 +54,7 @@ def run_review(
     strict: bool = False,
     traceability: Path | None = None,
 ) -> dict:
-    """Run the three checkers that have inputs."""
+    """Run the checkers that have inputs."""
     if paper is None and not json_evidence and traceability is None:
         return {
             "ok": False,
@@ -80,6 +85,12 @@ def run_review(
         if strict:
             argv.append("--strict")
         tools.append({"name": "check_assumption_claims", "exit_code": mod.main(argv)})
+
+        mod = load_check_module("check_l4_gates")
+        argv = ["--paper", str(paper)]
+        if strict:
+            argv.append("--strict")
+        tools.append({"name": "check_l4_gates", "exit_code": mod.main(argv)})
 
     if json_evidence:
         mod = load_check_module("check_gap_trigger")

@@ -28,6 +28,9 @@ def test_run_review_paper_and_evidence():
     names = {t["name"] for t in result["tools"]}
     assert "check_paper_numbers" in names
     assert "check_assumption_claims" in names
+    assert "check_l4_gates" in names
+    l4 = next(t for t in result["tools"] if t["name"] == "check_l4_gates")
+    assert l4["exit_code"] == 0
     for tool in result["tools"]:
         assert set(tool.keys()) == {"name", "exit_code"}
         assert tool["exit_code"] in (0, 1, 2)

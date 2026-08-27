@@ -778,6 +778,7 @@ def test_review_check_cli_writes_report(tmp_path):
     payload = json.loads(report.read_text(encoding="utf-8"))
     names = {t["name"] for t in payload["tools"]}
     assert "check_paper_numbers" in names
+    assert "check_l4_gates" in names
 
 
 def test_reference_verify_cli_ok_and_fail(tmp_path, monkeypatch):

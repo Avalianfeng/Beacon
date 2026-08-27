@@ -178,4 +178,11 @@ E1/E2（calibration + 偏差报告）/ F（重定位 agent 侧）/ G（双轨约
 - B04：`brief.problem_id == spec.problem_id` 短路，mathorcup16-c 中文 title 不再误报。
 - 验收：重装 `runs/mathorcup16-c-p3/paper.md`，无边坡/q4/q5/问题四；pytest 83 passed（P4 相关）；`problem stage` 仍 S0–S8。
 
+## 2026-08-27 · P5 L4 闸门（D-006）
+
+- 五一 C 诊断 §6 规则 1–4 进操作面：`scripts/check_l4_gates.py`（G1 敏感性回流 / G2 y0 / G3 异常操作定义；G4 解释失败仅 WARN）。
+- `review-check` 有 `--paper` 时增挂；不改前三脚本；不进 `graph.py`。
+- C 类必答项加 Q5；契约 S1 建议概览图、S2 知识卡片进 `background_knowledge`、S5 L4 纪律、S7 第四脚本。
+- 规则 5（方法名≠对错）不机械化。T-02/T-03/T-11/T-20 仍挂。
+
 

@@ -1793,7 +1793,7 @@ def review_check(
     ),
     as_json: bool = typer.Option(False, "--json", help="向 stdout 打印 JSON 报告"),
 ):
-    """S7 包装 check_paper_numbers / check_assumption_claims / check_gap_trigger。"""
+    """S7 包装 check_paper_numbers / check_assumption_claims / check_gap_trigger / check_l4_gates。"""
     payload = run_review(
         paper=paper,
         evidence=list(evidence) or None,
