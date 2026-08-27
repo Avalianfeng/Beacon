@@ -711,3 +711,83 @@ def test_brief_mismatch_silent_on_empty_pid(capsys):
         _Brief(), {"title": "2026 51MCM Problem A", "questions": []}
     )
     assert capsys.readouterr().err == ""
+
+
+def test_root_help_lists_stage_markers():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0, result.output
+    for marker in ("S0", "S3", "S6", "S7", "S9"):
+        assert marker in result.output
+    assert "review-check" in result.output
+    assert "supervise" in result.output
+
+
+def test_review_check_cli_writes_report(tmp_path):
+    from pathlib import Path
+
+    fixtures = Path(__file__).parent / "fixtures" / "check_numbers"
+    paper = fixtures / "paper_clean.md"
+    evidence = fixtures / "evidence_a.txt"
+    report = tmp_path / "review-report.json"
+    result = runner.invoke(app, [
+        "review-check",
+        "--paper", str(paper),
+        "--evidence", str(evidence),
+        "--out", str(report),
+        "--json",
+    ])
+    assert result.exit_code == 0, result.output
+    assert report.is_file()
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    names = {t["name"] for t in payload["tools"]}
+    assert "check_paper_numbers" in names
+
+
+def test_reference_verify_cli_ok_and_fail(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    pid = "v1"
+    spec_dir = tmp_path / "problems" / pid
+    spec_dir.mkdir(parents=True)
+    spec = {
+        "problem_id": pid,
+        "title": "t",
+        "background": "b",
+        "questions": ["q"],
+        "data_files": [],
+        "data_dir": "",
+    }
+    spec_path = spec_dir / "problem.json"
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    ev_dir = tmp_path / "runs" / f"{pid}-reference"
+    ev_dir.mkdir(parents=True)
+    evidence = {
+        "problem_id": pid,
+        "entry": "reference/_entry.py",
+        "result": {"ours": {"gain": 0.88}},
+        "q_lines": [],
+        "run": {"success": True, "elapsed_s": 1.0, "stdout_chars": 3},
+    }
+    ev_path = ev_dir / "evidence.json"
+    ev_path.write_text(json.dumps(evidence), encoding="utf-8")
+    pkg = tmp_path / "pkg.json"
+    result = runner.invoke(app, [
+        "reference", "verify",
+        "--problem", str(spec_path),
+        "--evidence", str(ev_path),
+        "--out", str(pkg),
+    ])
+    assert result.exit_code == 0, result.output
+    assert pkg.is_file()
+    body = json.loads(pkg.read_text(encoding="utf-8"))
+    assert body["version"] == 1
+    assert all(c["pass"] for c in body["checks"])
+
+    evidence["result"] = {"x": float("nan")}
+    ev_path.write_text(json.dumps(evidence), encoding="utf-8")
+    result_fail = runner.invoke(app, [
+        "reference", "verify",
+        "--problem", str(spec_path),
+        "--evidence", str(ev_path),
+        "--out", str(tmp_path / "pkg-fail.json"),
+    ])
+    assert result_fail.exit_code == 1

@@ -9,7 +9,6 @@ bench   : 真跑历年题回归基准（live 模式）
 """
 from __future__ import annotations
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -48,9 +47,19 @@ from math_agent.tracing import (
 )
 from math_agent import pause_control
 from math_agent.pause_control import PauseRequested
+from math_agent.ops_help import GROUP_HELP, ROOT_HELP
+from math_agent.ops_preflight import run_preflight, write_preflight_json
+from math_agent.ops_review import run_review, write_review_report
+from math_agent.ops_stage import format_stage_text, infer_stage
+from math_agent.ops_verify import (
+    build_package,
+    load_evidence,
+    package_ok,
+    write_package,
+)
 
 
-app = typer.Typer(help="Math modeling multi-agent system.")
+app = typer.Typer(help=ROOT_HELP, no_args_is_help=True)
 
 
 def _field(obj, key: str, default=None):
@@ -270,6 +279,25 @@ def _read_problem_spec(problem: Path) -> dict:
             "data_files": data_files, "data_dir": data_dir}
 
 
+def _cli_problem_id(problem: Path) -> str:
+    """从 problem.json 的 problem_id 或父目录名取题号。"""
+    try:
+        raw = json.loads(problem.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"题目文件不是有效的 UTF-8 JSON：{exc}", param_hint="--problem"
+        ) from exc
+    problem_id = raw.get("problem_id") if isinstance(raw, dict) else None
+    if not isinstance(problem_id, str) or not problem_id.strip():
+        problem_id = problem.parent.name
+    if not re.fullmatch(r"[A-Za-z0-9-]+", problem_id):
+        raise typer.BadParameter(
+            f"无法确定 problem_id（problem.json 无 problem_id 且目录名 {problem.parent.name!r} 非法）",
+            param_hint="--problem",
+        )
+    return problem_id
+
+
 def _problem_fingerprint(spec: dict) -> str:
     canonical = json.dumps(spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -376,13 +404,13 @@ def _prepare_run_output(out: Path, thread: str, force: bool) -> None:
 
 
 brief_app = typer.Typer(
-    help="建模预备（Modeling Brief）：人机协同前置阶段，生成/校验 brief.json（不进主图）"
+    help=GROUP_HELP["brief"],
 )
 app.add_typer(brief_app, name="brief")
 
 
 reference_app = typer.Typer(
-    help="参考实现登记：轨 B 求解脚本 → 题参考实现"
+    help=GROUP_HELP["reference"],
 )
 app.add_typer(reference_app, name="reference")
 
@@ -1476,10 +1504,121 @@ def reference_paper(
         "[提示] 数字红线校验：python scripts/check_paper_numbers.py "
         f"--paper {out} --evidence {evidence}"
     )
+    typer.echo("[提示] 或：math-agent review check --paper <md> --evidence <证据>")
+
+
+@reference_app.command("verify")
+def reference_verify(
+    problem: Path = typer.Option(
+        ..., "--problem", exists=True, readable=True, help="题目 spec JSON"
+    ),
+    evidence: Path | None = typer.Option(
+        None, "--evidence", exists=True, readable=True,
+        help="reference run 的 evidence.json（默认 runs/<id>-reference/evidence.json）",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="evidence-package.json 输出路径（默认 problems/<id>/evidence-package.json）",
+    ),
+):
+    """S5 机械验证 v0：读 evidence.json，检查 run 成功 / 无 nan-inf / 有 result。"""
+    _read_problem_spec(problem)
+    problem_id = _cli_problem_id(problem)
+    if evidence is None:
+        evidence = Path("runs") / f"{problem_id}-reference" / "evidence.json"
+        if not evidence.is_file():
+            typer.echo(f"[FAIL] 未找到 evidence.json：{evidence}（先 `reference run` 或传 --evidence）", err=True)
+            raise typer.Exit(1)
+    try:
+        ev = load_evidence(evidence)
+    except ValueError as exc:
+        typer.echo(f"[FAIL] {exc}", err=True)
+        raise typer.Exit(1)
+
+    ref_meta: dict = {}
+    ref_json = Path("problems") / problem_id / "reference.json"
+    if ref_json.is_file():
+        try:
+            loaded = json.loads(ref_json.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                ref_meta = loaded
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            ref_meta = {}
+    entry = str(ref_meta.get("entry") or ev.get("entry") or "").strip()
+    solver_path = f"source/reference/{Path(entry).name}" if entry else "source/reference"
+    solver_sha = ""
+    for item in ref_meta.get("files") or []:
+        if not isinstance(item, dict):
+            continue
+        item_path = str(item.get("path") or "")
+        if entry and item_path.endswith(Path(entry).name):
+            solver_path = item_path if item_path.startswith("source/") else f"source/{item_path}"
+            solver_sha = str(item.get("sha256") or "")
+            break
+    if not solver_sha and entry:
+        entry_file = Path("problems") / problem_id / "source" / "reference" / Path(entry).name
+        if entry_file.is_file():
+            solver_sha = hashlib.sha256(entry_file.read_bytes()).hexdigest()
+            solver_path = f"source/reference/{entry_file.name}"
+
+    package = build_package(
+        problem_id=problem_id,
+        solver_path=solver_path,
+        solver_sha256=solver_sha,
+        evidence_path=str(evidence),
+        evidence=ev,
+    )
+    dest = out if out is not None else Path("problems") / problem_id / "evidence-package.json"
+    write_package(package, dest)
+    ok = package_ok(package)
+    typer.echo(json.dumps(package, ensure_ascii=False, indent=2))
+    typer.echo(f"evidence-package: {dest}")
+    if not ok:
+        raise typer.Exit(1)
+
+
+@app.command("review-check", help=GROUP_HELP["review"])
+def review_check(
+    paper: Path | None = typer.Option(
+        None, "--paper", exists=True, readable=True, help="论文 md",
+    ),
+    evidence: list[Path] = typer.Option(
+        [], "--evidence", help="数字溯源证据文件（可多次）",
+    ),
+    gap_json: list[Path] = typer.Option(
+        [], "--gap-json", help="check_gap_trigger 的证据 json（可多次；可选）",
+    ),
+    traceability: Path | None = typer.Option(
+        None, "--traceability", exists=True, readable=True, help="附录 A 溯源表 md",
+    ),
+    strict: bool = typer.Option(False, "--strict", help="脚本 --strict：有问题则退出码 1"),
+    out: Path | None = typer.Option(
+        None, "--out", help="评审报告 JSON（默认 stdout 旁的 review-report.json）",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="向 stdout 打印 JSON 报告"),
+):
+    """S7 包装 check_paper_numbers / check_assumption_claims / check_gap_trigger。"""
+    payload = run_review(
+        paper=paper,
+        evidence=list(evidence) or None,
+        json_evidence=list(gap_json) or None,
+        strict=strict,
+        traceability=traceability,
+    )
+    report_path = out if out is not None else Path("review-report.json")
+    write_review_report(payload, report_path)
+    if as_json:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"review exit={payload['exit_code']} ok={payload['ok']}")
+        for tool in payload.get("tools") or []:
+            typer.echo(f"  {tool.get('name')}: {tool.get('exit_code')}")
+        typer.echo(f"report: {report_path if report_path.suffix == '.json' else report_path / 'review-report.json'}")
+    if payload["exit_code"] != 0:
+        raise typer.Exit(payload["exit_code"])
 
 
 problem_app = typer.Typer(
-    help="题目资产：导入/归档/总览（纯机械，智能内容按 brief-playbook 外置给人 + 外部强模型）",
+    help=GROUP_HELP["problem"],
     no_args_is_help=True,
 )
 
@@ -1631,6 +1770,29 @@ def problem_show(
             if manifest.get("problem_sha256") == fp:
                 hits.append(manifest_path.parent.name)
     typer.echo("最近 run  : " + ("、".join(hits[:5]) + "（见 runs/ 对应目录）" if hits else "无（尚未跑过本题）"))
+
+
+@problem_app.command("stage")
+def problem_stage(
+    problem_id: str = typer.Argument(..., help="题号（problems/<题号>/ 目录名）"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+    runs: Path | None = typer.Option(
+        None, "--runs", help="runs 根目录（默认 ./runs，不存在则不查 S8/S9）",
+    ),
+):
+    """S0–S8 阶段推演（只看磁盘文件，无工作流引擎）。"""
+    target = Path("problems") / problem_id
+    if not target.is_dir():
+        raise typer.BadParameter(f"problems/{problem_id} 不存在", param_hint="problem_id")
+    runs_root = runs
+    if runs_root is None:
+        default_runs = Path("runs")
+        runs_root = default_runs if default_runs.is_dir() else None
+    result = infer_stage(target, runs_root)
+    if as_json:
+        typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(format_stage_text(result))
 
 
 app.add_typer(problem_app, name="problem")
@@ -1818,45 +1980,28 @@ def brief_dialogue(
     typer.echo("运行：math-agent run --problem <spec> --brief <path>")
 
 
-# 可选 ML 库清单：dry-run 预检时探测；缺库只 WARN 不阻断（方向阶段勿选依赖它们的方法）。
-_OPTIONAL_ML_LIBS = ["sklearn", "ruptures", "statsmodels", "xgboost", "lightgbm", "pywt", "shap"]
+# 可选 ML 库清单已迁至 ops_preflight.OPTIONAL_ML_LIBS
 
 
 def _dry_run_preflight(
     problem_path: Path, spec: dict, brief_path: Path | None,
     brief_obj, out: Path, thread: str, force: bool,
 ) -> None:
-    """`run --dry-run`：启动前全项预检（不建目录、不烧 token）。
-
-    spec 五字段已由 `_read_problem_spec` 校验；本函数补查：
-    feasibility.blockers（能力不可达强制中断）、附件存在性、out 目录冲突。
-    """
+    """`run --dry-run`：启动前全项预检（不烧 token）；写入 preflight.json。"""
     from math_agent.brief import brief_item_ids
 
-    problems_found: list[str] = []
-    try:
-        raw = json.loads(problem_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise typer.BadParameter(f"题目文件不可读：{exc}", param_hint="--problem") from exc
+    payload = run_preflight(
+        problem_path=problem_path,
+        spec=spec,
+        brief_path=brief_path,
+        out=out,
+        force=force,
+    )
+    write_preflight_json(payload, out)
+    if problem_path.name == "problem.json":
+        write_preflight_json(payload, problem_path.parent)
 
-    blockers = raw.get("feasibility", {}).get("blockers") or []
-    if not isinstance(blockers, list):
-        blockers = []
-    if blockers:
-        problems_found.append(f"feasibility.blockers 非空（能力不可达）：{blockers}")
-
-    data_dir = spec.get("data_dir") or ""
-    for df in spec.get("data_files", []):
-        rel = (df.get("path") or "").strip()
-        if not rel:
-            continue
-        fp = Path(rel) if os.path.isabs(rel) else Path(data_dir) / rel
-        if not fp.is_file():
-            problems_found.append(f"附件缺失：{fp}（data_files 的 {df.get('filename', rel)}）")
-
-    if (out / "checkpoints.sqlite").is_file() and not force:
-        problems_found.append(f"输出目录已有 checkpoint（{out}）：换 --out 或 --force")
-
+    problems_found = payload.get("problems") or []
     typer.echo("=== run --dry-run 预检 ===")
     typer.echo(f"problem : {problem_path}（{(spec.get('title') or '')[:50]}...）")
     typer.echo(f"thread  : {thread}")
@@ -1865,6 +2010,7 @@ def _dry_run_preflight(
     if brief_obj is not None:
         brief_desc += f"（{len(brief_item_ids(brief_obj))} 条待回应条目）"
     typer.echo(f"brief   : {brief_desc}")
+    data_dir = spec.get("data_dir") or ""
     typer.echo(f"data    : data_dir={data_dir or '（无）'}，data_files={len(spec.get('data_files', []))} 个")
     if problems_found:
         for msg in problems_found:
@@ -1872,14 +2018,13 @@ def _dry_run_preflight(
         typer.echo(f"预检未通过（{len(problems_found)} 项），禁止启动。", err=True)
         raise typer.Exit(1)
 
-    # 可选库探测：只 WARN 不阻断。缺库时求解/敏感性代码只能用 numpy/scipy 替代。
-    for lib in _OPTIONAL_ML_LIBS:
-        if importlib.util.find_spec(lib) is not None:
-            typer.echo(f"  [OK] lib {lib} 可用")
-        else:
-            typer.echo(f"  [WARN] 缺库 {lib}——求解/敏感性代码只能用 numpy/scipy 替代（方向阶段勿选依赖它的方法）")
+    for lib in payload.get("ok_libs") or []:
+        typer.echo(f"  [OK] lib {lib} 可用")
+    for warn in payload.get("warns") or []:
+        typer.echo(f"  [WARN] {warn}")
 
     typer.echo("  [OK] 全部通过，可启动 run（烧 token 前请确认预算）。")
+    typer.echo(f"preflight: {out / 'preflight.json'}")
 
 
 @app.command()

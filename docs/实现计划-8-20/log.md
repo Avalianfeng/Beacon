@@ -130,3 +130,23 @@ E1/E2（calibration + 偏差报告）/ F（重定位 agent 侧）/ G（双轨约
 ## 下一步
 
 - 按 `docs/8-26-C题记录.md` 批次 4/6 的迭代方向（分段书写 / 最小论文 / 参考实现登记+自动论文装配 / 环境预检前置）规划下一轮流程优化。
+
+---
+
+## 2026-08-27 · D-002 混合路线拍板
+
+- 用户确认：下一阶段主线 = 流程介入面重构（人/外部 agent 按阶段驱动）；LangGraph/证据链/`reference` 降为工具层，不重写架构。
+- 落地：`8-27-流程介入面计划.md`；07 D-002 accepted；大模块 2 解冻（Web/`brief extract`/H14 仍不自动解冻）；current/01–03 与 00 §六已同步。
+- 第一刀：P0 操作面契约（不改代码）。
+
+## 2026-08-27 · P0 操作面契约定稿
+
+- 交付 `8-27-操作面契约.md`：S0–S9 按真实 CLI/脚本书写；缺口 T-01–T-20 标【待实现】，不发明做法。
+- C 题产物可逐阶段对号。下一刀 P1 只从待实现表挑。
+
+## 2026-08-27 · P1 命令收口完成
+
+- D-003：`review-check` 仅包装 check_*（根命令 `review` 仍为人审）。
+- 代码：`ops_stage` / `ops_preflight` / `ops_review` / `ops_verify` / `ops_help`；CLI 接线。
+- 验收：相关 pytest 78 passed；`problem stage mcm51-c` → completed S0–S3，next S4（缺 preflight.json）。
+- 下一刀 P2 介入最小闭环。

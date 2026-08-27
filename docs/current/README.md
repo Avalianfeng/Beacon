@@ -1,4 +1,4 @@
-<!-- doc: type=state status=active updated=2026-08-26 -->
+<!-- doc: type=state status=active updated=2026-08-27 -->
 # current/ — 人类控制面
 
 - **定位**：人类进入项目后只读本目录 4 个文件（各一页），即可上手「现在是什么状态 + 下一步做什么」。

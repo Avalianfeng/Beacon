@@ -36,6 +36,10 @@ def test_run_dry_run_ok_without_llm(tmp_path):
     ])
     assert result.exit_code == 0, result.output
     assert "[OK] 全部通过" in result.output
+    preflight = tmp_path / "runs" / "x" / "preflight.json"
+    assert preflight.is_file()
+    payload = json.loads(preflight.read_text(encoding="utf-8"))
+    assert payload["ok"] is True
 
 
 def test_run_dry_run_rejects_feasibility_blocker(tmp_path):
@@ -157,3 +161,17 @@ def test_problem_show_missing_spec_fails(tmp_path, monkeypatch):
     result = runner.invoke(app, ["problem", "show", "nope"])
     assert result.exit_code != 0
     assert "不存在" in result.output
+
+
+def test_problem_stage_json_prefix(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "problems" / "t-stage"
+    root.mkdir(parents=True)
+    (root / "problem.json").write_text(
+        json.dumps({"title": "t", "questions": ["q"]}), encoding="utf-8",
+    )
+    result = runner.invoke(app, ["problem", "stage", "t-stage", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["completed"] == ["S0"]
+    assert data["next"] == "S1"
