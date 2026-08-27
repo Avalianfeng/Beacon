@@ -2,9 +2,16 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from math_agent.ops_handoff import next_command, resolve_run_file
+
+# data_profile 是否列出概览图路径（D-007 人检提示，不进完成门槛）
+_OVERVIEW_FIG_RE = re.compile(
+    r"概览图|\.(?:png|jpe?g|svg|webp)\b",
+    re.IGNORECASE,
+)
 
 # 阶段顺序与缺失时报告的相对路径（posix）
 _STAGE_ORDER: tuple[str, ...] = (
@@ -96,6 +103,35 @@ def _s9_optional_found(runs_root: Path | None) -> bool:
     return any(runs_root.rglob("checkpoints.sqlite"))
 
 
+def _data_profile_lists_overview(problem_dir: Path) -> bool:
+    path = problem_dir / "data_profile.md"
+    if not path.is_file():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    return _OVERVIEW_FIG_RE.search(text) is not None
+
+
+def d007_missing(problem_dir: Path) -> list[str]:
+    """D-007 人检缺口（不打断 S0–S8 连续前缀）。
+
+    - 缺 ``领域知识.md``
+    - ``data_profile.md`` 不存在，或存在但未列出概览图路径/「概览图」字样
+    """
+    problem_dir = Path(problem_dir)
+    missing: list[str] = []
+    if not (problem_dir / "领域知识.md").is_file():
+        missing.append("领域知识.md")
+    profile = problem_dir / "data_profile.md"
+    if not profile.is_file():
+        missing.append("data_profile.md#概览图")
+    elif not _data_profile_lists_overview(problem_dir):
+        missing.append("data_profile.md#概览图")
+    return missing
+
+
 def _stage_complete(
     stage: str,
     problem_dir: Path,
@@ -170,16 +206,18 @@ def infer_stage(problem_dir: Path, runs_root: Path | None = None) -> dict:
         "missing": missing,
         "next_command": next_cmd,
         "optional": optional,
+        "d007_missing": d007_missing(problem_dir),
     }
 
 
 def format_stage_text(result: dict) -> str:
-    """人类可读的阶段摘要（含 completed / next / missing）。"""
+    """人类可读的阶段摘要（含 completed / next / missing / d007_missing）。"""
     pid = result.get("problem_id", "?")
     completed = result.get("completed") or []
     next_stage = result.get("next")
     missing = result.get("missing") or []
     optional = result.get("optional") or []
+    d007 = result.get("d007_missing") or []
 
     lines = [
         f"problem: {pid}",
@@ -199,5 +237,9 @@ def format_stage_text(result: dict) -> str:
 
     if optional:
         lines.append(f"optional: {', '.join(optional)}")
+    if d007:
+        lines.append(f"d007_missing: {', '.join(d007)}")
+    else:
+        lines.append("d007_missing: (none)")
 
     return "\n".join(lines)

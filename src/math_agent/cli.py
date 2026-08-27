@@ -1,11 +1,8 @@
 """math-agent CLI（Plan C 版）。
 
-run     : 启动一次任务（默认在 human_review 处中断）
-resume  : 提供 human decision 并续跑
-watch   : 只读跟随运行进度与日志（不杀任务）
-report  : 打印一次运行的 trace 报告
-ingest  : 把语料目录嵌入到向量库（RAG 索引）
-bench   : 真跑历年题回归基准（live 模式）
+做题主路径见 ``ops_help.ROOT_HELP``（S0–S8）。
+S9 流水线命令（start/supervise/review/resume/…）为可选遗留执行器。
+ingest / bench 为非做题路径。
 """
 from __future__ import annotations
 import hashlib
@@ -2112,7 +2109,10 @@ def brief_dialogue(
     ),
     force: bool = typer.Option(False, "--force", help="覆盖已存在的文件"),
 ):
-    """交互式生成 brief：逐字段问答（--assist 时 LLM 先起草，人工确认）。"""
+    """交互式生成 brief（非做题默认路径：TTY-only；真跑用 brief init/check + 手写）。
+
+    逐字段问答；--assist 时 LLM 先起草，人工确认。
+    """
     from math_agent.brief import ModelingBrief
     from math_agent.brief_dialogue import (
         FIELD_SPECS, assemble_brief, build_context, draft_field,
@@ -2235,13 +2235,18 @@ def run(
     brief: Path | None = typer.Option(None, "--brief", exists=True, readable=True,
                                       help="人工建模预备 brief.json（可选）"),
     no_interrupt: bool = typer.Option(False, "--no-interrupt", help="跳过 HITL，直接跑到底"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="只做启动前预检（spec/brief/feasibility/附件/out 冲突），不烧 token"),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="S4 预检（写 preflight.json，不烧 token）。做题默认只用本旗标",
+    ),
     template: str = typer.Option("default", help="LaTeX 模板：default | gmcm（国赛 gmcmthesis）"),
     school: str = typer.Option("", help="学校名称（gmcm 模板用）"),
     team_id: str = typer.Option("", help="参赛报名号（gmcm 模板用）"),
     members: str = typer.Option("", help="队员名字，逗号分隔：'张三,李四,王五'（gmcm 模板用）"),
     force: bool = typer.Option(False, "--force", help="即使已有 checkpoint 也覆盖（慎用）"),
 ):
+    """S4：``--dry-run`` 做题默认预检。无该旗标则跑完整 LangGraph（S9 可选执行器，D-005）。"""
     spec = _read_problem_spec(problem)
     brief_obj = None
     brief_sha256 = None
@@ -3354,7 +3359,7 @@ def ingest(
     embedding_model: str = typer.Option("text-embedding-3-small"),
     dim: int = typer.Option(1536),
 ):
-    """扫描语料目录 → 切块 → 嵌入 → 入 sqlite-vec 库。"""
+    """非做题路径：扫描语料目录 → 切块 → 嵌入 → 入 sqlite-vec（RAG；原则 4 当前不启用）。"""
     from math_agent.rag.ingest import ingest_directory
     rep = ingest_directory(src_dir=src, db_path=db,
                            embedding_model=embedding_model, dim=dim)
@@ -3363,9 +3368,9 @@ def ingest(
 
 @app.command()
 def bench(out: Path = typer.Option(Path("runs/bench"))):
-    """真跑历年题回归基准（live 模式，需要真 LLM API key）。
+    """非做题路径：真跑历年题回归基准（live；需真 API key）。
 
-    要跑 mock 模式（结构性校验，不消耗 API），用：pytest tests/bench/
+    mock 模式用：pytest tests/bench/
     """
     from math_agent.bench.runner import run_bench
     rep = run_bench(out_dir=out)

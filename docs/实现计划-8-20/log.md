@@ -196,4 +196,10 @@ E1/E2（calibration + 偏差报告）/ F（重定位 agent 侧）/ G（双轨约
   旧题不补，mcm51-c 已补作范本（赛后诊断摘要+指针 / 教训卡片 E1–E5 / 领域知识卡片 / 官方细则转录）。
 - D-007 已登记 07；控制面 current/01、04 与 docs/README 索引同步；audit_docs.py 0 非豁免缺陷。
 
+## 2026-08-27 · P6 操作面认知卫生
+
+- 根 help（`ops_help.ROOT_HELP`）默认只列做题主路径 S0–S8；S9 标「可选遗留执行器」；ingest/bench/brief dialogue 标非做题路径。
+- `problem stage` JSON/文本增 `d007_missing`（缺 `领域知识.md` / data_profile 未列概览图）；**不改** S1/S2 完成门槛，旧题不掉级。
+- 不删命令、不重写 graph、不新写流程 v3。契约 T-25；总纲与 8-27 计划已同步。
+
 

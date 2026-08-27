@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from math_agent.ops_stage import infer_stage, format_stage_text
+from math_agent.ops_stage import infer_stage, format_stage_text, d007_missing
 
 
 def _write_s0_s4(problem: Path) -> None:
@@ -219,6 +219,52 @@ def test_format_stage_text_no_next_command_line_when_none(tmp_path: Path):
     assert "next_command:" not in text
 
 
+def test_d007_missing_lists_domain_and_overview(tmp_path: Path):
+    (tmp_path / "problem.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "data_profile.md").write_text("# 无图\n只有文字\n", encoding="utf-8")
+    gaps = d007_missing(tmp_path)
+    assert "领域知识.md" in gaps
+    assert "data_profile.md#概览图" in gaps
+    result = infer_stage(tmp_path)
+    assert result["completed"] == ["S0", "S1"]  # 门槛不变：有 profile 即认 S1
+    assert result["d007_missing"] == gaps
+
+
+def test_d007_missing_cleared_when_artifacts_present(tmp_path: Path):
+    (tmp_path / "data_profile.md").write_text(
+        "# 画像\n概览图：`eda/附件1.png`\n", encoding="utf-8"
+    )
+    (tmp_path / "领域知识.md").write_text("# 卡片\n", encoding="utf-8")
+    assert d007_missing(tmp_path) == []
+    result = infer_stage(tmp_path)
+    assert result["d007_missing"] == []
+    text = format_stage_text(result)
+    assert "d007_missing: (none)" in text
+
+
+def test_d007_does_not_break_s0_s8_prefix(tmp_path: Path):
+    problem = tmp_path / "prob"
+    problem.mkdir()
+    _write_s0_s4(problem)
+    _write_s5_pass(problem)
+    (problem / "reference.json").write_text("{}", encoding="utf-8")
+    (problem / "review-report.json").write_text("{}", encoding="utf-8")
+    (problem / "acceptance.json").write_text(
+        '{"approved": true}', encoding="utf-8"
+    )
+    runs = tmp_path / "runs"
+    run_dir = runs / "prob-attempt-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "paper.md").write_text("# paper", encoding="utf-8")
+    result = infer_stage(problem, runs_root=runs)
+    assert result["completed"] == [
+        "S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8",
+    ]
+    assert result["next"] is None
+    assert "领域知识.md" in result["d007_missing"]
+    assert "data_profile.md#概览图" in result["d007_missing"]
+
+
 @pytest.mark.skipif(
     not Path("problems/mcm51-c").is_dir(),
     reason="problems/mcm51-c not present",
@@ -229,3 +275,23 @@ def test_real_repo_mcm51_c_stages():
     for stage in ("S0", "S1", "S2", "S3"):
         assert stage in result["completed"]
     # P2 走通后该题可已越过 S4；前缀 S0–S3 仍必须成立。
+    # D-007：有领域知识.md；data_profile 可能仍缺概览图字样
+    assert "领域知识.md" not in result["d007_missing"]
+
+
+@pytest.mark.skipif(
+    not Path("problems/mathorcup16-c").is_dir(),
+    reason="problems/mathorcup16-c not present",
+)
+def test_real_repo_mathorcup16_c_s0_s8_and_d007():
+    problem = Path("problems/mathorcup16-c")
+    runs = Path("runs") if Path("runs").is_dir() else None
+    result = infer_stage(problem, runs_root=runs)
+    assert result["completed"][:4] == ["S0", "S1", "S2", "S3"]
+    # 旧题不补 D-007：缺领域知识/概览图不得把 completed 打回 S2
+    if result["next"] is None:
+        assert set(result["completed"]) == {
+            "S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8",
+        }
+    assert "d007_missing" in result
+    assert isinstance(result["d007_missing"], list)
