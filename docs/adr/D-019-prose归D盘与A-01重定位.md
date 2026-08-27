@@ -1,5 +1,7 @@
-<!-- doc: type=decision status=active updated=2026-08-27 -->
-# D-019 · prose 归 D 盘 + A-01 重定位
+<!-- doc: type=decision status=superseded updated=2026-08-27 -->
+# D-019 · prose 归 D 盘 + A-01 重定位（已被 D-020 取代）
+
+> ⚠️ **superseded（2026-08-27）**：本决策系对双轨实验数据的误读（把轨 B 外部写终稿推广为 prose 归 D 盘），与总纲 L107、18 轨 A、用户工作流冲突。**现行口径见 [D-020](D-020-恢复完整论文职责与A-01原义.md)**：Beacon 产完整论文，A-01 恢复原义。以下正文仅供追溯。
 
 - 日期：2026-08-27（用户确认）｜ 状态：accepted → 已执行
 - 决策编号：07 决策表 D-019
