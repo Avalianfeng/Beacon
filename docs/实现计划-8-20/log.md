@@ -171,4 +171,11 @@ E1/E2（calibration + 偏差报告）/ F（重定位 agent 侧）/ G（双轨约
 - 用户确认按建议走：默认操作面；supervise 不作主路径。
 - 07 行 19a 指向 D-005；不重开架构、不把轨 A 出好论文拉回。
 
+## 2026-08-27 · P4 S6 题级卫生
+
+- T-21：非 `mcm51-c` 不再套用边坡摘要/表1.1；按小问 + evidence 键生成；求解结果按 `questions` 长度。
+- S6 完成须 runs 下解析到 `paper.md`；`next_command` 在 `runs/<id>-*` 中取最新 evidence/paper。
+- B04：`brief.problem_id == spec.problem_id` 短路，mathorcup16-c 中文 title 不再误报。
+- 验收：重装 `runs/mathorcup16-c-p3/paper.md`，无边坡/q4/q5/问题四；pytest 83 passed（P4 相关）；`problem stage` 仍 S0–S8。
+
 

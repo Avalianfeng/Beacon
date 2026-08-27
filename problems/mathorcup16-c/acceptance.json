@@ -2,9 +2,9 @@
   "version": 1,
   "problem_id": "mathorcup16-c",
   "paper_path": "runs\\mathorcup16-c-p3\\paper.md",
-  "paper_sha256": "d139c1ff3129ffcbe6abdc372dc7d7dfca8f28cb2925e06cabeb1fbe73854a95",
+  "paper_sha256": "7239a29db392db7b4694afc1bf9a60b6242e8fe32e1f307aa541a2fc8e0b87af",
   "approved": true,
-  "actor": "p3-host",
-  "notes": "Ops-surface acceptance of assembled skeleton (P3). Known gap: default paper abstract still uses mcm51-c placeholders (q4/q5/table11). Not a contest-final sign-off.",
-  "at": "2026-08-27T10:00:09.069870+00:00"
+  "actor": "p4-host",
+  "notes": "P4: T-21 abstract/body by problem; ops skeleton, not contest-final.",
+  "at": "2026-08-27T10:52:52.231647+00:00"
 }

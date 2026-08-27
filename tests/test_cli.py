@@ -713,6 +713,41 @@ def test_brief_mismatch_silent_on_empty_pid(capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_brief_mismatch_silent_when_spec_problem_id_matches(capsys):
+    """canonical id 一致即匹配：title 无阿拉伯数字 16 也不误报。"""
+    from math_agent.cli import _warn_brief_problem_mismatch
+
+    class _Brief:
+        problem_id = "mathorcup16-c"
+
+    _warn_brief_problem_mismatch(
+        _Brief(),
+        {
+            "problem_id": "mathorcup16-c",
+            "title": "2026年第十六届MathorCup数学应用挑战赛 C题：中老年人群高血脂症的风险预警",
+            "questions": ["问题1：筛选指标"],
+        },
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_brief_mismatch_warns_mathorcup_without_spec_problem_id(capsys):
+    """无 spec.problem_id 时仍走 token 检查：title 无阿拉伯数字 16 → WARN。"""
+    from math_agent.cli import _warn_brief_problem_mismatch
+
+    class _Brief:
+        problem_id = "mathorcup16-c"
+
+    _warn_brief_problem_mismatch(
+        _Brief(),
+        {
+            "title": "2026年第十六届MathorCup数学应用挑战赛 C题：中老年人群高血脂症的风险预警",
+            "questions": ["问题1：筛选指标"],
+        },
+    )
+    assert "[WARN]" in capsys.readouterr().err
+
+
 def test_root_help_lists_stage_markers():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0, result.output

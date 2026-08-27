@@ -851,6 +851,30 @@ def _write_table_files(out_dir: Path, table: dict, rows: list[list[str]]) -> tup
     return md_path, csv_path
 
 
+def _load_tables_spec(problem_id: str) -> tuple[dict, str]:
+    """表 spec：problems/<id>/tables.json 优先；仅 mcm51-c 缺省回落内置 C 题 spec。
+
+    其它题缺文件时返回空表（不套用 C 题默认），来源说明供 CLI 回显。
+    返回 (spec, 来源说明)。
+    """
+    tables_path = Path("problems") / problem_id / "tables.json"
+    if tables_path.is_file():
+        try:
+            tables_spec = json.loads(tables_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise typer.BadParameter(f"{tables_path} 不是有效的 UTF-8 JSON：{exc}") from exc
+        spec_note = str(tables_path)
+    elif problem_id == "mcm51-c":
+        tables_spec = _DEFAULT_TABLES_SPEC
+        spec_note = "内置 C 题默认 spec（仅 mcm51-c 缺省）"
+    else:
+        tables_spec = {"tables": []}
+        spec_note = "无 tables.json（非 mcm51-c，不套用 C 题默认表）"
+    if not isinstance(tables_spec, dict) or not isinstance(tables_spec.get("tables"), list):
+        raise typer.BadParameter("表 spec 顶层必须是 {tables: [...]}")
+    return tables_spec, spec_note
+
+
 @reference_app.command("tables")
 def reference_tables(
     problem: Path = typer.Option(
@@ -905,19 +929,7 @@ def reference_tables(
         typer.echo("[FAIL] evidence 中没有 Q<id>: 行，无可装配数据", err=True)
         raise typer.Exit(1)
 
-    # 表 spec：题级 tables.json 优先，缺省用内置 C 题默认
-    tables_path = Path("problems") / problem_id / "tables.json"
-    if tables_path.is_file():
-        try:
-            tables_spec = json.loads(tables_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise typer.BadParameter(f"{tables_path} 不是有效的 UTF-8 JSON：{exc}") from exc
-        spec_note = str(tables_path)
-    else:
-        tables_spec = _DEFAULT_TABLES_SPEC
-        spec_note = "内置 C 题默认 spec（problems/mcm51-c/tables.json 不存在）"
-    if not isinstance(tables_spec, dict) or not isinstance(tables_spec.get("tables"), list):
-        raise typer.BadParameter("表 spec 顶层必须是 {tables: [...]}")
+    tables_spec, spec_note = _load_tables_spec(problem_id)
 
     if out is None:
         out = Path("runs") / f"{problem_id}-reference" / "tables"
@@ -925,6 +937,8 @@ def reference_tables(
 
     typer.echo(f"[OK] reference tables：{problem_id}")
     typer.echo(f"表 spec：{spec_note}")
+    if not tables_spec["tables"]:
+        typer.echo(f"[提示] 请写 problems/{problem_id}/tables.json")
     for table in tables_spec["tables"]:
         if not isinstance(table, dict):
             raise typer.BadParameter(f"表定义必须是对象：{table!r}")
@@ -940,18 +954,19 @@ def reference_tables(
             f"{md_path.resolve()}, {csv_path.resolve()}"
         )
 
-    typer.echo("[提示] 表3.2（共同异常点清单）需参考实现额外输出清单数据，暂不装配")
+    if problem_id == "mcm51-c":
+        typer.echo("[提示] 表3.2（共同异常点清单）需参考实现额外输出清单数据，暂不装配")
 
 
 # ---------------------------------------------------------------------------
 # reference paper：evidence + brief → paper.md 骨架（零编造）
 # ---------------------------------------------------------------------------
 
-# 摘要模板：内置 C 题默认模板（题级占位符模板，不是结果数字）。
+# 摘要模板：内置 C 题默认模板（仅 mcm51-c 缺省使用；题级占位符模板，不是结果数字）。
 # 覆盖方式：problems/<problem_id>/paper_abstract.md 存在时优先读取（纯文本/markdown，
 # 数字一律用 {占位符}；占位符 = result.ours 字段名 或 <qid>.<字段名>，如 {q1_gain}、
 # {q1.table11}）。装配时占位符由 evidence.json 填充；缺失的占位符渲染为
-# 【待展开：<key> 未在 evidence 中】，不编造数字。
+# 【待展开：<key> 未在 evidence 中】，不编造数字。其它题无 override 时按 evidence 键生成。
 _DEFAULT_PAPER_ABSTRACT = """针对边坡多源监测数据下的位移校正、阶段识别、数据治理、分阶段预测与滑坡预警问题，本文以统一状态观为主线，构建数据驱动的时序建模链（校正 → 变点识别 → 数据治理 → 分阶段预测 → 变量组合与预警）。主要量化结果：
 
 - 问题一（位移校正）：校正增益 {q1_gain}，校正后 RMSE {q1_rmse}；表1.1 校正后 y = {q1.table11}；
@@ -979,9 +994,15 @@ def _count_paper_numbers(text: str) -> int:
     return len(_PAPER_NUM_RE.findall(text.replace("\u2212", "-")))
 
 
-def _load_paper_abstract_template(problem_id: str) -> tuple[str, str]:
-    """摘要模板：problems/<id>/paper_abstract.md 优先，缺省内置 C 题默认模板。
+def _load_paper_abstract_template(
+    problem_id: str,
+    questions: list | None = None,
+    q_fields: dict | None = None,
+    result_ours: dict | None = None,
+) -> tuple[str, str]:
+    """摘要模板：problems/<id>/paper_abstract.md 优先；仅 mcm51-c 缺省用内置 C 题模板。
 
+    其它题缺文件时按 questions + evidence 键生成通用占位模板，不回落 C 题摘要。
     返回 (模板文本, 模板来源说明)。模板为纯文本/markdown，数字一律用 {占位符}。
     """
     override = Path("problems") / problem_id / "paper_abstract.md"
@@ -990,7 +1011,35 @@ def _load_paper_abstract_template(problem_id: str) -> tuple[str, str]:
             return override.read_text(encoding="utf-8"), f"problems/{problem_id}/paper_abstract.md"
         except OSError:
             pass
-    return _DEFAULT_PAPER_ABSTRACT, "内置 C 题默认模板（src/math_agent/cli.py _DEFAULT_PAPER_ABSTRACT）"
+    if problem_id == "mcm51-c":
+        return _DEFAULT_PAPER_ABSTRACT, "内置 C 题默认模板（仅 mcm51-c 缺省）"
+
+    q_fields = q_fields or {}
+    result_ours = result_ours or {}
+    if questions:
+        indices = list(range(1, len(questions) + 1))
+    else:
+        nums: list[int] = []
+        for key in q_fields:
+            m = re.fullmatch(r"q(\d+)", str(key))
+            if m:
+                nums.append(int(m.group(1)))
+        indices = sorted(set(nums))
+
+    lines = ["本题量化结果如下（数字仅来自 evidence，缺失不编造）：", ""]
+    for i in indices:
+        placeholders: list[str] = []
+        qf = q_fields.get(f"q{i}")
+        if isinstance(qf, dict):
+            for field in qf:
+                placeholders.append(f"{{q{i}.{field}}}")
+        prefix = f"q{i}_"
+        for key in result_ours:
+            if isinstance(key, str) and key.startswith(prefix):
+                placeholders.append(f"{{{key}}}")
+        body = "；".join(placeholders) if placeholders else "【待展开：该问无 evidence 字段】"
+        lines.append(f"- 问题{_cn_num(i)}：{body}")
+    return "\n".join(lines), "按题生成（questions + evidence 键；非内置 C 题模板）"
 
 
 def _fill_paper_abstract(template: str, result_ours: dict, q_fields: dict) -> str:
@@ -1269,6 +1318,18 @@ def _build_trace_table(
     return "\n".join(rows)
 
 
+def _paper_question_ids(questions: list, q_lines: list[str]) -> list[str]:
+    """求解结果小节的小问编号：有 questions 用其长度；否则从 Q 行提取。"""
+    if questions:
+        return [str(i) for i in range(1, len(questions) + 1)]
+    found: list[int] = []
+    for line in q_lines or []:
+        m = re.match(r"^Q(\d+):", str(line).strip())
+        if m:
+            found.append(int(m.group(1)))
+    return [str(n) for n in sorted(set(found))]
+
+
 def _build_paper_md(
     *,
     title: str,
@@ -1327,9 +1388,9 @@ def _build_paper_md(
         )
     parts.append("> 【待展开：逐条论证假设的建模影响与依据讨论】\n")
 
-    # 求解结果（Q1~Q5：方向一句话 + Q 行原文数字）
+    # 求解结果：按本题小问（questions 长度），无 questions 时按 evidence 已有 Q 行
     parts.append("## 求解结果\n")
-    for qid in ("1", "2", "3", "4", "5"):
+    for qid in _paper_question_ids(questions, q_lines):
         direction = _question_direction(brief, qid)
         qline = next((ln for ln in q_lines if re.match(rf"^Q{qid}:", ln.strip())), None)
         parts.append(f"### 问题{qid}\n")
@@ -1350,7 +1411,8 @@ def _build_paper_md(
     for table, rows in table_rows:
         parts.append(f"### {table['title']}\n")
         parts.append(_table_md(table, rows) + "\n")
-    parts.append("> 注：题面表3.2（多变量共同异常点清单）不在 evidence 范围（Q 行只输出计数），骨架不装配该清单。\n")
+    if problem_id == "mcm51-c":
+        parts.append("> 注：题面表3.2（多变量共同异常点清单）不在 evidence 范围（Q 行只输出计数），骨架不装配该清单。\n")
 
     # 附录 A 数字溯源
     parts.append("## 附录 A 数字溯源\n")
@@ -1368,10 +1430,11 @@ def _build_paper_md(
         parts.append("| 论文数字 | 来源 |")
         parts.append("| --- | --- |")
         parts.append(trace_md + "\n")
-    parts.append(
-        "> 注：表3.1 总数列为派生值（Q3 table31 五行求和），不在 evidence 原文中，"
-        "属允许标注的派生值；表3.2 清单不在 evidence 范围。\n"
-    )
+    if problem_id == "mcm51-c":
+        parts.append(
+            "> 注：表3.1 总数列为派生值（Q3 table31 五行求和），不在 evidence 原文中，"
+            "属允许标注的派生值；表3.2 清单不在 evidence 范围。\n"
+        )
 
     # 附录 B 代码清单（reference 目录 7 文件 + sha256，重算）
     parts.append("## 附录 B 代码清单\n")
@@ -1465,15 +1528,7 @@ def reference_paper(
 
     # 表 spec + 装配（与 reference tables 同一套逻辑）
     tables_path = Path("problems") / problem_id / "tables.json"
-    if tables_path.is_file():
-        try:
-            tables_spec = json.loads(tables_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise typer.BadParameter(f"{tables_path} 不是有效的 UTF-8 JSON：{exc}") from exc
-    else:
-        tables_spec = _DEFAULT_TABLES_SPEC
-    if not isinstance(tables_spec, dict) or not isinstance(tables_spec.get("tables"), list):
-        raise typer.BadParameter("表 spec 顶层必须是 {tables: [...]}")
+    tables_spec, _spec_note = _load_tables_spec(problem_id)
     table_rows: list[tuple[dict, list[list[str]]]] = []
     for table in tables_spec["tables"]:
         if not isinstance(table, dict):
@@ -1487,7 +1542,9 @@ def reference_paper(
         out = Path("runs") / f"{problem_id}-reference" / "paper.md"
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    template, template_source = _load_paper_abstract_template(problem_id)
+    template, template_source = _load_paper_abstract_template(
+        problem_id, questions=questions, q_fields=q_fields, result_ours=result_ours
+    )
     abstract = _fill_paper_abstract(template, result_ours, q_fields)
     evidence_lines = evidence.read_text(encoding="utf-8").splitlines()
     paper = _build_paper_md(
@@ -1974,6 +2031,9 @@ def _warn_brief_problem_mismatch(brief_obj, spec: dict) -> None:
     """brief.problem_id 与题目宽松匹配；不匹配仅警告（防误用，不阻塞）。"""
     pid = (getattr(brief_obj, "problem_id", "") or "").strip()
     if not pid:
+        return
+    spec_pid = (spec.get("problem_id") or "").strip()
+    if spec_pid and pid == spec_pid:
         return
     title = (spec.get("title") or "") + " " + " ".join(spec.get("questions", []))
     if _brief_problem_mismatch(pid, title):

@@ -1,11 +1,61 @@
 """交棒观察面：下一步可复制命令模板。"""
 from __future__ import annotations
 
+from pathlib import Path
+
+
+def iter_problem_run_dirs(runs_root: Path, problem_id: str) -> list[Path]:
+    """本题在 runs_root 下的直接子目录（名等于 id，或 id- 前缀）。"""
+    if not Path(runs_root).is_dir():
+        return []
+    prefix = f"{problem_id}-"
+    matched: list[Path] = []
+    for child in Path(runs_root).iterdir():
+        if not child.is_dir():
+            continue
+        name = child.name
+        if name == problem_id or name.startswith(prefix):
+            matched.append(child)
+    return matched
+
+
+def resolve_run_file(
+    runs_root: Path | None,
+    problem_id: str,
+    filename: str,
+) -> Path | None:
+    """在本题 run 目录中找 filename；多份时取该文件 mtime 最新者。"""
+    if runs_root is None:
+        return None
+    candidates: list[Path] = []
+    for run_dir in iter_problem_run_dirs(runs_root, problem_id):
+        path = run_dir / filename
+        if path.is_file():
+            candidates.append(path)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def _command_artifact_path(
+    runs_root: Path | None,
+    problem_id: str,
+    filename: str,
+) -> str:
+    found = resolve_run_file(runs_root, problem_id, filename)
+    if found is None:
+        return f"runs/{problem_id}-reference/{filename}"
+    try:
+        return found.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return found.as_posix()
+
 
 def next_command(
     stage: str,
     problem_id: str,
     missing: list[str] | None = None,
+    runs_root: Path | None = None,
 ) -> str | None:
     """给外部 agent 一条可复制的 math-agent 命令模板。"""
     if stage == "S0":
@@ -37,18 +87,22 @@ def next_command(
             f"--problem problems/{problem_id}/problem.json"
         )
     if stage == "S6":
+        evidence = _command_artifact_path(runs_root, problem_id, "evidence.json")
         return (
             f"math-agent reference paper --problem problems/{problem_id}/problem.json "
-            f"--evidence runs/{problem_id}-reference/evidence.json"
+            f"--evidence {evidence}"
         )
     if stage == "S7":
+        paper = _command_artifact_path(runs_root, problem_id, "paper.md")
+        evidence = _command_artifact_path(runs_root, problem_id, "evidence.json")
         return (
-            f"math-agent review-check --paper runs/{problem_id}-reference/paper.md "
-            f"--evidence runs/{problem_id}-reference/evidence.json"
+            f"math-agent review-check --paper {paper} "
+            f"--evidence {evidence}"
         )
     if stage == "S8":
+        paper = _command_artifact_path(runs_root, problem_id, "paper.md")
         return (
             f"math-agent accept --problem problems/{problem_id}/problem.json "
-            f"--paper runs/{problem_id}-reference/paper.md --approve"
+            f"--paper {paper} --approve"
         )
     return None

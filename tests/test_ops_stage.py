@@ -88,6 +88,7 @@ def test_s5_complete_with_package_and_review_pass(tmp_path: Path):
     assert "S5" in result["completed"]
     assert result["next"] == "S6"
     assert "math-agent reference paper" in result["next_command"]
+    assert f"runs/{tmp_path.name}-reference/" in result["next_command"]
 
 
 def test_s5_not_complete_when_verdict_fail(tmp_path: Path):
@@ -113,7 +114,7 @@ def test_s8_complete_via_acceptance_json(tmp_path: Path):
         '{"approved": true}', encoding="utf-8"
     )
     runs = tmp_path / "runs"
-    run_dir = runs / "attempt-1"
+    run_dir = runs / "prob-attempt-1"
     run_dir.mkdir(parents=True)
     (run_dir / "paper.md").write_text("# paper", encoding="utf-8")
     result = infer_stage(problem, runs_root=runs)
@@ -132,7 +133,7 @@ def test_s8_not_complete_without_acceptance_even_with_paper_md(tmp_path: Path):
     (problem / "reference.json").write_text("{}", encoding="utf-8")
     (problem / "review-report.json").write_text("{}", encoding="utf-8")
     runs = tmp_path / "runs"
-    run_dir = runs / "attempt-1"
+    run_dir = runs / "prob-attempt-1"
     run_dir.mkdir(parents=True)
     (run_dir / "paper.md").write_text("# paper", encoding="utf-8")
     result = infer_stage(problem, runs_root=runs)
@@ -151,10 +152,39 @@ def test_s8_not_complete_when_approved_false(tmp_path: Path):
     (problem / "acceptance.json").write_text(
         '{"approved": false}', encoding="utf-8"
     )
-    result = infer_stage(problem)
+    runs = tmp_path / "runs"
+    run_dir = runs / "prob-p3"
+    run_dir.mkdir(parents=True)
+    (run_dir / "paper.md").write_text("# paper", encoding="utf-8")
+    result = infer_stage(problem, runs_root=runs)
     assert "S8" not in result["completed"]
     assert result["next"] == "S8"
     assert "acceptance.json" in result["missing"]
+
+
+def test_s6_not_complete_without_paper_md(tmp_path: Path):
+    _write_s0_s4(tmp_path)
+    _write_s5_pass(tmp_path)
+    (tmp_path / "reference.json").write_text("{}", encoding="utf-8")
+    result = infer_stage(tmp_path)
+    assert result["completed"] == ["S0", "S1", "S2", "S3", "S4", "S5"]
+    assert result["next"] == "S6"
+    assert "paper.md" in result["missing"]
+
+
+def test_s6_complete_with_reference_and_run_paper(tmp_path: Path):
+    problem = tmp_path / "mathorcup16-c"
+    problem.mkdir()
+    _write_s0_s4(problem)
+    _write_s5_pass(problem)
+    (problem / "reference.json").write_text("{}", encoding="utf-8")
+    runs = tmp_path / "runs"
+    run_dir = runs / "mathorcup16-c-p3"
+    run_dir.mkdir(parents=True)
+    (run_dir / "paper.md").write_text("# paper", encoding="utf-8")
+    result = infer_stage(problem, runs_root=runs)
+    assert "S6" in result["completed"]
+    assert result["next"] == "S7"
 
 
 def test_s9_optional_checkpoints_does_not_change_next(tmp_path: Path):
