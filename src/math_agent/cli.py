@@ -1578,6 +1578,155 @@ def reference_paper(
         f"--paper {out} --evidence {evidence}"
     )
     typer.echo("[提示] 或：math-agent review-check --paper <md> --evidence <证据>")
+    typer.echo(
+        "[提示] 展开终稿：math-agent reference expand "
+        f"--problem {problem} --paper {out} --evidence {evidence}"
+    )
+
+
+@reference_app.command("expand")
+def reference_expand(
+    problem: Path = typer.Option(
+        ..., "--problem", exists=True, readable=True, help="题目 spec JSON"
+    ),
+    paper: Path = typer.Option(
+        ..., "--paper", exists=True, readable=True,
+        help="reference paper 产出的骨架 paper.md",
+    ),
+    evidence: Path = typer.Option(
+        ..., "--evidence", exists=True, readable=True,
+        help="reference run 产出的 evidence.json",
+    ),
+    brief: Path | None = typer.Option(
+        None, "--brief", exists=True, readable=True,
+        help="brief.json（缺省尝试 problems/<id>/brief.json）",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out",
+        help="终稿路径（默认与骨架同目录 paper-prose.md，不覆盖骨架）",
+    ),
+    skip_number_check: bool = typer.Option(
+        False, "--skip-number-check",
+        help="跳过写后 check_paper_numbers（仅调试；正式路径勿用）",
+    ),
+):
+    """S6 T-11：原地展开骨架【待展开】分析槽 → 论文本体（D-020）。
+
+    摘要/表/附录不动；缺料占位不编造。写后做增量数字红线：
+    相对骨架新增且不在 evidence 白名单的数字 → 失败（骨架固有题面/sha256 噪音不阻断）。
+    """
+    from math_agent.ops_review import load_check_module
+    from math_agent.paper_expand import (
+        expand_paper,
+        load_json,
+        new_untraced_numbers,
+        remaining_analysis_placeholders,
+    )
+
+    _read_problem_spec(problem)
+    try:
+        raw = json.loads(problem.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise typer.BadParameter(
+            f"题目文件不是有效的 UTF-8 JSON：{exc}", param_hint="--problem"
+        ) from exc
+    problem_id = raw.get("problem_id")
+    if not isinstance(problem_id, str) or not problem_id.strip():
+        problem_id = problem.parent.name
+    if not re.fullmatch(r"[A-Za-z0-9-]+", problem_id):
+        raise typer.BadParameter(
+            f"无法确定 problem_id：{problem_id!r}", param_hint="--problem"
+        )
+
+    try:
+        require_injected_package(Path("problems") / problem_id, evidence)
+    except ValueError as exc:
+        typer.echo(f"[FAIL] {exc}", err=True)
+        raise typer.Exit(1)
+
+    try:
+        ev = load_json(evidence)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise typer.BadParameter(f"evidence 无效：{exc}", param_hint="--evidence") from exc
+
+    brief_data = _load_paper_brief(brief, problem_id)
+    tables_spec, _ = _load_tables_spec(problem_id)
+    skeleton = paper.read_text(encoding="utf-8")
+
+    result = expand_paper(
+        skeleton,
+        evidence=ev,
+        brief=brief_data,
+        tables_spec=tables_spec,
+    )
+    if result.errors:
+        for err in result.errors:
+            typer.echo(f"[FAIL] {err}", err=True)
+        raise typer.Exit(1)
+    if not result.expanded:
+        typer.echo(
+            "[FAIL] 无可展开的分析槽（仅有缺料占位或无【待展开】）。"
+            "请先补 brief/evidence 或确认骨架来自 reference paper。",
+            err=True,
+        )
+        if result.skipped_material:
+            typer.echo("保留的缺料占位：", err=True)
+            for body in result.skipped_material:
+                typer.echo(f"  - {body[:80]}", err=True)
+        raise typer.Exit(1)
+
+    remaining = remaining_analysis_placeholders(result.paper)
+    if remaining:
+        typer.echo("[FAIL] 展开后仍有分析槽：" + "; ".join(remaining[:3]), err=True)
+        raise typer.Exit(1)
+
+    if out is None:
+        out = paper.with_name("paper-prose.md")
+    if out.resolve() == paper.resolve():
+        typer.echo(
+            "[FAIL] --out 不可与骨架同路径（会覆盖）；默认写 paper-prose.md",
+            err=True,
+        )
+        raise typer.Exit(1)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    # 先写临时文件；增量数字门禁通过后再落到 --out
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    tmp.write_text(result.paper, encoding="utf-8")
+
+    if not skip_number_check:
+        bad = new_untraced_numbers(skeleton, result.paper, [evidence])
+        if bad:
+            tmp.unlink(missing_ok=True)
+            typer.echo(
+                "[FAIL] 展开引入了 evidence 白名单外、且骨架中不存在的数字："
+                + ", ".join(bad[:20]),
+                err=True,
+            )
+            raise typer.Exit(1)
+        # 报告型跑一遍（非 strict）：骨架固有噪音不阻断
+        mod = load_check_module("check_paper_numbers")
+        report_code = mod.main(
+            ["--paper", str(tmp), "--evidence", str(evidence)]
+        )
+        typer.echo(
+            f"[数字门禁] 增量未溯源=0；check_paper_numbers 报告退出码={report_code}"
+            "（骨架题面/sha256 噪音允许，与 P4 诚实边界一致）"
+        )
+
+    tmp.replace(out)
+    typer.echo(f"[OK] reference expand：{problem_id}")
+    typer.echo(f"骨架：{paper.resolve()}")
+    typer.echo(f"终稿：{out.resolve()}")
+    typer.echo(f"已展开槽数：{len(result.expanded)}")
+    for body in result.expanded:
+        typer.echo(f"  + {body[:72]}")
+    if result.skipped_material:
+        typer.echo(f"保留缺料占位：{len(result.skipped_material)}")
+        for body in result.skipped_material:
+            typer.echo(f"  = {body[:72]}")
+    if not skip_number_check:
+        typer.echo("[OK] 增量数字红线通过（无新增未溯源 token）")
 
 
 @reference_app.command("verify")
