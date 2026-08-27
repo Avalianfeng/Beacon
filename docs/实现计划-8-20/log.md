@@ -166,3 +166,9 @@ E1/E2（calibration + 偏差报告）/ F（重定位 agent 侧）/ G（双轨约
 - 新缺口（不本拍实现）：论文骨架摘要仍用 mcm51-c 默认模板（T-21）；`brief.problem_id` vs 中文 title 误报不匹配；tables 仍提示 C 题表3.2。
 - **D-C 建议（待用户拍板）**：维持 D-002——默认分阶段操作面；supervise 可到达编码但本烟测未稳定出数即进入 generate/execute 循环，不能当默认主路径。体系相对纯 skill 多出来的是闸门、哈希、`next_command`、机械三项 verify。
 
+## 2026-08-27 · D-005 D-C 收口
+
+- 用户确认按建议走：默认操作面；supervise 不作主路径。
+- 07 行 19a 指向 D-005；不重开架构、不把轨 A 出好论文拉回。
+
+
