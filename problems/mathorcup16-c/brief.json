@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "problem_id": "mathorcup16-c",
+  "created_at": "2026-08-27T10:00:00+00:00",
+  "source": ["human", "model_draft"],
+  "per_question_direction": [
+    {
+      "id": "model-framework",
+      "question_id": "",
+      "direction": "主线=可解释筛选（Q1）→ 现患管理三级分层（Q2）→ 附表公式下 6 个月离散优化（Q3）。队列口径：横截面现患/管理优先级，不写成前瞻发病预测。只用附件1。",
+      "forbidden": "禁止把三问做成互不相干的三套机器学习；禁止声称未病前瞻或引用官方答案。"
+    },
+    {
+      "id": "q1-direction",
+      "question_id": "1",
+      "direction": "双任务分表：①痰湿严重度因变量=痰湿质积分，特征池仅血常规+活动量表；②血脂风险因变量=高血脂二分类标签，同样特征池，并声明血脂四项与诊断近义。九体质贡献=标签哑变量（参照平和质）与九积分标准化系数双报告，处理共线。",
+      "forbidden": "禁止把九体质积分塞进 Q1 前半句特征池；禁止只交一张相关矩阵；禁止不报告标签与 argmax 6.5% 不一致。"
+    },
+    {
+      "id": "q2-direction",
+      "question_id": "2",
+      "direction": "可解释 logistic（特征来自 Q1 池+痰湿积分+体质标签，禁止用高血脂标签/分型当特征）输出概率，用可陈述切点映射低/中/高，并与题面示例（痰湿60/80、活动40）对照。痰湿高危组合给人数与 OR。痰湿≥80 本数据为空，不照抄该档。",
+      "forbidden": "禁止无阈值表的三分类黑箱；禁止用诊断标签预测诊断；禁止把示例阈值当唯一硬规则。"
+    },
+    {
+      "id": "q3-direction",
+      "question_id": "3",
+      "direction": "对象=体质标签=5。目标=最小化期末痰湿，约束总成本≤2000 且强度=年龄∩活动可行域。动力学①：f<5 降幅0；f≥5 时月降幅=0.03*(k-1)+0.01*max(0,f-5)，乘性更新后取整。调理级每月按附表2重算。必须输出 ID=1/2/3 逐月方案（ID1 仅强度1）。",
+      "forbidden": "禁止血脂进 Q3 目标；禁止 ID1 排 2/3 级强度；禁止无轨迹口头『显著下降』；禁止脱离附表公式自造干预效果。"
+    }
+  ],
+  "formula_notes": [
+    {
+      "id": "formula-horizon",
+      "question_id": "3",
+      "note": "每月按4周、6个月按24周。活动成本=单次成本(3/5/8)×周频次×24。调理成本=各月附表2月费之和。总成本=两通道合计，硬约束≤2000。"
+    },
+    {
+      "id": "formula-dynamics",
+      "question_id": "3",
+      "note": "题面①：每周<5次痰湿基本稳定（降幅0）。每周5次时每提升一级强度每月约降3%；同强度每周+1次每月约降1%。实现：delta=0.03*(k-1)+0.01*max(0,f-5)（仅当 f>=5），S:=round(S*(1-delta))，下限0。"
+    },
+    {
+      "id": "formula-intensity",
+      "question_id": "3",
+      "note": "强度可行域取交集：年龄组1–2可1/2/3级、组3–4可1/2、组5仅1；活动总分<40仅1级、40–59可1/2、≥60可1/2/3。周频次1–10。"
+    },
+    {
+      "id": "formula-tcm",
+      "question_id": "3",
+      "note": "附表2：痰湿0–58→1级30元/月；59–61→2级80元；≥62→3级130元。按当月积分动态定级。"
+    }
+  ],
+  "required_discussions": [
+    {
+      "id": "disc-cohort",
+      "sections": ["assumptions", "model_section"],
+      "topic": "Q2 为现患/管理优先级分层，不是未病前瞻；79.3% 阳性与 91.1% 血脂越界必须进假设。",
+      "requirement": "不得把结论写成『预测未来发病』。"
+    },
+    {
+      "id": "disc-argmax",
+      "sections": ["assumptions", "solution"],
+      "topic": "体质标签与九积分 argmax 6.5% 不一致；Q3 以标签=5 为准并报告该缺口。",
+      "requirement": "两套人群定义不得混用而不声明。"
+    },
+    {
+      "id": "disc-threshold",
+      "sections": ["solution"],
+      "topic": "Q2 三级阈值表须与题面示例对照；说明痰湿≥80 在本数据不可用。",
+      "requirement": "正文必须有一张可复述阈值总表。"
+    },
+    {
+      "id": "disc-q3-cases",
+      "sections": ["solution"],
+      "topic": "样本1/2/3 最优方案可复算（强度、频次、月痰湿、月费、总成本）。",
+      "requirement": "三例缺一即交付不完整。"
+    }
+  ],
+  "red_lines": [
+    {
+      "id": "rl-no-leak",
+      "question_id": "2",
+      "prohibition": "禁止用高血脂二分类或分型标签作为预警模型输入特征。"
+    },
+    {
+      "id": "rl-no-copy80",
+      "question_id": "2",
+      "prohibition": "禁止把题面示例痰湿≥80 当作本数据高风险硬阈值。"
+    },
+    {
+      "id": "rl-id1-intensity",
+      "question_id": "3",
+      "prohibition": "禁止给活动量表总分38的样本1安排2级或3级活动强度。"
+    },
+    {
+      "id": "rl-no-official",
+      "question_id": "",
+      "prohibition": "禁止检索或写入官方参考答案、评分标准与优秀论文数值。"
+    }
+  ],
+  "figure_plan": [
+    {
+      "id": "fig-q1",
+      "question_id": "1",
+      "figure": "Q1 入选指标系数图（痰湿严重度与血脂风险分面）",
+      "requirements": "标注变量名与系数正负；HDL 低为异常方向须可见。"
+    },
+    {
+      "id": "fig-q2",
+      "question_id": "2",
+      "figure": "Q2 三级人数与阈值示意",
+      "requirements": "三档人数与切点同图或邻表。"
+    },
+    {
+      "id": "fig-q3",
+      "question_id": "3",
+      "figure": "样本1/2/3 六个月痰湿轨迹",
+      "requirements": "三条曲线、纵轴积分、标出调理级跳档月。"
+    }
+  ],
+  "scoring_notes": [
+    {
+      "id": "score-q2-table",
+      "question_id": "2",
+      "note": "无阈值表按漏答硬项处理。"
+    },
+    {
+      "id": "score-q3-ids",
+      "question_id": "3",
+      "note": "正文必须出现样本ID 1、2、3 的完整方案。"
+    }
+  ],
+  "data_notes": [
+    {
+      "id": "data-only-att1",
+      "question_id": "",
+      "note": "本跑只用附件1：样例数据.xlsx（1000×37，零缺失）。题面允许补充数据，不使用。"
+    },
+    {
+      "id": "data-phlegm-band",
+      "question_id": "3",
+      "note": "标签=5 的痰湿积分55–65；≥60 的145人全部为标签5。ID1/2/3 痰湿64/58/59。"
+    },
+    {
+      "id": "data-type0",
+      "question_id": "2",
+      "note": "未确诊207人的血脂异常分型编码为0（非缺失）。"
+    }
+  ],
+  "reference_direction": [
+    "血脂界值以题面附表1为准，可与公开中国成人血脂异常防治指南对照作解释，不替代题面范围。",
+    "中医九体质量化以题面0–100积分为准，不套用转化分判定阈值。"
+  ]
+}

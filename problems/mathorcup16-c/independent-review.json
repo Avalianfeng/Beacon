@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "problem_id": "mathorcup16-c",
+  "evidence_path": "runs\\mathorcup16-c-p3\\evidence.json",
+  "evidence_sha256": "70c4aea45de1ca0727a11518d3a0b06ce6901b8f122fa80c2dfff360a0297246",
+  "verdict": "pass",
+  "actor": "p3-host",
+  "notes": "Independent re-run matched result; Q1 R2 tiny (honest); Q2 AUC high because lipids nearly define the label (declared tautology); Q3 ID1 kmax=1; mismatch=65 matches data_profile.",
+  "rerun": {
+    "ran": true,
+    "pass": true
+  },
+  "at": "2026-08-27T09:58:57.198898+00:00"
+}

@@ -1,0 +1,31 @@
+{
+  "tables": [
+    {
+      "id": "q1-phlegm",
+      "title": "表1 表征痰湿严重度的关键指标（标准化系数）",
+      "columns": ["指标", "标准化系数"],
+      "lead_columns": {
+        "指标": ["TC", "TG", "LDL_C", "HDL_C", "血糖", "血尿酸", "BMI", "ADL总分", "IADL总分", "活动量表总分"]
+      },
+      "field": "q1.phlegm_coef"
+    },
+    {
+      "id": "q2-tiers",
+      "title": "表2 三级风险人数",
+      "columns": ["风险等级", "人数"],
+      "lead_columns": {
+        "风险等级": ["低", "中", "高"]
+      },
+      "field": "q2.tier_n"
+    },
+    {
+      "id": "q3-cases",
+      "title": "表3 样本1/2/3最优干预方案",
+      "columns": ["样本ID", "强度", "周频次", "总成本", "期末痰湿"],
+      "lead_columns": {
+        "样本ID": [1, 2, 3]
+      },
+      "field": "q3.case_flat"
+    }
+  ]
+}

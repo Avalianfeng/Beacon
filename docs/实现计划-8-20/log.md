@@ -157,3 +157,12 @@ E1/E2（calibration + 偏差报告）/ F（重定位 agent 侧）/ G（双轨约
 - 代码：`ops_handoff` / `ops_recertify` / `ops_accept` / `ops_gate`；S6 paper/tables 闸门；`reference add` 同源只登记。
 - 验收：相关 pytest 102 passed；mcm51-c 走通 S0–S8（`runs/mcm51-c-p2/`，不覆盖 skill-v1）；`problem stage` completed S0–S8，S9 optional。
 - 下一刀 P3 新题验证。
+
+## 2026-08-27 · P3 新题验证完成（D-C 证据）
+
+- 题：2026 MathorCup C（`mathorcup16-c`，中老年高血脂预警）；非 mcm51-*。
+- 操作面 S0–S8：`problem stage` completed S0–S8。产物 `problems/mathorcup16-c/`；装配 `runs/mathorcup16-c-p3/`（evidence + tables + 骨架 paper）。recertify `--rerun` 数值一致。
+- 对照 supervise 烟测：`runs/mathorcup16-c-p3-s9/`，`--max-recoveries 1`；analyst→…→coder_generate/execute 循环后 `pause` 停在 `coder_execute`（约 24 次 LLM、completion_tokens≈44066）。**未 recover、未出论文**。
+- 新缺口（不本拍实现）：论文骨架摘要仍用 mcm51-c 默认模板（T-21）；`brief.problem_id` vs 中文 title 误报不匹配；tables 仍提示 C 题表3.2。
+- **D-C 建议（待用户拍板）**：维持 D-002——默认分阶段操作面；supervise 可到达编码但本烟测未稳定出数即进入 generate/execute 循环，不能当默认主路径。体系相对纯 skill 多出来的是闸门、哈希、`next_command`、机械三项 verify。
+
