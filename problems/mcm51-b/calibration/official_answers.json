@@ -69,5 +69,28 @@
       "E_高速抛光机": 1
     },
     "root_cause": "假设9（禁止同类多机分摊，52 条裁决第 8 条弱依据）与官方口径冲突，详见 docs/20"
+  },
+  "h04_20260827": {
+    "task": "H-04",
+    "decision": "D-013",
+    "method": "reference_solver.py --q1-only；allow_splitting off/on",
+    "artifacts": "calibration/h04/{off,on}/stdout.txt",
+    "off": {
+      "q1_s": 41600,
+      "a1": {
+        "精密灌装机": {"n": 1, "duration_s": 5400},
+        "自动化输送臂": {"n": 1, "duration_s": 4320}
+      }
+    },
+    "on": {
+      "q1_s": 37280,
+      "a1": {
+        "精密灌装机": {"n": 5, "duration_s": 1080},
+        "自动化输送臂": {"n": 4, "duration_s": 1080}
+      }
+    },
+    "verdict": "根因坐实：on 精确命中官方声明 37280；落在区间 37000–39500",
+    "solver_sha256": "ee04ee10f508ebbc6f23f825101cf50776da11cd2828484ca539cf715c67078e",
+    "note": "默认 allow_splitting=False 保持冻结语义；哈希变因加开关。论文/brief 数字不改。详见 calibration/口径裁决记录.md"
   }
 }

@@ -13,7 +13,8 @@
      设备初始位置 = 所属班组驻地，初始进场（班组→首个车间）计入 makespan。
   3. C 车间展开为 C1→C2→(C3_1,C4_1,C5_1)→(C3_2,C4_2,C5_2)→(C3_3,C4_3,C5_3)，轮间整链顺序。
   4. Q1 仅 A 车间 + 班组1；Q2 五车间 + 班组1；Q3 五车间 + 班组1+2；Q4 预算≤500000 购置×班组×调度联合。
-  5. 一设备一工序（不允许多台同类分摊）；不可抢占；加工时长 = 工程量÷效率(h) → 秒向上取整。
+  5. 默认一设备一工序（不允许多台同类分摊）；不可抢占；加工时长 = 工程量÷效率(h) → 秒向上取整。
+     CLI 开关 `--allow-splitting` 为 H-04 验证用：同类多机并行分摊工程量（默认关 = 冻结语义）。
 
 性质声明（诚实标注）：Q1 可精确（规模极小）；Q2–Q4 为构造式启发式（确定性优先规则），
 结果可行且口径合规，**非全局最优**——论文须如实声明并给出下界对照（关键路径 CPM 无容量下界）。
@@ -31,7 +32,6 @@ CP-SAT 精确化列为后续方法能力库升级项。
 from __future__ import annotations
 
 import math
-import os
 import re
 import sys
 from pathlib import Path
@@ -225,8 +225,16 @@ def _travel(pb: dict, loc_a: str, loc_b: str, speed: float) -> int:
 
 # ---------------- 构造式调度核心 ----------------
 
-def schedule(pb: dict, act_ids: list[int], device_pool: list[dict]) -> tuple[dict, int]:
-    """确定性优先规则调度：返回 {act_idx: (start, end, {dtype: device_id})} 与 makespan。
+def schedule(
+    pb: dict,
+    act_ids: list[int],
+    device_pool: list[dict],
+    allow_splitting: bool = False,
+) -> tuple[dict, int]:
+    """确定性优先规则调度：返回 {act_idx: (start, end, {dtype: [device_id, ...]})} 与 makespan。
+
+    allow_splitting=False（默认）：每类型选一台最早可开工实例（冻结语义）。
+    allow_splitting=True：该类型 pool 内全部实例并行分摊工程量。
 
     约束：前驱链、双设备各自完成（C_i = max C_{i,r}，先完成者立即释放）、
     单实例不可重叠、跨车间直接运输（设备位置链）、初始进场（班组驻地→车间）计入。
@@ -251,30 +259,46 @@ def schedule(pb: dict, act_ids: list[int], device_pool: list[dict]) -> tuple[dic
         remaining.remove(i)
         pred_end = max((result[p]["end"] for p in [pred[i]] if p in result), default=0)
 
-        job_devices: dict[str, str] = {}
+        job_devices: dict[str, list[str]] = {}
         job_start: dict[str, int] = {}
         job_end: dict[str, int] = {}
-        for dtype, _eff in acts[i]["devices"]:
-            dur = _job_duration(acts[i], dtype)
-            best_id, best_start = None, None
-            for d in device_pool:
-                if d["type"] != dtype:
-                    continue
-                trans = _travel(pb, d["loc"], acts[i]["workshop"], d["speed"])
-                cand = max(pred_end, int(d["avail"]) + trans)
-                if best_start is None or cand < best_start:
-                    best_start, best_id = cand, d["id"]
-            if best_id is None:
+        for dtype, eff in acts[i]["devices"]:
+            type_pool = [d for d in device_pool if d["type"] == dtype]
+            if not type_pool:
                 raise RuntimeError(f"工序 {acts[i]['name']} 无可用设备（类型 {dtype}）")
-            job_devices[dtype] = best_id
-            job_start[dtype] = int(best_start)
-            job_end[dtype] = int(best_start) + dur
+            if allow_splitting:
+                n = len(type_pool)
+                qty = acts[i]["quantity"]
+                dur = (
+                    int(math.ceil(qty / (n * eff) * 3600))
+                    if qty is not None and eff
+                    else 0
+                )
+                ready = max(
+                    max(pred_end, int(d["avail"]) + _travel(pb, d["loc"], acts[i]["workshop"], d["speed"]))
+                    for d in type_pool
+                )
+                job_devices[dtype] = [d["id"] for d in type_pool]
+                job_start[dtype] = int(ready)
+                job_end[dtype] = int(ready) + dur
+            else:
+                dur = _job_duration(acts[i], dtype)
+                best_id, best_start = None, None
+                for d in type_pool:
+                    trans = _travel(pb, d["loc"], acts[i]["workshop"], d["speed"])
+                    cand = max(pred_end, int(d["avail"]) + trans)
+                    if best_start is None or cand < best_start:
+                        best_start, best_id = cand, d["id"]
+                job_devices[dtype] = [best_id]
+                job_start[dtype] = int(best_start)
+                job_end[dtype] = int(best_start) + dur
         end = max(job_end.values()) if job_end else int(pred_end)
         # 设备立即释放（各自 job_end）+ 更新位置
-        for dtype, did in job_devices.items():
-            d = device_map[did]
-            d["avail"] = float(job_end[dtype])
-            d["loc"] = acts[i]["workshop"]
+        for dtype, dids in job_devices.items():
+            for did in dids:
+                d = device_map[did]
+                d["avail"] = float(job_end[dtype])
+                d["loc"] = acts[i]["workshop"]
         result[i] = {"start": int(pred_end), "end": end, "jobs": job_devices,
                      "job_start": job_start, "job_end": job_end}
         done.add(i)
@@ -286,22 +310,22 @@ def _crew_pool(pb: dict, crews: list[int]) -> list[dict]:
     return [dict(d) for d in pb["instances"] if d["crew"] in crews]
 
 
-def solve_q1(pb: dict) -> tuple[dict, int]:
+def solve_q1(pb: dict, allow_splitting: bool = False) -> tuple[dict, int]:
     a_ids = [a["idx"] for a in pb["activities"] if a["workshop"] == "A"]
-    return schedule(pb, a_ids, _crew_pool(pb, [1]))
+    return schedule(pb, a_ids, _crew_pool(pb, [1]), allow_splitting=allow_splitting)
 
 
-def solve_q2(pb: dict) -> tuple[dict, int]:
+def solve_q2(pb: dict, allow_splitting: bool = False) -> tuple[dict, int]:
     ids = [a["idx"] for a in pb["activities"]]
-    return schedule(pb, ids, _crew_pool(pb, [1]))
+    return schedule(pb, ids, _crew_pool(pb, [1]), allow_splitting=allow_splitting)
 
 
-def solve_q3(pb: dict) -> tuple[dict, int]:
+def solve_q3(pb: dict, allow_splitting: bool = False) -> tuple[dict, int]:
     ids = [a["idx"] for a in pb["activities"]]
-    return schedule(pb, ids, _crew_pool(pb, [1, 2]))
+    return schedule(pb, ids, _crew_pool(pb, [1, 2]), allow_splitting=allow_splitting)
 
 
-def solve_q4(pb: dict, budget: float = 500000.0) -> tuple[dict, int, dict]:
+def solve_q4(pb: dict, budget: float = 500000.0, allow_splitting: bool = False) -> tuple[dict, int, dict]:
     """预算内贪心购置 + 调度：反复购买「边际改善/单价」最优的设备，直到预算耗尽或无改善。
 
     返回 (schedule, makespan, purchase)，purchase[(dtype, crew)] = 台数。
@@ -311,7 +335,7 @@ def solve_q4(pb: dict, budget: float = 500000.0) -> tuple[dict, int, dict]:
     pool = [dict(d) for d in base_pool]
     purchase: dict[tuple[str, int], int] = {}
     spent = 0.0
-    cur_makespan = schedule(pb, ids, pool)[1]
+    cur_makespan = schedule(pb, ids, pool, allow_splitting=allow_splitting)[1]
     while spent < budget:
         best = None  # (gain, cost, dtype, crew, new_makespan)
         for dtype, pr in pb["price"].items():
@@ -323,7 +347,7 @@ def solve_q4(pb: dict, budget: float = 500000.0) -> tuple[dict, int, dict]:
                     "id": f"{dtype}-{crew}-new{len(pool)}", "type": dtype, "crew": crew,
                     "speed": _SPEED_MS, "price": pr, "avail": 0.0, "loc": f"班组{crew}",
                 })
-                ms = schedule(pb, ids, trial)[1]
+                ms = schedule(pb, ids, trial, allow_splitting=allow_splitting)[1]
                 gain = cur_makespan - ms
                 if gain > 0 and (best is None or gain / pr > best[0]):
                     best = (gain / pr, pr, dtype, crew, ms)
@@ -337,7 +361,7 @@ def solve_q4(pb: dict, budget: float = 500000.0) -> tuple[dict, int, dict]:
         })
         purchase[(dtype, crew)] = purchase.get((dtype, crew), 0) + 1
         cur_makespan = ms
-    sch, ms = schedule(pb, ids, pool)
+    sch, ms = schedule(pb, ids, pool, allow_splitting=allow_splitting)
     return sch, ms, {"purchase": purchase, "spent": spent, "pool": pool}
 
 
@@ -354,12 +378,13 @@ def print_schedule_table(sch: dict, acts: list, with_crew: bool, device_crew: di
     rows = []
     for i, v in sch.items():
         act = acts[i]
-        for dtype, did in v["jobs"].items():
-            crew = device_crew.get(did, "")
-            rows.append([
-                did, _fmt_clock(v["job_start"][dtype]), _fmt_clock(v["job_end"][dtype]),
-                v["job_end"][dtype] - v["job_start"][dtype], act["name"],
-            ] + ([crew] if with_crew else []))
+        for dtype, dids in v["jobs"].items():
+            for did in dids:
+                crew = device_crew.get(did, "")
+                rows.append([
+                    did, _fmt_clock(v["job_start"][dtype]), _fmt_clock(v["job_end"][dtype]),
+                    v["job_end"][dtype] - v["job_start"][dtype], act["name"],
+                ] + ([crew] if with_crew else []))
     rows.sort(key=lambda r: (r[0], r[1]))
     header = "序号, 设备编号, 起始时间, 结束时间, 持续工作时间(s), 工序编号" + (", 班组" if with_crew else "")
     print(header)
@@ -374,17 +399,21 @@ def draw_gantt(sch: dict, acts: list, title: str, fname: str) -> None:
 
     plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False
-    fig, ax = plt.subplots(figsize=(14, max(6, len(sch) * 0.35)))
-    items = sorted(sch.items(), key=lambda kv: (kv[1]["start"], kv[1]["end"]))
-    for y, (i, v) in enumerate(items):
-        for dtype, did in v["jobs"].items():
+    bar_rows: list[tuple[int, str, int, int, str]] = []
+    for i, v in sorted(sch.items(), key=lambda kv: (kv[1]["start"], kv[1]["end"])):
+        act_name = acts[i]["name"]
+        for dtype, dids in v["jobs"].items():
             s = v["job_start"][dtype]
             e = v["job_end"][dtype]
-            ax.barh(y, e - s, left=s, height=0.5, color="#4C72B0", edgecolor="black")
-            ax.text((s + e) / 2, y, did, ha="center", va="center", fontsize=7)
+            for did in dids:
+                bar_rows.append((i, act_name, s, e, did))
+    fig, ax = plt.subplots(figsize=(14, max(6, len(bar_rows) * 0.35)))
+    for y, (_i, act_name, s, e, did) in enumerate(bar_rows):
+        ax.barh(y, e - s, left=s, height=0.5, color="#4C72B0", edgecolor="black")
+        ax.text((s + e) / 2, y, did, ha="center", va="center", fontsize=7)
     ax.set_xlabel("时间 (秒)")
-    ax.set_yticks(range(len(items)))
-    ax.set_yticklabels([acts[i]["name"] for i, _ in items], fontsize=8)
+    ax.set_yticks(range(len(bar_rows)))
+    ax.set_yticklabels([r[1] for r in bar_rows], fontsize=8)
     ax.set_title(title)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -392,18 +421,62 @@ def draw_gantt(sch: dict, acts: list, title: str, fname: str) -> None:
     plt.close(fig)
 
 
-def main(data_dir: str | None = None, out_dir: str | None = None) -> None:
-    data_dir = Path(data_dir) if data_dir else Path("E:/git_clone/Beacon/problems/mcm51-b/source")
-    out_dir = Path(out_dir) if out_dir else Path.cwd()
-    os.chdir(out_dir)
-    pb = load_problem(data_dir)
+def print_activity_diagnostics(sch: dict, acts: list) -> None:
+    """每工序每设备类型一行：name, dtype, n, duration_s, C_i。"""
+    print("诊断: name, dtype, n, duration_s, C_i")
+    for i in sorted(sch.keys(), key=lambda k: (acts[k]["workshop"], acts[k]["name"])):
+        v = sch[i]
+        act = acts[i]
+        for dtype, dids in v["jobs"].items():
+            dur = v["job_end"][dtype] - v["job_start"][dtype]
+            print(f"{act['name']}, {dtype}, {len(dids)}, {dur}, {v['end']}")
 
-    sch1, ms1 = solve_q1(pb)
-    sch2, ms2 = solve_q2(pb)
-    sch3, ms3 = solve_q3(pb)
-    sch4, ms4, q4 = solve_q4(pb)
+
+def _resolve_out_dir(data_dir: Path, out_dir: Path | None) -> Path:
+    data_resolved = data_dir.resolve()
+    if out_dir is None:
+        out = Path.cwd().resolve()
+    else:
+        out = Path(out_dir).resolve()
+    if out == data_resolved:
+        raise SystemExit(
+            f"拒绝写入 data_dir/source 目录（会覆盖冻结甘特）：{out}\n"
+            "请显式指定 out_dir，例如 problems/mcm51-b/calibration/h04/off"
+        )
+    return out
+
+
+def main(
+    data_dir: str | None = None,
+    out_dir: str | None = None,
+    *,
+    allow_splitting: bool = False,
+    q1_only: bool = False,
+) -> None:
+    data_path = Path(data_dir or "E:/git_clone/Beacon/problems/mcm51-b/source")
+    out_path = _resolve_out_dir(data_path, Path(out_dir) if out_dir else None)
+    out_path.mkdir(parents=True, exist_ok=True)
+    pb = load_problem(data_path)
 
     device_crew = {d["id"]: d["crew"] for d in pb["instances"]}
+
+    if q1_only:
+        sch1, ms1 = solve_q1(pb, allow_splitting=allow_splitting)
+        print(f"Q1 makespan: {ms1} 秒 (allow_splitting={allow_splitting})")
+        print("表1:")
+        print_schedule_table(sch1, pb["activities"], False, device_crew)
+        print(f"完成问题1任务的最短时长：{ms1} (s)")
+        print_activity_diagnostics(sch1, pb["activities"])
+        gantt_path = out_path / "gantt_q1.png"
+        draw_gantt(sch1, pb["activities"], "Q1 A 车间调度", str(gantt_path))
+        print(f"甘特图已保存：{gantt_path}")
+        return
+
+    sch1, ms1 = solve_q1(pb, allow_splitting=allow_splitting)
+    sch2, ms2 = solve_q2(pb, allow_splitting=allow_splitting)
+    sch3, ms3 = solve_q3(pb, allow_splitting=allow_splitting)
+    sch4, ms4, q4 = solve_q4(pb, allow_splitting=allow_splitting)
+
     for d in q4["pool"]:
         device_crew[d["id"]] = d["crew"]
 
@@ -437,12 +510,25 @@ def main(data_dir: str | None = None, out_dir: str | None = None) -> None:
           f"budget_utilization={budget_utilization:.4f} q1_makespan={ms1} "
           f"q2_makespan={ms2} q3_makespan={ms3}")
 
-    draw_gantt(sch1, pb["activities"], "Q1 A 车间调度", "gantt_q1.png")
-    draw_gantt(sch2, pb["activities"], "Q2 五车间调度（班组1）", "gantt_q2.png")
-    draw_gantt(sch3, pb["activities"], "Q3 五车间调度（班组1+2）", "gantt_q3.png")
-    draw_gantt(sch4, pb["activities"], "Q4 购置+调度", "gantt_q4.png")
-    print("甘特图已保存：gantt_q1.png ~ gantt_q4.png")
+    draw_gantt(sch1, pb["activities"], "Q1 A 车间调度", str(out_path / "gantt_q1.png"))
+    draw_gantt(sch2, pb["activities"], "Q2 五车间调度（班组1）", str(out_path / "gantt_q2.png"))
+    draw_gantt(sch3, pb["activities"], "Q3 五车间调度（班组1+2）", str(out_path / "gantt_q3.png"))
+    draw_gantt(sch4, pb["activities"], "Q4 购置+调度", str(out_path / "gantt_q4.png"))
+    print(f"甘特图已保存：{out_path / 'gantt_q1.png'} ~ {out_path / 'gantt_q4.png'}")
 
 
 if __name__ == "__main__":
-    main(*sys.argv[1:2], sys.argv[2] if len(sys.argv) > 2 else None)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="mcm51-b 参考求解器")
+    parser.add_argument("data_dir", nargs="?", default="E:/git_clone/Beacon/problems/mcm51-b/source")
+    parser.add_argument("out_dir", nargs="?", default=None)
+    parser.add_argument("--allow-splitting", action="store_true", help="H-04：同类多机并行分摊")
+    parser.add_argument("--q1-only", action="store_true", help="仅求解 Q1 并写入 out_dir")
+    _args = parser.parse_args()
+    main(
+        _args.data_dir,
+        _args.out_dir,
+        allow_splitting=_args.allow_splitting,
+        q1_only=_args.q1_only,
+    )
