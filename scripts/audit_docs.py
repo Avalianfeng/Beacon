@@ -4,7 +4,7 @@
 调用全局 doc-compact 的 audit.py，再按 Beacon 口径过滤：
   1. 排除虚拟环境/依赖缓存噪音（.venv、.uv-cache、node_modules、.git）
   2. archive/ 下孤儿豁免（设计内冻结区，见 docs/文档治理约定.md §一）
-  3. 实现计划-8-20/log/ 下孤儿豁免（日期文件名即索引，见文档治理约定 §六）
+  3. docs/log/ 下孤儿豁免（日期文件名即索引，见文档治理约定 §六）
   4. 根 CLAUDE.md「非单行 @*.md」豁免（Beacon 范式：CLAUDE.md 为自包含规则集）
 
 用法: python scripts/audit_docs.py
@@ -22,7 +22,7 @@ PROJ = Path(__file__).resolve().parent.parent
 
 NOISE = (".venv", ".uv-cache", "node_modules", ".probe_tmp", ".codegraph")
 ARCHIVE_ORPHAN = re.compile(r"孤儿:\s*(docs[/\\]archive)", re.IGNORECASE)
-LOG_ORPHAN = re.compile(r"孤儿:\s*(docs[/\\]实现计划-8-20[/\\]log[/\\])", re.IGNORECASE)
+LOG_ORPHAN = re.compile(r"孤儿:\s*(docs[/\\]log[/\\])", re.IGNORECASE)
 ROOT_CLAUDE_CMDLINE = re.compile(r"非单行 @\*\.md:\s*CLAUDE\.md\s*$", re.IGNORECASE)
 
 
