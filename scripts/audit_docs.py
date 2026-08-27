@@ -4,7 +4,8 @@
 调用全局 doc-compact 的 audit.py，再按 Beacon 口径过滤：
   1. 排除虚拟环境/依赖缓存噪音（.venv、.uv-cache、node_modules、.git）
   2. archive/ 下孤儿豁免（设计内冻结区，见 docs/文档治理约定.md §一）
-  3. 根 CLAUDE.md「非单行 @*.md」豁免（Beacon 范式：CLAUDE.md 为自包含规则集）
+  3. 实现计划-8-20/log/ 下孤儿豁免（日期文件名即索引，见文档治理约定 §六）
+  4. 根 CLAUDE.md「非单行 @*.md」豁免（Beacon 范式：CLAUDE.md 为自包含规则集）
 
 用法: python scripts/audit_docs.py
 退出码: 0 = 无非豁免缺陷；1 = 存在非豁免缺陷。
@@ -21,6 +22,7 @@ PROJ = Path(__file__).resolve().parent.parent
 
 NOISE = (".venv", ".uv-cache", "node_modules", ".probe_tmp", ".codegraph")
 ARCHIVE_ORPHAN = re.compile(r"孤儿:\s*(docs[/\\]archive)", re.IGNORECASE)
+LOG_ORPHAN = re.compile(r"孤儿:\s*(docs[/\\]实现计划-8-20[/\\]log[/\\])", re.IGNORECASE)
 ROOT_CLAUDE_CMDLINE = re.compile(r"非单行 @\*\.md:\s*CLAUDE\.md\s*$", re.IGNORECASE)
 
 
@@ -39,7 +41,7 @@ def main() -> int:
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     raw = (proc.stdout or "") + (proc.stderr or "")
-    kept, exempt_noise, exempt_archive, exempt_claude = [], 0, 0, 0
+    kept, exempt_noise, exempt_archive, exempt_log, exempt_claude = [], 0, 0, 0, 0
 
     for line in raw.splitlines():
         if not line.strip():
@@ -50,6 +52,9 @@ def main() -> int:
         if ARCHIVE_ORPHAN.search(line):
             exempt_archive += 1
             continue
+        if LOG_ORPHAN.search(line):
+            exempt_log += 1
+            continue
         if ROOT_CLAUDE_CMDLINE.search(line):
             exempt_claude += 1
             continue
@@ -59,7 +64,7 @@ def main() -> int:
     print("=" * 60)
     print(
         f"Beacon 口径豁免: 噪音 {exempt_noise} 行 | archive 孤儿 {exempt_archive} 行 | "
-        f"根 CLAUDE.md 范式 {exempt_claude} 行"
+        f"log/ 孤儿 {exempt_log} 行 | 根 CLAUDE.md 范式 {exempt_claude} 行"
     )
     # 判缺陷：保留行里是否还有 ❌
     defects = [ln for ln in kept if "❌" in ln]
