@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "problems": [],
+  "warns": [
+    "缺库 sklearn——求解/敏感性代码只能用 numpy/scipy 替代（方向阶段勿选依赖它的方法）",
+    "缺库 ruptures——求解/敏感性代码只能用 numpy/scipy 替代（方向阶段勿选依赖它的方法）",
+    "缺库 statsmodels——求解/敏感性代码只能用 numpy/scipy 替代（方向阶段勿选依赖它的方法）",
+    "缺库 xgboost——求解/敏感性代码只能用 numpy/scipy 替代（方向阶段勿选依赖它的方法）",
+    "缺库 lightgbm——求解/敏感性代码只能用 numpy/scipy 替代（方向阶段勿选依赖它的方法）",
+    "缺库 pywt——求解/敏感性代码只能用 numpy/scipy 替代（方向阶段勿选依赖它的方法）",
+    "缺库 shap——求解/敏感性代码只能用 numpy/scipy 替代（方向阶段勿选依赖它的方法）"
+  ],
+  "blockers": [],
+  "brief_path": "problems\\mcm51-c\\brief.json",
+  "ok_libs": []
+}

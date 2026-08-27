@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "problem_id": "mcm51-c",
+  "evidence_path": "runs\\mcm51-c-p2\\evidence.json",
+  "evidence_sha256": "260bbc04614c7639f8ec0f9938745eab04b19ac7767f5fa5e3a0b40694a86bf4",
+  "verdict": "pass",
+  "actor": "p2",
+  "notes": "P2 闭环；C 题锚点复核已有 _verify_q1_points.py",
+  "rerun": {
+    "ran": false
+  },
+  "at": "2026-08-27T09:26:02.115084+00:00"
+}

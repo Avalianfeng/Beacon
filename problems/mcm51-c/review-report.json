@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "exit_code": 0,
+  "tools": [
+    {
+      "name": "check_paper_numbers",
+      "exit_code": 0
+    },
+    {
+      "name": "check_assumption_claims",
+      "exit_code": 0
+    }
+  ],
+  "strict": false
+}

@@ -175,3 +175,4 @@ def test_problem_stage_json_prefix(tmp_path, monkeypatch):
     data = json.loads(result.output)
     assert data["completed"] == ["S0"]
     assert data["next"] == "S1"
+    assert data.get("next_command") is None

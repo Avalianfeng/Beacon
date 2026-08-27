@@ -716,9 +716,11 @@ def test_brief_mismatch_silent_on_empty_pid(capsys):
 def test_root_help_lists_stage_markers():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0, result.output
-    for marker in ("S0", "S3", "S6", "S7", "S9"):
+    for marker in ("S0", "S3", "S5", "S6", "S7", "S8", "S9"):
         assert marker in result.output
     assert "review-check" in result.output
+    assert "recertify" in result.output
+    assert "accept" in result.output
     assert "supervise" in result.output
 
 
@@ -791,3 +793,143 @@ def test_reference_verify_cli_ok_and_fail(tmp_path, monkeypatch):
         "--out", str(tmp_path / "pkg-fail.json"),
     ])
     assert result_fail.exit_code == 1
+
+
+def _min_spec(tmp_path, pid="p2"):
+    spec_dir = tmp_path / "problems" / pid
+    spec_dir.mkdir(parents=True)
+    spec = {
+        "problem_id": pid,
+        "title": "t",
+        "background": "b",
+        "questions": ["q"],
+        "data_files": [],
+        "data_dir": "",
+    }
+    spec_path = spec_dir / "problem.json"
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    return spec_dir, spec_path
+
+
+def test_reference_paper_refuses_without_package(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    spec_dir, spec_path = _min_spec(tmp_path)
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text("{}", encoding="utf-8")
+    result = runner.invoke(app, [
+        "reference", "paper",
+        "--problem", str(spec_path),
+        "--evidence", str(evidence),
+    ])
+    assert result.exit_code == 1
+    assert "evidence-package" in result.output
+
+
+def test_reference_tables_refuses_without_package(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    spec_dir, spec_path = _min_spec(tmp_path, pid="p2t")
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text("{}", encoding="utf-8")
+    result = runner.invoke(app, [
+        "reference", "tables",
+        "--problem", str(spec_path),
+        "--evidence", str(evidence),
+    ])
+    assert result.exit_code == 1
+    assert "evidence-package" in result.output
+
+
+def test_reference_recertify_cli_writes_review(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    spec_dir, spec_path = _min_spec(tmp_path, pid="p2r")
+    evidence = {
+        "run": {"success": True},
+        "result": {"ours": {"a": 1.0}},
+        "q_lines": ["Q1: a=1"],
+    }
+    ev_path = spec_dir / "evidence.json"
+    ev_path.write_text(json.dumps(evidence), encoding="utf-8")
+    package = {
+        "version": 1,
+        "problem_id": "p2r",
+        "solver": {"path": "s", "sha256": ""},
+        "evidence_path": str(ev_path),
+        "checks": [
+            {"id": "run_success", "pass": True},
+            {"id": "no_nan_inf", "pass": True},
+            {"id": "has_result", "pass": True},
+        ],
+        "ok": True,
+    }
+    (spec_dir / "evidence-package.json").write_text(
+        json.dumps(package), encoding="utf-8",
+    )
+    result = runner.invoke(app, [
+        "reference", "recertify",
+        "--problem", str(spec_path),
+        "--evidence", str(ev_path),
+        "--actor", "p2",
+        "--notes", "cli",
+    ])
+    assert result.exit_code == 0, result.output
+    dest = spec_dir / "independent-review.json"
+    assert dest.is_file()
+    body = json.loads(dest.read_text(encoding="utf-8"))
+    assert body["verdict"] == "pass"
+    assert body["actor"] == "p2"
+
+
+def test_accept_cli_requires_explicit_flag(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    spec_dir, spec_path = _min_spec(tmp_path, pid="p2a")
+    paper = spec_dir / "paper.md"
+    paper.write_text("# p\n", encoding="utf-8")
+    missing = runner.invoke(app, [
+        "accept",
+        "--problem", str(spec_path),
+        "--paper", str(paper),
+    ])
+    assert missing.exit_code != 0
+
+    approved = runner.invoke(app, [
+        "accept",
+        "--problem", str(spec_path),
+        "--paper", str(paper),
+        "--approve",
+        "--actor", "p2",
+    ])
+    assert approved.exit_code == 0, approved.output
+    body = json.loads((spec_dir / "acceptance.json").read_text(encoding="utf-8"))
+    assert body["approved"] is True
+
+    rejected = runner.invoke(app, [
+        "accept",
+        "--problem", str(spec_path),
+        "--paper", str(paper),
+        "--no-approve",
+        "--actor", "p2",
+    ])
+    assert rejected.exit_code == 1
+    body = json.loads((spec_dir / "acceptance.json").read_text(encoding="utf-8"))
+    assert body["approved"] is False
+
+
+def test_reference_add_same_dir_registers_without_deleting(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    spec_dir, spec_path = _min_spec(tmp_path, pid="same1")
+    ref = spec_dir / "source" / "reference"
+    ref.mkdir(parents=True)
+    (ref / "_entry.py").write_text("print('ok')\n", encoding="utf-8")
+    (ref / "q1.py").write_text("x = 1\n", encoding="utf-8")
+    result = runner.invoke(app, [
+        "reference", "add",
+        "--problem", str(spec_path),
+        "--solver", str(ref),
+        "--entry", "_entry.py",
+    ])
+    assert result.exit_code == 0, result.output
+    assert (ref / "_entry.py").is_file()
+    assert (ref / "q1.py").is_file()
+    meta = json.loads((spec_dir / "reference.json").read_text(encoding="utf-8"))
+    assert meta["entry"] == "_entry.py"
+    assert len(meta["files"]) == 2

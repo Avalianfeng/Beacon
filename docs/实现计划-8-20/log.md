@@ -150,3 +150,10 @@ E1/E2（calibration + 偏差报告）/ F（重定位 agent 侧）/ G（双轨约
 - 代码：`ops_stage` / `ops_preflight` / `ops_review` / `ops_verify` / `ops_help`；CLI 接线。
 - 验收：相关 pytest 78 passed；`problem stage mcm51-c` → completed S0–S3，next S4（缺 preflight.json）。
 - 下一刀 P2 介入最小闭环。
+
+## 2026-08-27 · P2 介入最小闭环完成
+
+- D-004：T-09/T-17 为登记入口，不写 LangGraph checkpoint，不做 docs/19 全量 checklist。
+- 代码：`ops_handoff` / `ops_recertify` / `ops_accept` / `ops_gate`；S6 paper/tables 闸门；`reference add` 同源只登记。
+- 验收：相关 pytest 102 passed；mcm51-c 走通 S0–S8（`runs/mcm51-c-p2/`，不覆盖 skill-v1）；`problem stage` completed S0–S8，S9 optional。
+- 下一刀 P3 新题验证。

@@ -9,4 +9,6 @@ def test_root_help_contains_stage_markers():
 def test_root_help_contains_key_commands():
     assert "problem" in ROOT_HELP
     assert "review-check" in ROOT_HELP
+    assert "recertify" in ROOT_HELP
+    assert "accept" in ROOT_HELP
     assert "supervise" in ROOT_HELP

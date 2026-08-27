@@ -51,6 +51,10 @@ from math_agent.ops_help import GROUP_HELP, ROOT_HELP
 from math_agent.ops_preflight import run_preflight, write_preflight_json
 from math_agent.ops_review import run_review, write_review_report
 from math_agent.ops_stage import format_stage_text, infer_stage
+from math_agent.ops_gate import require_injected_package
+from math_agent.ops_accept import accept as register_acceptance
+from math_agent.ops_recertify import recertify as register_recertify
+from math_agent.ops_recertify import write_review as write_independent_review
 from math_agent.ops_verify import (
     build_package,
     load_evidence,
@@ -450,15 +454,17 @@ def reference_add(
         )
 
     target = Path("problems") / problem_id / "source" / "reference"
-    if target.exists() and not force:
+    same_dir = solver.resolve() == target.resolve()
+    if target.exists() and not force and not same_dir:
         raise typer.BadParameter(
             f"problems/{problem_id}/source/reference 已存在；换 solver 目录或 --force 覆盖"
         )
-    target.mkdir(parents=True, exist_ok=True)
-    if force:
-        for old in target.iterdir():
-            if old.is_file() and old.suffix == ".py":
-                old.unlink()
+    if not same_dir:
+        target.mkdir(parents=True, exist_ok=True)
+        if force:
+            for old in target.iterdir():
+                if old.is_file() and old.suffix == ".py":
+                    old.unlink()
 
     py_files = sorted(
         (f for f in solver.iterdir() if f.is_file() and f.suffix == ".py"),
@@ -470,7 +476,8 @@ def reference_add(
     ref_files = []
     for f in py_files:
         dest = target / f.name
-        shutil.copyfile(f, dest)
+        if not same_dir:
+            shutil.copyfile(f, dest)
         digest = hashlib.sha256(dest.read_bytes()).hexdigest()
         ref_files.append({"path": f"reference/{f.name}", "sha256": digest})
 
@@ -590,7 +597,7 @@ def reference_run(
     result = run_python(
         wrapper_code,
         workdir=out,
-        timeout=120,
+        timeout=600,
         expected_input_paths=expected_input_paths,
     )
     elapsed = time.monotonic() - start
@@ -873,6 +880,12 @@ def reference_tables(
             f"无法确定 problem_id（problem.json 无 problem_id 且目录名 {problem.parent.name!r} 非法）",
             param_hint="--problem",
         )
+
+    try:
+        require_injected_package(Path("problems") / problem_id, evidence)
+    except ValueError as exc:
+        typer.echo(f"[FAIL] {exc}", err=True)
+        raise typer.Exit(1)
 
     # evidence.json：取 result / q_lines
     try:
@@ -1421,6 +1434,12 @@ def reference_paper(
     if not isinstance(questions, list):
         questions = []
 
+    try:
+        require_injected_package(Path("problems") / problem_id, evidence)
+    except ValueError as exc:
+        typer.echo(f"[FAIL] {exc}", err=True)
+        raise typer.Exit(1)
+
     # evidence.json：result.ours / q_lines（数字唯一事实源）
     try:
         ev = json.loads(evidence.read_text(encoding="utf-8"))
@@ -1504,7 +1523,7 @@ def reference_paper(
         "[提示] 数字红线校验：python scripts/check_paper_numbers.py "
         f"--paper {out} --evidence {evidence}"
     )
-    typer.echo("[提示] 或：math-agent review check --paper <md> --evidence <证据>")
+    typer.echo("[提示] 或：math-agent review-check --paper <md> --evidence <证据>")
 
 
 @reference_app.command("verify")
@@ -1573,6 +1592,127 @@ def reference_verify(
     typer.echo(json.dumps(package, ensure_ascii=False, indent=2))
     typer.echo(f"evidence-package: {dest}")
     if not ok:
+        raise typer.Exit(1)
+
+
+@reference_app.command("recertify")
+def reference_recertify(
+    problem: Path = typer.Option(
+        ..., "--problem", exists=True, readable=True, help="题目 spec JSON"
+    ),
+    evidence: Path | None = typer.Option(
+        None, "--evidence", exists=True, readable=True,
+        help="evidence.json（默认读 package.evidence_path 或 runs/<id>-reference/evidence.json）",
+    ),
+    actor: str = typer.Option("human", "--actor", help="复核者标识"),
+    notes: str = typer.Option("", "--notes", help="复核说明"),
+    rerun: bool = typer.Option(False, "--rerun", help="对照第二份 evidence 的 result 数值"),
+    rerun_evidence: Path | None = typer.Option(
+        None, "--rerun-evidence", exists=True, readable=True,
+        help="--rerun 时的第二份 evidence.json",
+    ),
+    verdict: str = typer.Option("pass", "--verdict", help="pass 或 fail"),
+    out: Path | None = typer.Option(
+        None, "--out", help="independent-review.json（默认 problems/<id>/independent-review.json）",
+    ),
+):
+    """S5 独立复核登记 v0（D-004）：写 independent-review.json，不跑口径 checklist。"""
+    _read_problem_spec(problem)
+    problem_id = _cli_problem_id(problem)
+    problem_dir = Path("problems") / problem_id
+    if evidence is None:
+        pkg_path = problem_dir / "evidence-package.json"
+        if pkg_path.is_file():
+            try:
+                pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                pkg = {}
+            cand = pkg.get("evidence_path") if isinstance(pkg, dict) else None
+            if isinstance(cand, str) and cand.strip():
+                evidence = Path(cand)
+        if evidence is None or not evidence.is_file():
+            evidence = Path("runs") / f"{problem_id}-reference" / "evidence.json"
+        if not evidence.is_file():
+            typer.echo(f"[FAIL] 未找到 evidence.json（先 `reference verify` 或传 --evidence）", err=True)
+            raise typer.Exit(1)
+    if verdict not in ("pass", "fail"):
+        raise typer.BadParameter("verdict 只能是 pass 或 fail", param_hint="--verdict")
+    rerun_data = None
+    if rerun:
+        if rerun_evidence is None:
+            raise typer.BadParameter("--rerun 需要 --rerun-evidence", param_hint="--rerun")
+        try:
+            rerun_data = load_evidence(rerun_evidence)
+        except ValueError as exc:
+            typer.echo(f"[FAIL] {exc}", err=True)
+            raise typer.Exit(1)
+    try:
+        review = register_recertify(
+            problem_dir=problem_dir,
+            evidence=evidence,
+            actor=actor,
+            notes=notes,
+            verdict=verdict,
+            rerun_evidence=rerun_data,
+        )
+    except ValueError as exc:
+        typer.echo(f"[FAIL] {exc}", err=True)
+        raise typer.Exit(1)
+    dest = problem_dir / "independent-review.json"
+    if out is not None and out.resolve() != dest.resolve():
+        write_independent_review(review, out)
+        dest = out
+    typer.echo(json.dumps(review, ensure_ascii=False, indent=2))
+    typer.echo(f"independent-review: {dest}")
+    if review.get("verdict") != "pass":
+        raise typer.Exit(1)
+
+
+@app.command("accept", help=GROUP_HELP["accept"])
+def accept_paper(
+    problem: Path = typer.Option(
+        ..., "--problem", exists=True, readable=True, help="题目 spec JSON"
+    ),
+    paper: Path = typer.Option(
+        ..., "--paper", exists=True, readable=True, help="待放行的 paper.md"
+    ),
+    approve: bool | None = typer.Option(
+        None, "--approve/--no-approve",
+        help="是否放行（必须显式传入，对齐 resume）",
+    ),
+    actor: str = typer.Option("human", "--actor", help="放行者标识"),
+    notes: str = typer.Option("", "--notes", help="放行说明"),
+    out: Path | None = typer.Option(
+        None, "--out", help="acceptance.json（默认 problems/<id>/acceptance.json）",
+    ),
+):
+    """S8 分阶段人审登记 v0（D-004）：写 paper sha256，不写入流水线 checkpoint。"""
+    if approve is None:
+        raise typer.BadParameter(
+            "必须显式传入 --approve 或 --no-approve", param_hint="--approve",
+        )
+    _read_problem_spec(problem)
+    problem_id = _cli_problem_id(problem)
+    problem_dir = Path("problems") / problem_id
+    try:
+        payload = register_acceptance(
+            problem_dir=problem_dir,
+            paper=paper,
+            approved=approve,
+            actor=actor,
+            notes=notes,
+        )
+    except ValueError as exc:
+        typer.echo(f"[FAIL] {exc}", err=True)
+        raise typer.Exit(1)
+    dest = problem_dir / "acceptance.json"
+    if out is not None and out.resolve() != dest.resolve():
+        from math_agent.ops_accept import write_acceptance
+        write_acceptance(payload, out)
+        dest = out
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    typer.echo(f"acceptance: {dest}")
+    if not approve:
         raise typer.Exit(1)
 
 

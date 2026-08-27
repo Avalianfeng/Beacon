@@ -11,17 +11,19 @@ ROOT_HELP = """\
   S0 导入     math-agent problem import|show|stage
   S3 方向     math-agent brief init|check
   S4 预检     math-agent run --dry-run
-  S5 验证     math-agent reference verify
+  S5 验证     math-agent reference verify|recertify
   S6 登记     math-agent reference add|run|tables|paper
   S7 评审     math-agent review-check
+  S8 人审     math-agent accept
   S9 可选流水线  math-agent start|supervise|watch|status|pause|recover|restart
 """
 
-STAGE_HELP_MARKERS: tuple[str, ...] = ("S0", "S3", "S6", "S7", "S9")
+STAGE_HELP_MARKERS: tuple[str, ...] = ("S0", "S3", "S5", "S6", "S7", "S8", "S9")
 
 GROUP_HELP: dict[str, str] = {
     "problem": "S0 题目资产：导入/归档/总览/阶段（problem import|show|stage）",
     "brief": "S3 方向收敛：生成与校验 brief.json（brief init|check）",
-    "reference": "S6 登记装配：参考实现与论文装配（reference add|run|tables|paper|verify）",
+    "reference": "S6 登记装配：参考实现与论文装配（reference add|run|tables|paper|verify|recertify）",
     "review": "S7 评审：包装 check_* 脚本（review-check；与流水线 review 命令分开）",
+    "accept": "S8 人审登记：分阶段路径放行 paper sha256（accept；与流水线 resume 分开）",
 }

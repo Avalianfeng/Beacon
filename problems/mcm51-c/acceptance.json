@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "problem_id": "mcm51-c",
+  "paper_path": "runs\\mcm51-c-p2\\paper.md",
+  "paper_sha256": "96a718dfcf1e29429e736ec0b5ad347d313529c1631af49e9e25821b2d90d292",
+  "approved": true,
+  "actor": "p2",
+  "notes": "P2 介入闭环验收",
+  "at": "2026-08-27T09:26:35.205292+00:00"
+}

@@ -1,7 +1,10 @@
 """从磁盘工件推断问题流程阶段（S0–S8；S9 可选）。无工作流引擎。"""
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+from math_agent.ops_handoff import next_command
 
 # 阶段顺序与缺失时报告的相对路径（posix）
 _STAGE_ORDER: tuple[str, ...] = (
@@ -14,10 +17,10 @@ _STAGE_MISSING: dict[str, list[str]] = {
     "S2": ["exploration.md"],
     "S3": ["brief.json"],
     "S4": ["preflight.json"],
-    "S5": ["source/reference", "evidence-package.json"],
+    "S5": ["evidence-package.json", "independent-review.json"],
     "S6": ["reference.json"],
     "S7": ["review-report.json"],
-    "S8": ["paper.md"],
+    "S8": ["acceptance.json"],
 }
 
 
@@ -25,24 +28,47 @@ def _is_file(problem_dir: Path, name: str) -> bool:
     return (problem_dir / name).is_file()
 
 
+def _read_json_object(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
 def _s5_complete(problem_dir: Path) -> bool:
-    ref_dir = problem_dir / "source" / "reference"
-    evidence = problem_dir / "evidence-package.json"
-    return ref_dir.is_dir() or evidence.is_file()
+    if not (problem_dir / "evidence-package.json").is_file():
+        return False
+    review_path = problem_dir / "independent-review.json"
+    if not review_path.is_file():
+        return False
+    review = _read_json_object(review_path)
+    if review is None:
+        return False
+    return review.get("verdict") == "pass"
 
 
-def _s8_complete(runs_root: Path | None) -> bool:
-    if runs_root is None:
+def _s5_missing(problem_dir: Path) -> list[str]:
+    missing: list[str] = []
+    if not (problem_dir / "evidence-package.json").is_file():
+        missing.append("evidence-package.json")
+    review_path = problem_dir / "independent-review.json"
+    review = _read_json_object(review_path) if review_path.is_file() else None
+    if review is None or review.get("verdict") != "pass":
+        missing.append("independent-review.json")
+    return missing
+
+
+def _s8_complete(problem_dir: Path) -> bool:
+    acceptance_path = problem_dir / "acceptance.json"
+    if not acceptance_path.is_file():
         return False
-    if not runs_root.is_dir():
+    acceptance = _read_json_object(acceptance_path)
+    if acceptance is None:
         return False
-    direct = runs_root / "paper.md"
-    if direct.is_file():
-        return True
-    for child in runs_root.iterdir():
-        if child.is_dir() and (child / "paper.md").is_file():
-            return True
-    return False
+    return acceptance.get("approved") is True
 
 
 def _s9_optional_found(runs_root: Path | None) -> bool:
@@ -73,23 +99,15 @@ def _stage_complete(
     if stage == "S7":
         return _is_file(problem_dir, "review-report.json")
     if stage == "S8":
-        return _s8_complete(runs_root)
+        return _s8_complete(problem_dir)
     return False
 
 
 def _missing_for_stage(stage: str, problem_dir: Path, runs_root: Path | None) -> list[str]:
     if stage == "S5":
-        missing: list[str] = []
-        ref_dir = problem_dir / "source" / "reference"
-        if not ref_dir.is_dir():
-            missing.append("source/reference")
-        if not (problem_dir / "evidence-package.json").is_file():
-            missing.append("evidence-package.json")
-        return missing
+        return _s5_missing(problem_dir)
     if stage == "S8":
-        if runs_root is None:
-            return ["paper.md"]
-        return _STAGE_MISSING["S8"]
+        return list(_STAGE_MISSING["S8"])
     return list(_STAGE_MISSING[stage])
 
 
@@ -113,8 +131,10 @@ def infer_stage(problem_dir: Path, runs_root: Path | None = None) -> dict:
         next_stage = None
 
     missing: list[str] = []
+    next_cmd: str | None = None
     if next_stage is not None:
         missing = _missing_for_stage(next_stage, problem_dir, runs_root)
+        next_cmd = next_command(next_stage, problem_dir.name, missing)
 
     optional: list[str] = []
     if _s9_optional_found(runs_root):
@@ -125,6 +145,7 @@ def infer_stage(problem_dir: Path, runs_root: Path | None = None) -> dict:
         "completed": completed,
         "next": next_stage,
         "missing": missing,
+        "next_command": next_cmd,
         "optional": optional,
     }
 
@@ -147,6 +168,9 @@ def format_stage_text(result: dict) -> str:
             lines.append(f"missing: {', '.join(missing)}")
         else:
             lines.append("missing: (none)")
+        next_cmd = result.get("next_command")
+        if next_cmd:
+            lines.append(f"next_command: {next_cmd}")
     else:
         lines.append("next: (all S0–S8 complete)")
 
