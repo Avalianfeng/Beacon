@@ -1,4 +1,6 @@
-<!-- doc: type=contract status=active updated=2026-08-27 -->
+<!-- doc: type=contract status=superseded updated=2026-08-27 -->
+> **superseded（2026-08-27 文档收口）**：全流程总图角色已被 [8-27-操作面契约](实现计划-8-20/8-27-操作面契约.md)（内流程 S0–S9）+ [内外全流程总纲](内外全流程总纲.md)（端到端）取代；内部 LangGraph 注入描述降为工具层参考。当前行为依据以上述两文件为准。本文保留作历史设计参考。
+
 # Modeling Brief 全流程总图（前置对话 → 注入 → 门禁 → 主图）
 
 - 建立日期：2026-08-19
