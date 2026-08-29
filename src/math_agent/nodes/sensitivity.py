@@ -8,7 +8,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from math_agent.config import MAX_CODE_RETRIES, MODEL_ROUTING
+from math_agent.config import MAX_CODE_RETRIES, MODEL_ROUTING, allow_coder_llm
+from math_agent.inject_asset import read_inject_sensitivity
 from math_agent.llm import complete
 from math_agent.prompts.sensitivity import (
     PLAN_SYSTEM, CODE_SYSTEM, INTERPRET_SYSTEM,
@@ -302,6 +303,11 @@ def _use_deterministic_sensitivity() -> bool:
     return os.getenv("MATH_AGENT_SENSITIVITY_DETERMINISTIC", "").strip() == "1"
 
 
+_SENSITIVITY_LLM_DISABLED_MSG = (
+    "sensitivity: LLM generate disabled; put source/inject/sensitivity.py or --allow-coder-llm"
+)
+
+
 def sensitivity_plan_node(state: MathModelingState) -> dict:
     """Ask the model for a sensitivity scan plan."""
     final = next((m for m in reversed(state.model_versions) if m.stage == "final"), None)
@@ -329,6 +335,17 @@ def sensitivity_code_generate_node(state: MathModelingState) -> dict:
     if _use_deterministic_sensitivity():
         code_out = SensitivityCode(code=_build_sensitivity_template_code(plan))
     else:
+        inject_code = read_inject_sensitivity(state.data_dir)
+        if inject_code:
+            return {
+                "sensitivity_pending_code": inject_code,
+                "sensitivity_phase": "code_execute",
+            }
+        if not (state.allow_coder_llm or allow_coder_llm()):
+            return {
+                "errors": [_SENSITIVITY_LLM_DISABLED_MSG],
+                "sensitivity_phase": "done",
+            }
         final = next(
             (model for model in reversed(state.model_versions) if model.stage == "final"),
             state.latest_model(),

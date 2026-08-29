@@ -31,7 +31,7 @@ def test_coder_generate_blocks_llm_without_flag(mocker, workdir):
     assert delta["coder_work_queue"] == []
     assert delta["coder_pending_draft"] == {}
     assert any(
-        e == "coder: LLM generate disabled; register T-19 or --allow-coder-llm"
+        e == "coder: LLM generate disabled; register T-19, put source/inject/, or --allow-coder-llm"
         for e in delta["errors"]
     )
 

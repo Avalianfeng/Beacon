@@ -23,6 +23,11 @@ from math_agent.frozen_asset import (
     build_frozen_wrapper,
     detect_frozen_asset,
 )
+from math_agent.inject_asset import (
+    InjectDetectError,
+    build_inject_wrapper,
+    detect_inject_asset,
+)
 from math_agent.prompts.coder import SYSTEM
 from math_agent.prompts.coder_figure_one import (
     build_prompt_figure_one,
@@ -145,7 +150,7 @@ def _use_deterministic_coder() -> bool:
 
 
 _CODER_LLM_DISABLED_MSG = (
-    "coder: LLM generate disabled; register T-19 or --allow-coder-llm"
+    "coder: LLM generate disabled; register T-19, put source/inject/, or --allow-coder-llm"
 )
 
 
@@ -616,20 +621,34 @@ def coder_prepare_node(state: MathModelingState) -> dict:
             "coder_pending_draft": {},
         }
 
+    inject = None
+    if frozen is None:
+        inject = detect_inject_asset(state.data_dir)
+        if isinstance(inject, InjectDetectError):
+            return {
+                "errors": [f"coder: inject asset: {inject.message}"],
+                "coder_phase": "done",
+                "coder_work_queue": [],
+                "coder_work_artifacts": [],
+                "coder_current_batch": batch,
+                "coder_pending_draft": {},
+            }
+
     purposes = (model.figure_purposes or [model.description])[:_max_figure_tasks()]
     purposes[0] = (
         "主方案数值求解与核心证据图：必须读取真实附件，实现最终模型的轻量可复现求解，"
         "先计算完整 RESULT 指标，再绘制一张核心证据图。原始图意图："
         f"{purposes[0]}"
     )
-    # 命中冻结资产：只留 1 条 primary，避免 supporting 再烧 token
-    if frozen is not None:
+    # 命中冻结/inject 资产：只留 1 条 primary，避免 supporting 再烧 token
+    if frozen is not None or inject is not None:
         purposes = purposes[:1]
     queue = [
         {"kind": "figure", "id": f"figure:{i}", "purpose": purpose,
          "index": i, "attempt": 0, "prev_err": "", "prev_kind": "",
          "evidence_target": "primary" if i == 0 else "supporting",
-         **({"frozen": True} if frozen is not None and i == 0 else {})}
+         **({"frozen": True} if frozen is not None and i == 0 else {}),
+         **({"injected": True} if inject is not None and i == 0 else {})}
         for i, purpose in enumerate(purposes)
     ]
     return {
@@ -687,6 +706,29 @@ def coder_generate_node(state: MathModelingState) -> dict:
         draft = CoderDraft(
             purpose=str(item.get("purpose") or "frozen-reference"),
             code=build_frozen_wrapper(asset, data_filenames=filenames),
+        )
+        return {"coder_pending_draft": draft.model_dump(), "coder_phase": "execute"}
+
+    if item.get("injected"):
+        asset = detect_inject_asset(state.data_dir)
+        if isinstance(asset, InjectDetectError):
+            return {
+                "errors": [f"coder: inject asset: {asset.message}"],
+                "coder_phase": "done",
+                "coder_work_queue": [],
+                "coder_pending_draft": {},
+            }
+        if asset is None:
+            return {
+                "errors": ["coder: injected flag set but asset missing"],
+                "coder_phase": "done",
+                "coder_work_queue": [],
+                "coder_pending_draft": {},
+            }
+        filenames = [info.filename for info in state.data_files]
+        draft = CoderDraft(
+            purpose=str(item.get("purpose") or "inject-reference"),
+            code=build_inject_wrapper(asset, data_filenames=filenames),
         )
         return {"coder_pending_draft": draft.model_dump(), "coder_phase": "execute"}
 

@@ -543,7 +543,9 @@ def test_gate_stop_reason_coder_llm_disabled():
     from math_agent.state import MathModelingState
 
     s = MathModelingState(problem="p")
-    s.errors.append("coder: LLM generate disabled; register T-19 or --allow-coder-llm")
+    s.errors.append(
+        "coder: LLM generate disabled; register T-19, put source/inject/, or --allow-coder-llm"
+    )
     assert _gate_stop_reason(s) == "未允许 coder LLM"
 
 
