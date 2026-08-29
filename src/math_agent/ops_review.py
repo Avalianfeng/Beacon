@@ -1,21 +1,120 @@
-"""评审检查包装：通过 importlib 调用 scripts/check_*.py。"""
+"""评审检查包装：通过 importlib 调用 scripts/check_*.py。
+
+新增 check 工具只需两步：在 _CHECK_BUILDERS 注册表加一行（name → builder），
+并在 scripts/ 下提供同名脚本（实现 main(argv) 返回退出码）。
+"""
 from __future__ import annotations
 
 import hashlib
 import importlib.util
 import json
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
-_CHECK_NAMES = frozenset(
-    {
-        "check_paper_numbers",
-        "check_assumption_claims",
-        "check_gap_trigger",
-        "check_l4_gates",
-        "check_redlines",
-        "check_brief_claims",
-    }
-)
+
+@dataclass(frozen=True)
+class _RunCtx:
+    """run_review 的统一输入上下文，传给每个 check builder 用于构造 argv。"""
+
+    paper: Path | None = None
+    evidence: list[Path] | None = None
+    json_evidence: list[Path] | None = None
+    traceability: Path | None = None
+    brief: Path | None = None
+    code: list[Path] | None = None
+    stdout: Path | None = None
+    strict: bool = False
+
+
+def _build_paper_numbers(ctx: _RunCtx) -> list[str] | None:
+    """paper 或 traceability 任一存在才运行；--evidence 展开 + --traceability + --strict。"""
+    if ctx.paper is None and ctx.traceability is None:
+        return None
+    argv: list[str] = []
+    if ctx.paper is not None:
+        argv.extend(["--paper", str(ctx.paper)])
+    if ctx.evidence:
+        argv.append("--evidence")
+        argv.extend(str(p) for p in ctx.evidence)
+    if ctx.traceability is not None:
+        argv.extend(["--traceability", str(ctx.traceability)])
+    if ctx.strict:
+        argv.append("--strict")
+    return argv
+
+
+def _build_assumption_claims(ctx: _RunCtx) -> list[str] | None:
+    """需要 paper。"""
+    if ctx.paper is None:
+        return None
+    argv = ["--paper", str(ctx.paper)]
+    if ctx.strict:
+        argv.append("--strict")
+    return argv
+
+
+def _build_l4_gates(ctx: _RunCtx) -> list[str] | None:
+    """需要 paper；brief 可选并入扫描语料。"""
+    if ctx.paper is None:
+        return None
+    argv = ["--paper", str(ctx.paper)]
+    if ctx.brief is not None:
+        argv.extend(["--brief", str(ctx.brief)])
+    if ctx.strict:
+        argv.append("--strict")
+    return argv
+
+
+def _build_redlines(ctx: _RunCtx) -> list[str] | None:
+    """需要 paper + brief；--code/--stdout 展开 + --strict。"""
+    if ctx.paper is None or ctx.brief is None:
+        return None
+    argv = ["--paper", str(ctx.paper), "--brief", str(ctx.brief)]
+    for path in ctx.code or []:
+        argv.extend(["--code", str(path)])
+    if ctx.stdout is not None:
+        argv.extend(["--stdout", str(ctx.stdout)])
+    if ctx.strict:
+        argv.append("--strict")
+    return argv
+
+
+def _build_brief_claims(ctx: _RunCtx) -> list[str] | None:
+    """需要 paper + brief。"""
+    if ctx.paper is None or ctx.brief is None:
+        return None
+    argv = ["--paper", str(ctx.paper), "--brief", str(ctx.brief)]
+    if ctx.strict:
+        argv.append("--strict")
+    return argv
+
+
+def _build_gap_trigger(ctx: _RunCtx) -> list[str] | None:
+    """需要 json_evidence；每个文件一个 --json。"""
+    if not ctx.json_evidence:
+        return None
+    argv: list[str] = []
+    for path in ctx.json_evidence:
+        argv.extend(["--json", str(path)])
+    if ctx.strict:
+        argv.append("--strict")
+    return argv
+
+
+# 声明式注册表：新增 check 工具 = 这里加一行 + scripts/<name>.py 实现 main(argv)。
+# 键名即脚本文件名；builder 返回 None 表示该工具在当前输入下不运行；
+# 注册表插入顺序即 tools 输出顺序（与旧 run_review 手写分支一致）。
+_CHECK_BUILDERS: dict[str, Callable[[_RunCtx], list[str] | None]] = {
+    "check_paper_numbers": _build_paper_numbers,
+    "check_assumption_claims": _build_assumption_claims,
+    "check_l4_gates": _build_l4_gates,
+    "check_redlines": _build_redlines,
+    "check_brief_claims": _build_brief_claims,
+    "check_gap_trigger": _build_gap_trigger,
+}
+
+_CHECK_NAMES = frozenset(_CHECK_BUILDERS)
 
 
 def _scripts_dir() -> Path:
@@ -60,7 +159,7 @@ def run_review(
     code: list[Path] | None = None,
     stdout: Path | None = None,
 ) -> dict:
-    """Run the checkers that have inputs."""
+    """按 _CHECK_BUILDERS 遍历：builder 返回 None 的工具跳过，否则加载脚本并执行。"""
     if paper is None and not json_evidence and traceability is None:
         return {
             "ok": False,
@@ -69,58 +168,24 @@ def run_review(
             "strict": strict,
         }
 
+    ctx = _RunCtx(
+        paper=paper,
+        evidence=evidence,
+        json_evidence=json_evidence,
+        traceability=traceability,
+        brief=brief,
+        code=code,
+        stdout=stdout,
+        strict=strict,
+    )
+
     tools: list[dict] = []
-
-    if paper is not None or traceability is not None:
-        mod = load_check_module("check_paper_numbers")
-        argv: list[str] = []
-        if paper is not None:
-            argv.extend(["--paper", str(paper)])
-        if evidence:
-            argv.append("--evidence")
-            argv.extend(str(p) for p in evidence)
-        if traceability is not None:
-            argv.extend(["--traceability", str(traceability)])
-        if strict:
-            argv.append("--strict")
-        tools.append({"name": "check_paper_numbers", "exit_code": mod.main(argv)})
-
-    if paper is not None:
-        mod = load_check_module("check_assumption_claims")
-        argv = ["--paper", str(paper)]
-        if strict:
-            argv.append("--strict")
-        tools.append({"name": "check_assumption_claims", "exit_code": mod.main(argv)})
-
-        mod = load_check_module("check_l4_gates")
-        argv = ["--paper", str(paper)]
-        if brief is not None:
-            argv.extend(["--brief", str(brief)])
-        if strict:
-            argv.append("--strict")
-        tools.append({"name": "check_l4_gates", "exit_code": mod.main(argv)})
-
-        if brief is not None:
-            for name in ("check_redlines", "check_brief_claims"):
-                mod = load_check_module(name)
-                argv = ["--paper", str(paper), "--brief", str(brief)]
-                if name == "check_redlines":
-                    for path in code or []:
-                        argv.extend(["--code", str(path)])
-                    if stdout is not None:
-                        argv.extend(["--stdout", str(stdout)])
-                if strict:
-                    argv.append("--strict")
-                tools.append({"name": name, "exit_code": mod.main(argv)})
-
-    if json_evidence:
-        mod = load_check_module("check_gap_trigger")
-        argv: list[str] = []
-        for path in json_evidence:
-            argv.extend(["--json", str(path)])
-        if strict:
-            argv.append("--strict")
-        tools.append({"name": "check_gap_trigger", "exit_code": mod.main(argv)})
+    for name, build_argv in _CHECK_BUILDERS.items():
+        argv = build_argv(ctx)
+        if argv is None:
+            continue  # 该工具在当前输入下不运行
+        mod = load_check_module(name)
+        tools.append({"name": name, "exit_code": mod.main(argv)})
 
     exit_code = _overall_exit(tools, strict=strict)
     payload = {
@@ -136,7 +201,7 @@ def run_review(
 
 
 def write_review_report(payload: dict, out: Path) -> Path:
-    """Write JSON to `out` if out.suffix=='.json' else to out/"review-report.json"."""
+    """Write JSON to `out` if out.suffix=='.json' else to out/"review-report.json".""" 
     out = Path(out)
     target = out if out.suffix == ".json" else out / "review-report.json"
     target.parent.mkdir(parents=True, exist_ok=True)

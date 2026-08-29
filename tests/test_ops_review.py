@@ -10,6 +10,23 @@ from math_agent.ops_review import load_check_module, run_review, write_review_re
 FIXTURES = Path(__file__).parent / "fixtures" / "check_numbers"
 
 
+def test_check_registry_matches_scripts():
+    """注册表形状：每个键对应 scripts/ 下同名脚本；既有 6 个工具都在表内。"""
+    from math_agent.ops_review import _CHECK_BUILDERS
+
+    scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
+    for name in _CHECK_BUILDERS:
+        assert (scripts_dir / f"{name}.py").is_file(), f"{name} 缺脚本"
+    assert set(_CHECK_BUILDERS) >= {
+        "check_paper_numbers",
+        "check_assumption_claims",
+        "check_gap_trigger",
+        "check_l4_gates",
+        "check_redlines",
+        "check_brief_claims",
+    }
+
+
 def test_load_check_module():
     mod = load_check_module("check_paper_numbers")
     assert hasattr(mod, "main")
