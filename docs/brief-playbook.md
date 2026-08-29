@@ -1,4 +1,4 @@
-<!-- doc: type=protocol status=active updated=2026-08-27 -->
+<!-- doc: type=protocol status=active updated=2026-08-29 -->
 # brief 生产手册（Brief Playbook）——方向生产协议：从题目探索到 Modeling Brief
 
 - 建立日期：2026-08-21；**2026-08-21 晚 v2：升级为「方向生产协议」，新增题目探索（Problem Exploration）前置阶段**
@@ -11,7 +11,7 @@
 - 使用对象：用户（人）+ 网页版最强模型（**2–3 家不同家族**）+ 联网搜索 / 论文检索。
 - 与体系接口：产出物 = `problems/<题号>/exploration.md`（方向性认知地图，**人侧工作文档，不直接注入**）+
   `problems/<题号>/brief.json`（八字段 + `background_knowledge` + `redline_rules`，注入流水线）；
-  `brief check` 校验；`run --dry-run` / `--pilot` 预检（见
+  `brief check` 校验；S7 `review-check --brief problems/<题号>/brief.json` 消费 brief（D-022：红线/claims/`brief_sha256`）；`run --dry-run` / `--pilot` 预检（见
   [实现计划-8-20/00](实现计划-8-20/00-新题上线流程设计.md)；
   pilot 设计已归档 [archive/8-20执行批次/09-pilot模式与早期反证.md](archive/8-20执行批次/09-pilot模式与早期反证.md)，CLI 已拍板不做）。
 - 核心原则（2026-08-21 与外部讨论收敛，不可跳过）：
