@@ -12,24 +12,22 @@
 
 1. **默认硬停**：无冻结资产且未显式允许时，`coder_generate` **不调用** `complete()`；`coder_phase=done`，错误串 `coder: LLM generate disabled; register T-19 or --allow-coder-llm`。
 2. **逃生口**：`--allow-coder-llm`（`run` / `start` / `supervise` 转发）或 `MATH_AGENT_ALLOW_CODER_LLM=1`；写入 state `allow_coder_llm`。
-3. **接续**：登记 T-19 后 `restart --from coder`，或开旗标。不新做「约定目录丢 .py 即跑」。
+3. **接续**：T-19、`source/inject/`（D-025）或开旗标。
 4. **本轮只动** `nodes/coder.py` 的 LLM 生成。T-19 与 `MATH_AGENT_CODER_DETERMINISTIC=1` 不要求旗标。
 
 ## 后果
 
 - 正面：S9 默认不再偷偷 LLM 写码；与 D-005 / 学-11 一致。
 - 负面：无参考实现的 `run`/`supervise` 会停在 coder；旧烟测须加旗标。
-- 兜底：敏感性 `sensitivity_code_generate` 仍可 LLM 写码（ACT-14）；flag 打开后的 execute 反馈仍是旧内容（ACT-05）。
+- 兜底：敏感性 codegen 与 inject 通道见 **D-025**；flag 打开后的 execute 反馈仍是旧内容（ACT-05）。
 
 ## 本轮不做 / 已登记后续
 
-| ID | 内容 | 为何本轮不做 |
+| ID | 内容 | 状态 |
 |---|---|---|
-| ACT-14 | 敏感性 `sensitivity_code_generate` 同样默认关（共用或独立旗标） | 本轮只收 coder 生成面；敏感性在 consistency 之后，另案 |
-| ACT-15 | 约定目录放入 `.py` 即 execute（不经 T-19） | 接续先走现有 T-19；避免本轮发明第二套注入 |
-| ACT-05 | flag 打开后 generate↔execute 喂执行证据而非仅审查意见 | 循环骨架不动；与默认关正交 |
-| （挂账） | `_missing_baseline_items` 仍恒 `[]`；恢复会再引入 coder LLM | 勿当已删 |
-| （挂账） | frozen 只跑 1 条 primary；无 LLM 时 supporting 图谁补 | 可并 ACT-15；未决勿假装已解决 |
+| ACT-14 / ACT-15 | 敏感性 codegen 默认关 + `source/inject/` | **已落地 D-025** |
+| ACT-05 | flag 打开后 generate↔execute 喂执行证据而非仅审查意见 | 仍开 |
+| （挂账） | `_missing_baseline_items` 仍恒 `[]` | 勿当已删 |
 
 ## 备选方案
 

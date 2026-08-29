@@ -1,4 +1,4 @@
-<!-- doc: type=contract status=active updated=2026-08-27 -->
+<!-- doc: type=contract status=active updated=2026-08-29 -->
 # Agent 与 Beacon 协作协议（职责边界 + 协作接口 + 缺口判定准则）
 
 > **定位**：任何「要不要改 Beacon」的判断，先查本协议。本协议是 D-020（Beacon 产完整论文职责）与 D-021（协作梳理）的落地。
@@ -23,6 +23,7 @@
 | `reference run/tables/paper` | Beacon | 求解执行 / 交付表装配 / 骨架装配（数字唯一事实源=evidence） |
 | `reference expand` | Beacon | 骨架 → 完整论文 prose 展开（A-01，增量数字闸门） |
 | `problem.json source_files` | agent → Beacon | 冻结资产登记（T-19） |
+| `source/inject/`（D-025） | agent → Beacon | 无哈希交代码：`inject/_entry.py` 或 `main.py` 提供 `main(data_dir, out_dir)`；`inject/sensitivity.py` 打印 `RESULT: parameter=... values=... results=...`。T-19 仍优先。无旗标时敏感性 codegen skip（degraded，不硬停） |
 | `evidence-package` + `check_paper_numbers --evidence` | agent → Beacon | **任意 md/txt/json 证据文件**提取数字白名单（含 agent 临时脚本产出）——红线覆盖 |
 | `stage --json`（`next_command`/`d007_missing`） | Beacon → agent | 推演已完成前缀 + 提示下一步 |
 | `review-check` | Beacon → 评审 agent | L4/必答项/数字/gap 机械校验包装 |
