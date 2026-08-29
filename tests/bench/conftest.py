@@ -45,6 +45,8 @@ def _setup_mocks(stack: ExitStack, *, paper: PaperSections,
     def _patch(target, **kw):
         stack.enter_context(patch(target, **kw))
 
+    stack.enter_context(patch.dict("os.environ", {"MATH_AGENT_ALLOW_CODER_LLM": "1"}))
+
     _patch("math_agent.nodes.analyst.complete",
            side_effect=itertools.cycle([ProblemBlueprint(
                core_task="bench task",

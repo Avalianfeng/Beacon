@@ -8,10 +8,16 @@
 """
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from math_agent.state import MathModelingState, ModelVersion
 from math_agent.nodes.coder import coder_node, CoderDraft
+
+
+@pytest.fixture(autouse=True)
+def _allow_coder_llm(monkeypatch):
+    monkeypatch.setenv("MATH_AGENT_ALLOW_CODER_LLM", "1")
 
 _PNG_FIGURE_CODE = (
     "import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; "

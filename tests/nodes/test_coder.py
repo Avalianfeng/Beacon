@@ -5,6 +5,35 @@ from math_agent.state import (
     ModelVersion,
 )
 from math_agent.nodes.coder import coder_node, CoderDraft
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _allow_coder_llm(monkeypatch, request):
+    if request.function.__name__ == "test_coder_generate_blocks_llm_without_flag":
+        monkeypatch.delenv("MATH_AGENT_ALLOW_CODER_LLM", raising=False)
+    else:
+        monkeypatch.setenv("MATH_AGENT_ALLOW_CODER_LLM", "1")
+
+
+def test_coder_generate_blocks_llm_without_flag(mocker, workdir):
+    from math_agent.nodes.coder import coder_generate_node, coder_prepare_node
+
+    state = MathModelingState(problem="p", output_dir=str(workdir), allow_coder_llm=False)
+    state.model_versions.append(ModelVersion(stage="final", description="d"))
+    state = state.model_copy(update=coder_prepare_node(state))
+    complete = mocker.patch("math_agent.nodes.coder.complete")
+
+    delta = coder_generate_node(state)
+
+    assert complete.call_count == 0
+    assert delta["coder_phase"] == "done"
+    assert delta["coder_work_queue"] == []
+    assert delta["coder_pending_draft"] == {}
+    assert any(
+        e == "coder: LLM generate disabled; register T-19 or --allow-coder-llm"
+        for e in delta["errors"]
+    )
 
 
 def test_coder_runs_code_and_records_artifact(mocker, workdir):

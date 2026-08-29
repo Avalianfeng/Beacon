@@ -167,7 +167,8 @@ def test_generate_frozen_zero_llm(mocker, tmp_path: Path):
     assert "B-附件.xlsx" in draft["code"]
 
 
-def test_no_asset_still_calls_llm(mocker, tmp_path: Path):
+def test_no_asset_still_calls_llm(mocker, tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MATH_AGENT_ALLOW_CODER_LLM", "1")
     data = tmp_path / "source"
     data.mkdir()
     (tmp_path / "problem.json").write_text(

@@ -37,6 +37,7 @@ def test_baseline_prompt_contains_output_contract():
 
 def test_coder_node_skips_logistics_baselines_without_green_attachments(monkeypatch):
     """非物流附件不得强制 no_schedule/simple_pred/greedy。"""
+    monkeypatch.setenv("MATH_AGENT_ALLOW_CODER_LLM", "1")
     from math_agent.nodes.coder import coder_node, CoderDraft
     from math_agent.state import MathModelingState, ModelVersion
     from math_agent.tools.runner import RunResult

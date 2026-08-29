@@ -16,6 +16,7 @@ from math_agent.config import (
     MIN_MODEL_CODE_SCORE,
     MODEL_ROUTING,
     STRONG_MODEL,
+    allow_coder_llm,
 )
 from math_agent.frozen_asset import (
     FrozenDetectError,
@@ -141,6 +142,24 @@ def _template_figure_draft(item: dict, data_dir: str, data_files: list | None,
 def _use_deterministic_coder() -> bool:
     """本地模板只用于显式离线应急模式，不能替代正常的题目相关代码生成。"""
     return os.getenv("MATH_AGENT_CODER_DETERMINISTIC", "").strip() == "1"
+
+
+_CODER_LLM_DISABLED_MSG = (
+    "coder: LLM generate disabled; register T-19 or --allow-coder-llm"
+)
+
+
+def _coder_llm_allowed(state: MathModelingState) -> bool:
+    return state.allow_coder_llm or allow_coder_llm()
+
+
+def _coder_llm_disabled_delta() -> dict:
+    return {
+        "errors": [_CODER_LLM_DISABLED_MSG],
+        "coder_phase": "done",
+        "coder_work_queue": [],
+        "coder_pending_draft": {},
+    }
 
 
 def _max_figure_tasks() -> int:
@@ -678,6 +697,8 @@ def coder_generate_node(state: MathModelingState) -> dict:
                 item, state.data_dir, state.data_files,
                 blueprint=state.problem_blueprint,
             )
+        elif not _coder_llm_allowed(state):
+            return _coder_llm_disabled_delta()
         else:
             primary = next(
                 (
@@ -726,6 +747,8 @@ def coder_generate_node(state: MathModelingState) -> dict:
                     # B10: figure 生成异常上抛走崩溃→checkpoint→recover，不再节点内吞错消耗 502 预算。
                     raise
     else:
+        if not _coder_llm_allowed(state):
+            return _coder_llm_disabled_delta()
         main_code = _current_primary_code(state)
         try:
             draft = _local_baseline_repair_draft(
