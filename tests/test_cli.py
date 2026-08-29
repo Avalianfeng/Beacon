@@ -549,6 +549,138 @@ def test_gate_stop_reason_coder_llm_disabled():
     assert _gate_stop_reason(s) == "未允许 coder LLM"
 
 
+def _consistency_stopped_state(
+    *, code: str = "x = 1", success: bool = True, role: str = "primary"
+):
+    """构造 consistency 未过、可注入 code_artifacts 的状态。"""
+    from math_agent.state import (
+        MathModelingState, CodeArtifact, ModelCodeConsistencyReport,
+    )
+
+    s = MathModelingState(problem="p")
+    s.model_code_reports.append(ModelCodeConsistencyReport(score=3, approved=False))
+    s.code_artifacts.append(CodeArtifact(
+        purpose="main", code=code, success=success,
+        evidence_role=role, batch=1,
+    ))
+    return s
+
+
+def test_gate_stop_reason_hard_redline():
+    from math_agent.brief import ModelingBrief, RedLineItem, RedlineRule
+    from math_agent.cli import _gate_stop_reason
+
+    s = _consistency_stopped_state(code="x = FORBIDDEN")
+    s.brief = ModelingBrief(
+        schema_version=2,
+        red_lines=[RedLineItem(id="rl-1", prohibition="禁硬编码")],
+        redline_rules=[RedlineRule(
+            id="rl-1", target="code", rule_type="literal_ban",
+            pattern="FORBIDDEN", severity="hard",
+        )],
+    )
+    assert _gate_stop_reason(s) == "hard 红线违规"
+
+
+def test_gate_stop_reason_code_verify_no_primary():
+    from math_agent.cli import _gate_stop_reason
+
+    s = _consistency_stopped_state(success=False, role="none")
+    assert _gate_stop_reason(s) == "code_verify 无主证据"
+
+
+def test_gate_stop_reason_code_verify_low_score():
+    from math_agent.cli import _gate_stop_reason
+
+    s = _consistency_stopped_state()  # success + primary，但 reports 未过
+    assert _gate_stop_reason(s) == "code_verify 未达门槛"
+
+
+def test_gate_stop_reason_blueprint_critic():
+    from math_agent.cli import _gate_stop_reason
+    from math_agent.state import MathModelingState, CriticReport
+
+    s = MathModelingState(problem="p")
+    s.critic_reports.append(CriticReport(
+        target="analyst", critic_type="blueprint", score=4, approved=False,
+    ))
+    assert _gate_stop_reason(s) == "blueprint_critic 未通过"
+
+
+def test_gate_stop_reason_model_critic():
+    from math_agent.cli import _gate_stop_reason
+    from math_agent.state import MathModelingState, CriticReport
+
+    s = MathModelingState(problem="p")
+    s.critic_reports.append(CriticReport(
+        target="analyst", critic_type="blueprint", score=9, approved=True,
+    ))
+    s.critic_reports.append(CriticReport(
+        target="modeler", score=4, approved=False,
+    ))
+    assert _gate_stop_reason(s) == "model_critic 未通过"
+
+
+def test_gate_stop_reason_paper_section_empty():
+    from math_agent.cli import _gate_stop_reason
+    from math_agent.state import MathModelingState, CriticReport
+
+    s = MathModelingState(problem="p")
+    s.critic_reports.append(CriticReport(
+        target="analyst", critic_type="blueprint", score=9, approved=True,
+    ))
+    s.critic_reports.append(CriticReport(
+        target="modeler", score=9, approved=True,
+    ))
+    assert _gate_stop_reason(s) == "论文关键 section 为空"
+
+
+def test_gate_stop_reason_paper_critic():
+    from math_agent.cli import _gate_stop_reason
+    from math_agent.state import (
+        MathModelingState, CriticReport, PaperSections,
+    )
+
+    s = MathModelingState(
+        problem="p",
+        paper=PaperSections(abstract="a", model_section="m",
+                            solution="s", conclusion="c"),
+    )
+    s.critic_reports.append(CriticReport(
+        target="analyst", critic_type="blueprint", score=9, approved=True,
+    ))
+    s.critic_reports.append(CriticReport(
+        target="modeler", score=9, approved=True,
+    ))
+    s.critic_reports.append(CriticReport(
+        target="paper", score=4, approved=False,
+    ))
+    assert _gate_stop_reason(s) == "paper_critic 未通过"
+
+
+def test_gate_stop_reason_fallback():
+    from math_agent.cli import _gate_stop_reason
+    from math_agent.state import (
+        MathModelingState, CriticReport, PaperSections,
+    )
+
+    s = MathModelingState(
+        problem="p",
+        paper=PaperSections(abstract="a", model_section="m",
+                            solution="s", conclusion="c"),
+    )
+    s.critic_reports.append(CriticReport(
+        target="analyst", critic_type="blueprint", score=9, approved=True,
+    ))
+    s.critic_reports.append(CriticReport(
+        target="modeler", score=9, approved=True,
+    ))
+    s.critic_reports.append(CriticReport(
+        target="paper", score=9, approved=True,
+    ))
+    assert _gate_stop_reason(s) == "quality gate 停机"
+
+
 # ---------------------------------------------------------------------------
 # brief CLI 与 --brief 传参
 # ---------------------------------------------------------------------------
