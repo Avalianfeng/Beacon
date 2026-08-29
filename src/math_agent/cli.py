@@ -20,8 +20,6 @@ from rich.table import Table
 from math_agent.config import (
     MIN_PAPER_CRITIC_SCORE,
     MIN_MODEL_CODE_SCORE,
-    MAX_CODE_VERIFY_ITERATIONS,
-    MAX_CODE_NO_PRIMARY_ITERATIONS,
 )
 from math_agent.graph import build_graph
 from math_agent.checkpointing import sqlite_saver
@@ -2406,6 +2404,11 @@ def run(
     team_id: str = typer.Option("", help="参赛报名号（gmcm 模板用）"),
     members: str = typer.Option("", help="队员名字，逗号分隔：'张三,李四,王五'（gmcm 模板用）"),
     force: bool = typer.Option(False, "--force", help="即使已有 checkpoint 也覆盖（慎用）"),
+    allow_coder_llm: bool = typer.Option(
+        False,
+        "--allow-coder-llm",
+        help="允许 coder 节点调用 LLM 生成代码（默认关；无 T-19 冻结资产时需显式开启）",
+    ),
 ):
     """S4：``--dry-run`` 做题默认预检。无该旗标则跑完整 LangGraph（S9 可选执行器，D-005）。"""
     spec = _read_problem_spec(problem)
@@ -2421,6 +2424,9 @@ def run(
     if dry_run:
         _dry_run_preflight(problem, spec, brief, brief_obj, out, thread, force)
         return
+
+    if allow_coder_llm:
+        os.environ["MATH_AGENT_ALLOW_CODER_LLM"] = "1"
 
     # 防止以同一 --thread 重复输出到同一目录，掩盖上次 runs
     out.mkdir(parents=True, exist_ok=True)
@@ -2444,6 +2450,8 @@ def run(
         # 无法区分“自动模式”与“恢复时遗漏决定”。
         "human_decision": HumanDecision(approved=True, notes="--no-interrupt") if no_interrupt else None,
     }
+    if allow_coder_llm:
+        initial["allow_coder_llm"] = True
     clear_failed_node()
     tracer = None
     tok = None
@@ -2551,9 +2559,11 @@ def _echo_run_outcome(out: Path, thread: str) -> None:
         typer.echo(f"done. paper at {out / 'paper.md'}; trace at {out / 'trace.json'}")
         return
     if inspection.checkpoint_exists:
+        reason = _try_gate_stop_reason(out, thread)
+        extra = f" ({reason})" if reason else ""
         typer.echo(
-            f"pipeline stopped before human_review (thread={thread}); "
-            f"quality gate or graph ended. trace at {out / 'trace.json'}"
+            f"pipeline stopped before human_review (thread={thread});"
+            f"{extra} quality gate or graph ended. trace at {out / 'trace.json'}"
         )
         return
     typer.echo(f"done. paper at {out / 'paper.md'}; trace at {out / 'trace.json'}")
@@ -2569,11 +2579,8 @@ def review(
 ):
     """人工接管：把停在论文评审（paper_critic 未过）的 run 推进到 human_review。
 
-    自动评审未达门槛且 writer 修复轮耗尽时，流程原本 stop，论文永远到不了
-    人工评估环节。本命令从已保存 checkpoint 把流程重新路由到
-    table_assembler → evaluation → human_review，由人工整体评估后
-    resume --approve / --no-approve 决定；--no-interrupt 则自动批准并
-    直接产出（质量警告会如实写入 completion.json，状态为 degraded）。
+    D-023 后门禁首次未过即 stop。本命令置位 paper_review_takeover，从
+    paper_critic 条件边走 advance → table_assembler → evaluation → human_review。
     """
     _require_checkpoint(out)
     _require_trace_thread(out, thread)
@@ -2612,12 +2619,10 @@ def review(
                         "若流程中断请用 recover。",
                     )
                     return
-                # 把 checkpoint 视为 paper_critic 刚执行完，重新走条件边路由：
-                # after_paper_critic 对“内容完整但未达门槛且迭代耗尽”返回
-                # advance_review → table_assembler → evaluation → human_review。
+                # 置位接管旗标后从 paper_critic 出边：after_paper_critic → advance
                 g.update_state(
                     _config(thread),
-                    {"writer_iteration": state.writer_iteration},
+                    {"paper_review_takeover": True},
                     as_node="paper_critic",
                 )
                 g.invoke(None, config=_config(thread))
@@ -2838,24 +2843,83 @@ def recover(
 
 
 def _is_gate_stop_state(state: MathModelingState) -> bool:
-    """从 state 推导是否因 coder/一致性门禁耗尽而停机（不依赖 nodes/ 内部）。"""
+    """一致性门禁未通过导致的停机（D-023：首次未过即 stop，不再看轮次上限）。"""
     reports = state.model_code_reports
     if not reports:
         return False
     last = reports[-1]
     if last.approved and last.score >= MIN_MODEL_CODE_SCORE:
         return False
-    over_no_primary = state.code_verify_iteration >= MAX_CODE_NO_PRIMARY_ITERATIONS
-    over_low_score = state.code_verify_low_score_iteration >= MAX_CODE_VERIFY_ITERATIONS
-    return over_no_primary or over_low_score
+    return True
 
 
 def _gate_stop_reason(state: MathModelingState) -> str:
-    if state.code_verify_iteration >= MAX_CODE_NO_PRIMARY_ITERATIONS:
-        return "code_verify 无主证据轮次耗尽"
-    if state.code_verify_low_score_iteration >= MAX_CODE_VERIFY_ITERATIONS:
-        return "code_verify 低分修复轮次耗尽"
-    return "code_verify 门禁上限"
+    """给用户看的停机原因：覆盖全部 routing 门禁，不只 code_verify 耗尽。"""
+    from math_agent.brief import brief_coverage_problems, hard_redline_violations
+    from math_agent.config import MIN_MODEL_CRITIC_SCORE, MIN_PAPER_CRITIC_SCORE
+
+    for err in state.errors:
+        if "LLM generate disabled" in err or "allow-coder-llm" in err:
+            return "未允许 coder LLM"
+
+    reports = state.model_code_reports
+    if reports:
+        last = reports[-1]
+        if not (last.approved and last.score >= MIN_MODEL_CODE_SCORE):
+            latest = state.latest_code_artifacts()
+            code = "\n".join(a.code or "" for a in latest)
+            stdout = "\n".join(a.stdout or "" for a in latest if a.success)
+            if hard_redline_violations(state.brief, code=code, stdout=stdout, paper=""):
+                return "hard 红线违规"
+            has_primary = any(
+                a.success and a.evidence_role == "primary" for a in latest
+            )
+            if not has_primary:
+                return "code_verify 无主证据"
+            return "code_verify 未达门槛"
+
+    problems = brief_coverage_problems(state.brief, state.problem_blueprint)
+    if problems:
+        return "brief_coverage 缺口"
+
+    bp = state.latest_critic("analyst", critic_type="blueprint")
+    if bp is not None and not bp.approved:
+        return "blueprint_critic 未通过"
+
+    critic = state.latest_critic("modeler")
+    if critic is not None and not (
+        critic.approved and critic.score >= MIN_MODEL_CRITIC_SCORE
+    ):
+        return "model_critic 未通过"
+
+    paper_ok = all([
+        (state.paper.abstract or "").strip(),
+        (state.paper.model_section or "").strip(),
+        (state.paper.solution or "").strip(),
+        (state.paper.conclusion or "").strip(),
+    ])
+    if not paper_ok:
+        return "论文关键 section 为空"
+
+    paper_c = state.latest_critic("paper")
+    if paper_c is None or not (
+        paper_c.approved and paper_c.score >= MIN_PAPER_CRITIC_SCORE
+    ):
+        return "paper_critic 未通过"
+
+    return "quality gate 停机"
+
+
+def _try_gate_stop_reason(out: Path, thread: str) -> str:
+    try:
+        with _saver_cm(out) as saver:
+            g = build_graph(checkpointer=saver)
+            snap = g.get_state(_config(thread))
+            if snap is None or not snap.values:
+                return ""
+            return _gate_stop_reason(MathModelingState.model_validate(snap.values))
+    except Exception:
+        return ""
 
 
 def _find_restart_checkpoint(g, config: dict, node_name: str):
@@ -2938,7 +3002,7 @@ def restart(
 ):
     """门禁停机后，从指定节点前重新执行。
 
-    仅当 checkpoint 处于门禁停机态（next 为空、一致性门禁计数器耗尽）时可用；
+    仅当 checkpoint 处于门禁停机态（next 为空、一致性审查未通过）时可用；
     不绕过任何门禁，只是让人工判定守卫/方向无问题后重试一次合法节点。
     """
     _require_checkpoint(out)
@@ -2969,7 +3033,7 @@ def restart(
         if not _is_gate_stop_state(state):
             typer.echo(
                 "[REJECT] checkpoint 不是 coder/一致性门禁停机态，不能 restart。\n"
-                "  只有 code_verify 计数器耗尽导致的停机才允许人工放行重试。",
+                "  只有一致性审查未通过导致的停机才允许人工放行重试。",
                 err=True,
             )
             raise typer.Exit(1)
@@ -3126,9 +3190,11 @@ def _supervisor_exit(result, out: Path, thread: str) -> None:
         typer.echo(f"pipeline paused before human_review (thread={thread}); trace at {out / 'trace.json'}")
         return
     if result.status == "stopped":
+        reason = _try_gate_stop_reason(out, thread)
+        extra = f" ({reason})" if reason else ""
         typer.echo(
-            f"pipeline stopped before human_review (thread={thread}); "
-            f"quality gate or graph ended. trace at {out / 'trace.json'}"
+            f"pipeline stopped before human_review (thread={thread});"
+            f"{extra} quality gate or graph ended. trace at {out / 'trace.json'}"
         )
         return
     if result.status == "rejected":
@@ -3165,6 +3231,11 @@ def supervise(
     same_node_limit: int = typer.Option(3, min=1, help="同一微节点连续失败上限"),
     max_recoveries: int = typer.Option(20, min=1, help="整次任务自动恢复总上限"),
     retry_delay: float = typer.Option(2.0, min=0.0, help="恢复退避基准秒数"),
+    allow_coder_llm: bool = typer.Option(
+        False,
+        "--allow-coder-llm",
+        help="允许 coder 节点调用 LLM 生成代码（默认关；无 T-19 冻结资产时需显式开启）",
+    ),
 ):
     """以独立 worker 运行完整流程；崩溃或可恢复故障后自动从 checkpoint 续跑。"""
     spec = _read_problem_spec(problem)
@@ -3190,6 +3261,8 @@ def supervise(
         args.append("--force")
     if brief is not None:
         args.extend(["--brief", str(brief.resolve())])
+    if allow_coder_llm:
+        args.append("--allow-coder-llm")
     try:
         result = run_process_supervisor(
             out=out,
@@ -3222,6 +3295,11 @@ def start(
     same_node_limit: int = typer.Option(3, min=1),
     max_recoveries: int = typer.Option(20, min=1),
     retry_delay: float = typer.Option(2.0, min=0.0),
+    allow_coder_llm: bool = typer.Option(
+        False,
+        "--allow-coder-llm",
+        help="允许 coder 节点调用 LLM 生成代码（默认关；无 T-19 冻结资产时需显式开启）",
+    ),
 ):
     """在后台启动受监管任务，适合 Codex CLI、Claude CLI 和短生命周期终端。"""
     spec = _read_problem_spec(problem)
@@ -3244,6 +3322,8 @@ def start(
         args.append("--force")
     if brief is not None:
         args.extend(["--brief", str(brief.resolve())])
+    if allow_coder_llm:
+        args.append("--allow-coder-llm")
     pid = start_detached_supervisor(out=out, supervise_args=args, cwd=Path.cwd())
     try:
         from math_agent.run_pointer import write_active_run

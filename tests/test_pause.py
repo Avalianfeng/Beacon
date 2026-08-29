@@ -101,8 +101,7 @@ def test_pause_after_a_node_then_resume_no_repeat(tmp_path, monkeypatch):
     """analyst 执行完后，在 blueprint_critic 边界暂停；恢复后 critic 只执行一次。"""
     monkeypatch.setattr("math_agent.graph.analyst_node", _fake_analyst)
     monkeypatch.setattr("math_agent.graph.blueprint_critic_node", _fake_blueprint_critic_stop)
-    # 路由语义由 test_routing.py 覆盖；此处 patch 为 stop 以聚焦 pause/resume 边界，
-    # 避免 advance_with_warning 映射到真实 modeler 触发 LLM 调用。
+    # 路由语义由 test_routing.py 覆盖；此处 patch 为 stop 以聚焦 pause/resume 边界。
     monkeypatch.setattr("math_agent.graph.after_blueprint_critic", lambda s: "stop")
     graph = build_graph(checkpointer=MemorySaver(), interrupt_before=["blueprint_critic"])
     config = {"configurable": {"thread_id": "pause_after_analyst"}}

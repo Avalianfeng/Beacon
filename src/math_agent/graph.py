@@ -152,12 +152,12 @@ def build_graph(
     g.add_node("table_assembler", _wrap(table_assembler_node, "table_assembler"))
 
     g.set_entry_point("analyst")
-    # analyst -> blueprint_critic -> (retry analyst / advance / advance_with_warning) -> modeler
+    # analyst -> blueprint_critic -> (advance / stop)；未通过不再 retry
     g.add_edge("analyst", "blueprint_critic")
     g.add_conditional_edges(
         "blueprint_critic",
         after_blueprint_critic,
-        {"retry": "analyst", "advance": "modeler", "advance_with_warning": "modeler", "stop": END},
+        {"advance": "modeler", "stop": END},
     )
     g.add_conditional_edges(
         "modeler", after_modeler_work,
@@ -171,10 +171,10 @@ def build_graph(
     g.add_conditional_edges(
         "model_critic",
         after_model_critic,
-        {"retry": "modeler", "advance": "advance_stage", "to_coder": "coder", "stop": END},
+        {"advance": "advance_stage", "to_coder": "coder", "stop": END},
     )
     g.add_edge("advance_stage", "modeler")
-    # coder -> model_code_consistency -> (retry coder / advance / advance_with_warning) -> sensitivity
+    # coder -> model_code_consistency -> (advance / stop)
     g.add_conditional_edges(
         "coder", after_coder_work,
         {"generate": "coder_generate", "execute": "coder_execute", "done": "model_code_consistency"},
@@ -190,7 +190,7 @@ def build_graph(
     g.add_conditional_edges(
         "model_code_consistency",
         after_model_code_consistency,
-        {"retry_coder": "coder", "advance": "sensitivity", "stop": END},
+        {"advance": "sensitivity", "stop": END},
     )
     g.add_conditional_edges(
         "sensitivity", after_sensitivity_work,
@@ -234,8 +234,7 @@ def build_graph(
     g.add_conditional_edges(
         "paper_critic",
         after_paper_critic,
-        {"retry": "writer", "advance": "table_assembler",
-         "advance_review": "table_assembler", "stop": END},
+        {"advance": "table_assembler", "stop": END},
     )
     g.add_edge("table_assembler", "evaluation")
     g.add_edge("evaluation", "human_review")

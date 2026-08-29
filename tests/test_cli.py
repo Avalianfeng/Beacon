@@ -23,6 +23,7 @@ def test_run_help_exposes_only_meaningful_no_interrupt_flag():
     assert result.exit_code == 0
     assert "--no-interrupt" in result.output
     assert "--no-no-interrupt" not in result.output
+    assert "--allow-coder-llm" in result.output
 
 
 def test_run_force_removes_existing_checkpoint_files(tmp_path):
@@ -503,7 +504,47 @@ def test_review_reroutes_stopped_run_to_human_review(tmp_path):
     assert result.exit_code == 0, result.output
     kwargs = fake_graph.update_state.call_args.kwargs
     assert kwargs["as_node"] == "paper_critic"
+    payload = fake_graph.update_state.call_args.args[1]
+    assert payload.get("paper_review_takeover") is True
     fake_graph.invoke.assert_called_once()
+
+
+def test_is_gate_stop_state_on_first_failed_consistency():
+    from math_agent.cli import _is_gate_stop_state, _gate_stop_reason
+    from math_agent.state import MathModelingState, ModelCodeConsistencyReport
+
+    s = MathModelingState(problem="p")
+    assert _is_gate_stop_state(s) is False
+    s.model_code_reports.append(ModelCodeConsistencyReport(score=9, approved=True))
+    assert _is_gate_stop_state(s) is False
+    s.model_code_reports.append(ModelCodeConsistencyReport(score=3, approved=False))
+    assert _is_gate_stop_state(s) is True
+    assert "code_verify" in _gate_stop_reason(s)
+
+
+def test_gate_stop_reason_brief_coverage():
+    from math_agent.brief import ModelingBrief, PerQuestionDirectionItem
+    from math_agent.cli import _gate_stop_reason
+    from math_agent.state import MathModelingState, ProblemBlueprint, CriticReport
+
+    s = MathModelingState(problem="p")
+    s.brief = ModelingBrief(per_question_direction=[
+        PerQuestionDirectionItem(id="dir-1", direction="MILP"),
+    ])
+    s.problem_blueprint = ProblemBlueprint(core_task="t", brief_coverage=[])
+    s.critic_reports.append(CriticReport(
+        target="analyst", critic_type="blueprint", score=9, approved=True,
+    ))
+    assert _gate_stop_reason(s) == "brief_coverage 缺口"
+
+
+def test_gate_stop_reason_coder_llm_disabled():
+    from math_agent.cli import _gate_stop_reason
+    from math_agent.state import MathModelingState
+
+    s = MathModelingState(problem="p")
+    s.errors.append("coder: LLM generate disabled; register T-19 or --allow-coder-llm")
+    assert _gate_stop_reason(s) == "未允许 coder LLM"
 
 
 # ---------------------------------------------------------------------------

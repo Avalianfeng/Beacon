@@ -38,6 +38,7 @@ _PAYLOADS = {
 
 def _setup_upstream_mocks(mocker, workdir):
     """mock writer 之前的所有节点，让流程能跑到 writer。"""
+    mocker.patch.dict("os.environ", {"MATH_AGENT_ALLOW_CODER_LLM": "1"})
     mocker.patch("math_agent.nodes.analyst.complete",
                  return_value=ProblemBlueprint(
                      core_task="test task",

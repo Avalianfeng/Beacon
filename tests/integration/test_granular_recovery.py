@@ -125,6 +125,7 @@ def test_coder_recover_does_not_repeat_finished_purposes(tmp_path, monkeypatch):
             stderr="", success=True, artifact_paths=[str(png)], error_kind="",
         )
 
+    monkeypatch.setenv("MATH_AGENT_ALLOW_CODER_LLM", "1")
     monkeypatch.setattr("math_agent.nodes.coder.complete", fake_complete)
     monkeypatch.setattr("math_agent.nodes.coder._baseline_items", lambda: [])
     monkeypatch.setattr("math_agent.nodes.coder.run_python", fake_run)
@@ -182,6 +183,7 @@ def test_coder_execution_crash_reuses_checkpointed_draft(tmp_path, monkeypatch):
                                stderr="", success=True,
                                artifact_paths=[str(png)], error_kind="")
 
+    monkeypatch.setenv("MATH_AGENT_ALLOW_CODER_LLM", "1")
     monkeypatch.setattr("math_agent.nodes.coder.complete", fake_complete)
     monkeypatch.setattr("math_agent.nodes.coder.run_python", fake_run)
     monkeypatch.setattr("math_agent.nodes.coder._baseline_items", lambda: [])

@@ -33,10 +33,8 @@ def _consistency_delta(
 ) -> dict:
     """构造节点返回：总轮次 +（有主证据但未达门禁时）低分修复轮次计数。
 
-    两个预算分开计：无主证据轮次用 code_verify_iteration（上限
-    MAX_CODE_NO_PRIMARY_ITERATIONS），有主证据但低分的定向修复轮次用
-    code_verify_low_score_iteration（上限 MAX_CODE_VERIFY_ITERATIONS），
-    避免无主证据轮次提前耗尽修复预算。
+    计数仍写入 state 供诊断/遥测；routing（D-023）不再用这些上限决定去向，
+    未通过即 stop，接续用 restart --from coder。
     """
     from math_agent.config import MIN_MODEL_CODE_SCORE
     delta = {

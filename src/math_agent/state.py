@@ -351,6 +351,10 @@ class MathModelingState(BaseModel):
     # 有主证据但分数低于门禁的“定向修复”轮次计数：与无主证据预算分开，
     # 避免无主证据轮次把低分修复预算提前耗尽（r3 曾因此拿到证据后立即停机）。
     code_verify_low_score_iteration: int = 0
+    # 仅 ``math-agent review`` 置位：paper_critic 未过但论文完整时强制 advance 进人审
+    paper_review_takeover: bool = False
+    # 仅 ``math-agent run --allow-coder-llm`` 置位：无 T-19 冻结资产时允许 coder 调 LLM
+    allow_coder_llm: bool = False
 
     # writer 子流程状态（覆盖语义）。队列空 = 本轮写完。
     # ponytail: 队列即进度，不需要 completed_groups/current_group/pending_rewrite。

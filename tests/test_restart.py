@@ -1,8 +1,8 @@
 """P1 restart --from coder 单元测试：真实 SqliteSaver + fake 节点，无 LLM。
 
-门禁停机态构造：fake model_code_consistency 返回不通过报告且无主证据，
-并把 code_verify_iteration 写到上限，after_model_code_consistency 真实路由
-即返回 stop（routing 语义本身由 test_routing.py 覆盖，此处不重复）。
+门禁停机态构造：fake model_code_consistency 返回不通过报告且无主证据；
+after_model_code_consistency 首次未过即 stop（D-023）。
+routing 语义本身由 test_routing.py 覆盖，此处不重复。
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import json
 from typer.testing import CliRunner
 
 from math_agent.cli import app, _saver_cm
-from math_agent.config import MAX_CODE_NO_PRIMARY_ITERATIONS
 from math_agent.state import (
     CriticReport, MathModelingState, ModelCodeConsistencyReport,
     ProblemBlueprint, SubQuestionBlueprint,
@@ -70,7 +69,6 @@ def _install_fakes(monkeypatch, approve_on_consistency):
             "model_code_reports": [
                 ModelCodeConsistencyReport(score=3, approved=False),
             ],
-            "code_verify_iteration": MAX_CODE_NO_PRIMARY_ITERATIONS,
         }
 
     monkeypatch.setattr("math_agent.graph.analyst_node", _fake_analyst)

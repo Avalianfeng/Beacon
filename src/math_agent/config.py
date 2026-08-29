@@ -46,15 +46,15 @@ MODEL_ROUTING = {
 }
 
 # 循环 / 重试上限
+# D-023：routing 门禁不再用这些上限决定去向（首次未过即 stop）。
+# 计数仍写入 state 供诊断；MAX_CODE_RETRIES 仍用于 coder 单任务执行修复。
 MAX_MODEL_ITERATIONS = int(os.getenv("MATH_AGENT_MAX_MODEL_ITERATIONS", "3"))
 MAX_WRITER_ITERATIONS = int(os.getenv("MATH_AGENT_MAX_WRITER_ITERATIONS", "3"))
 MAX_LLM_RETRIES = 2            # 单次 LLM 调用的结构化解析重试
 MAX_CODE_RETRIES = int(os.getenv("MATH_AGENT_MAX_CODE_RETRIES", "2"))
-MAX_BLUEPRINT_ITERATIONS = 2   # blueprint critic 允许的评估次数（首次 + 一次 retry）
+MAX_BLUEPRINT_ITERATIONS = 2   # 遥测/兼容 env；routing 不再按此 retry
 MAX_CODE_VERIFY_ITERATIONS = int(os.getenv("MATH_AGENT_MAX_CODE_VERIFY_ITERATIONS", "3"))
-# 无主证据分支的专门上限：主方案代码始终未通过执行/输出门禁时，最多重试
-# MAX_CODE_NO_PRIMARY_ITERATIONS 批后整条流水线停止，等待人工先检查失败原因
-# （同一失败原因连续出现时通常是门禁与 prompt 矛盾等系统性问题，无限重试只会空转）。
+# 无主证据/低分计数仍写入 state；D-023 后 routing 首次未过即 stop，不再耗尽此上限才停。
 MAX_CODE_NO_PRIMARY_ITERATIONS = int(
     os.getenv("MATH_AGENT_MAX_CODE_NO_PRIMARY_ITERATIONS", "6")
 )
@@ -106,3 +106,8 @@ RAG_TOPK = int(os.getenv("MATH_AGENT_RAG_TOPK", "4"))
 RAG_CTX_MAX_CHARS_ANALYST = 1500
 RAG_CTX_MAX_CHARS_MODELER = 1500
 RAG_CTX_MAX_CHARS_WRITER = 800
+
+
+def allow_coder_llm() -> bool:
+    """D-024：默认禁止 coder LLM 生成；仅环境变量 ``MATH_AGENT_ALLOW_CODER_LLM=1`` 为真。"""
+    return os.getenv("MATH_AGENT_ALLOW_CODER_LLM", "").strip() == "1"

@@ -21,6 +21,7 @@ from math_agent.prompts.modeler_derivation import ConsistencyCheck
 
 
 def _setup_all_mocks(mocker, workdir):
+    mocker.patch.dict("os.environ", {"MATH_AGENT_ALLOW_CODER_LLM": "1"})
     mocker.patch("math_agent.nodes.analyst.complete",
                  return_value=ProblemBlueprint(
                      core_task="test task",

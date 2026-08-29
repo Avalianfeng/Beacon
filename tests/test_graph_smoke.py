@@ -22,6 +22,7 @@ def _png(p: Path):
 
 def _full_mocks(mocker, workdir, *, stages=("basic", "improved", "final"), critics=None):
     """给所有 LLM 节点装上桩，保证 graph 端到端能跑通。"""
+    mocker.patch.dict("os.environ", {"MATH_AGENT_ALLOW_CODER_LLM": "1"})
     mocker.patch("math_agent.nodes.analyst.complete",
                  return_value=ProblemBlueprint(
                      core_task="test task",
@@ -134,18 +135,12 @@ def test_graph_runs_full_modeling_loop(mocker, workdir):
     assert stages == ["basic", "improved", "final"]
 
 
-def test_graph_retries_modeler_on_low_score(mocker, workdir):
-    """basic 阶段前两轮 critic 不通过、第三轮通过：modeler 应在 basic 阶段被调 3 次。"""
+def test_graph_stops_modeler_on_low_score(mocker, workdir):
+    """basic 阶段 critic 不通过：立即 stop，不在同阶段重试 modeler。"""
     critics = [
         CriticReport(target="modeler", score=4, approved=False),
-        CriticReport(target="modeler", score=5, approved=False),
-        CriticReport(target="modeler", score=9, approved=True),
-        CriticReport(target="modeler", score=9, approved=True),
-        CriticReport(target="modeler", score=9, approved=True),
     ]
-    _full_mocks(mocker, workdir,
-                stages=("basic", "basic", "basic", "improved", "final"),
-                critics=critics)
+    _full_mocks(mocker, workdir, stages=("basic",), critics=critics)
     g = build_graph()
     final = g.invoke({
         "problem": "p", "stage_target": "basic", "iteration": 0,
@@ -154,10 +149,10 @@ def test_graph_retries_modeler_on_low_score(mocker, workdir):
     })
     basic_versions = [m for m in final["model_versions"] if m.stage == "basic"]
     basic_critics = [c for c in final["critic_reports"] if c.stage == "basic"]
-    assert len(basic_versions) == 3
-    assert len(basic_critics) == 3
-    assert basic_critics[-1].approved is True
-    assert any(m.stage == "final" for m in final["model_versions"])
+    assert len(basic_versions) == 1
+    assert len(basic_critics) == 1
+    assert basic_critics[0].approved is False
+    assert not any(m.stage == "final" for m in final["model_versions"])
 
 
 def test_graph_writes_paper_md(mocker, workdir):
@@ -175,13 +170,8 @@ def test_graph_writes_paper_md(mocker, workdir):
     assert "## 6. 敏感性分析" in md
 
 
-def test_writer_paper_critic_loop_isolated(mocker):
-    """隔离测试 writer↔paper_critic 闭环。第一次 critic 拒，第二次通过 → writer 调 2 次。
-
-    Plan D Phase 2：writer_node 改为大纲(1)+分章(7) 多调用。
-    首轮 8 次，重试轮（section=general → 全部分组）7 次，共 15 次 complete。
-    用 side_effect 按调用顺序返回：1 outline + 7 v1 分章 + 7 v2 分章。
-    """
+def test_writer_paper_critic_stops_on_first_reject(mocker):
+    """隔离测试：paper_critic 首次未过立即 stop，不自动重开 writer。"""
     from langgraph.graph import StateGraph, END
     from math_agent.state import MathModelingState as _S
     from math_agent.nodes.writer import writer_node, writer_section_node
@@ -192,10 +182,6 @@ def test_writer_paper_critic_loop_isolated(mocker):
         _AbstractProblemOut, _AssumptionsNotationOut,
         _ModelOut, _SolutionOut, _SensitivityOut, _ConclusionOut, _ReferencesOut,
     )
-
-    # ponytail: schema-dispatching mock。两轮：v1（首轮）/v2（重试轮）。
-    # abstract 用 mk 标记区分两轮，其余字段固定。
-    _round = {"i": 0}  # 0=v1, 1=v2
 
     def _section_out(schema, mk):
         if schema is _AbstractProblemOut:
@@ -215,26 +201,15 @@ def test_writer_paper_critic_loop_isolated(mocker):
             return _ReferencesOut(references="参考文献"*40)
         return None
 
-    section_calls = {"n": 0}
-
     def _writer_complete(prompt, *, schema, **kw):
         if schema is WriterOutline:
-            # 大纲：首轮后切换到 v2 标记
-            mk = "v1" if _round["i"] == 0 else "v2"
-            return WriterOutline(abstract=mk)
-        # 通用题的七个章节组都调用 LLM；完成首轮后切换到 v2 标记。
-        section_calls["n"] += 1
-        mk = "v1" if _round["i"] == 0 else "v2"
-        out = _section_out(schema, mk)
-        if section_calls["n"] % 7 == 0 and _round["i"] == 0:
-            _round["i"] = 1
-        return out
+            return WriterOutline(abstract="v1")
+        return _section_out(schema, "v1")
 
     mocker.patch("math_agent.nodes.writer.complete", side_effect=_writer_complete)
     mocker.patch("math_agent.nodes.paper_critic.complete", side_effect=[
         CriticReport(target="paper", score=4, approved=False,
                      issues=[CriticIssue(problem="编数字")], suggestions=["改定性"]),
-        CriticReport(target="paper", score=9, approved=True),
     ])
 
     g = StateGraph(_S)
@@ -247,7 +222,7 @@ def test_writer_paper_critic_loop_isolated(mocker):
     g.add_conditional_edges("writer_section", after_writer_step,
                             {"section": "writer_section", "done": "paper_critic"})
     g.add_conditional_edges("paper_critic", after_paper_critic,
-                            {"retry": "writer", "advance": END})
+                            {"advance": END, "stop": END})
     compiled = g.compile()
 
     final = compiled.invoke({
@@ -261,11 +236,10 @@ def test_writer_paper_critic_loop_isolated(mocker):
             ModelCodeConsistencyReport(score=8, approved=True),
         ],
     })
-    assert final["writer_iteration"] == 2
-    assert final["paper"].abstract.startswith("v2")
+    assert final["writer_iteration"] == 1
     paper_critics = [r for r in final["critic_reports"] if r.target == "paper"]
-    assert len(paper_critics) == 2
-    assert paper_critics[-1].approved is True
+    assert len(paper_critics) == 1
+    assert paper_critics[0].approved is False
 
 
 def test_graph_has_table_assembler_node():
