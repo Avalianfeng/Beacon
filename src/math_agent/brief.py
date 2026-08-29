@@ -248,6 +248,27 @@ def brief_coverage_problems(brief: ModelingBrief | None, blueprint) -> list[str]
     return problems
 
 
+def brief_coverage_extras(brief: ModelingBrief | None, blueprint) -> list[str]:
+    """WARN 级：blueprint.brief_coverage 中多出的（幻觉）条目 id。
+
+    门禁只做 brief→coverage 单向存在性检查，coverage 多回应不存在的条目
+    不构成问题（mathorcup16 曾多出 1 条「参考文献方向」幻觉 id）。本函数
+    把多出条目收集为提示，供诊断/反馈用；不阻断门禁。纯函数，不调 LLM。
+    """
+    if brief is None or blueprint is None:
+        return []
+    expected = set(brief_item_ids(brief))
+    extras = [
+        item.brief_item_id
+        for item in (blueprint.brief_coverage or [])
+        if item.brief_item_id not in expected
+    ]
+    return [
+        f"blueprint.brief_coverage 多回应了不存在的条目 {e}（幻觉 id，建议删除）"
+        for e in extras
+    ]
+
+
 # ---------------------------------------------------------------------------
 # prompt 渲染：有序块表 + render_slice（D-022）
 # ---------------------------------------------------------------------------
@@ -301,6 +322,7 @@ _FIELD_HEADING: dict[tuple[str, str], str] = {
     ("red_lines", "critic"): "## 红线（模型/推导触碰记 issue）",
     ("red_lines", "modeler"): "## 红线（选路线必须避开）",
     ("figure_plan", "full"): "\n## 图表规划",
+    ("figure_plan", "coder_figure"): "## 图表规划（必做图清单，生成时必须体现）",
     ("scoring_notes", "full"): "\n## 评分标准要点",
     ("scoring_notes", "scoring"): "## 评分标准要点",
     ("data_notes", "full"): "\n## 数据注意",
@@ -410,6 +432,7 @@ NODE_BRIEF_SLICE: dict[str, tuple[SliceBlock, ...]] = {
         SliceBlock("header", variant="coder"),
         SliceBlock("field", "red_lines", "coder"),
         SliceBlock("field", "formula_notes", "coder"),
+        SliceBlock("field", "figure_plan", "coder_figure"),
         SliceBlock("field", "data_notes", "coder"),
         SliceBlock("dimension"),
     ),
@@ -511,7 +534,12 @@ _GROUP_TO_SECTIONS: dict[str, tuple[str, ...]] = {
 def render_discussions_for_group(
     brief: ModelingBrief | None, group_name: str
 ) -> str:
-    """writer 分节注入：按分组过滤 required_discussions（命中任一章节目录即注入）。"""
+    """writer 分节注入：按分组过滤 required_discussions（命中任一章节目录即注入）。
+
+    references 分组额外注入 reference_direction（文献方向，软约束）；
+    P3（D7）：reference_direction 原本不达 writer，参考文献章节只能靠 Semantic
+    Scholar 静态库。
+    """
     if brief is None:
         return ""
     group_sections = _GROUP_TO_SECTIONS.get(group_name, ())
@@ -519,14 +547,17 @@ def render_discussions_for_group(
         item for item in brief.required_discussions
         if not item.sections or any(s in group_sections for s in item.sections)
     ]
-    if not items:
-        return ""
-    lines = ["## 人工建模预备要求（讨论点必须体现）"]
-    for item in items:
-        line = f"- [{item.id}] {item.topic}"
-        if item.requirement:
-            line += f"；要求：{item.requirement}"
-        lines.append(line)
+    lines: list[str] = []
+    if items:
+        lines.append("## 人工建模预备要求（讨论点必须体现）")
+        for item in items:
+            line = f"- [{item.id}] {item.topic}"
+            if item.requirement:
+                line += f"；要求：{item.requirement}"
+            lines.append(line)
+    if group_name == "references" and brief.reference_direction:
+        lines.append("## 参考文献方向（人工建议，可参考）")
+        lines.extend(f"- {item}" for item in brief.reference_direction)
     return "\n".join(lines)
 
 

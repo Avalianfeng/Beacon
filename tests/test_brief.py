@@ -487,3 +487,54 @@ def test_evaluation_and_paper_critic_prompts_include_scoring_notes():
         blueprint=ProblemBlueprint(core_task="t"),
     )
     assert "选路线必须避开" in modeler
+
+
+def test_brief_coverage_extras_detects_hallucinated_ids():
+    """P3：coverage 多回应的幻觉 id 被 WARN 收集（不阻断门禁）。"""
+    from math_agent.brief import (
+        brief_coverage_extras, brief_coverage_problems,
+        BriefCoverageItem,
+    )
+    from math_agent.state import ProblemBlueprint
+
+    brief = ModelingBrief(
+        per_question_direction=[PerQuestionDirectionItem(id="d1", direction="x")],
+    )
+    bp = ProblemBlueprint(
+        core_task="t",
+        brief_coverage=[
+            BriefCoverageItem(brief_item_id="d1", status="followed"),
+            BriefCoverageItem(brief_item_id="幻觉id", status="followed"),
+        ],
+    )
+    assert brief_coverage_problems(brief, bp) == []          # 门禁不拦
+    extras = brief_coverage_extras(brief, bp)
+    assert len(extras) == 1 and "幻觉id" in extras[0]
+    assert brief_coverage_extras(brief, None) == []          # blueprint 缺失安全
+    assert brief_coverage_extras(None, bp) == []             # 无 brief 安全
+
+
+def test_coder_figure_one_slice_includes_figure_plan():
+    """P3（D6）：figure_plan 必做图清单达 figure 生成链（coder_figure_one 切片）。"""
+    from math_agent.brief import FigurePlanItem
+    brief = ModelingBrief(
+        figure_plan=[FigurePlanItem(id="fig-1", figure="核心证据图", requirements="标注坐标轴")],
+    )
+    from math_agent.brief import render_slice
+    out = render_slice(brief, "coder_figure_one")
+    assert "必做图清单" in out
+    assert "fig-1" in out and "核心证据图" in out and "标注坐标轴" in out
+    # 主 coder 切片不加图清单（图任务专用）
+    main_out = render_slice(brief, "coder")
+    assert "必做图清单" not in main_out
+
+
+def test_writer_references_group_injects_reference_direction():
+    """P3（D7）：reference_direction 达 writer 的 references 分组。"""
+    brief = ModelingBrief(reference_direction=["巷道支护", "Winkler 地基"])
+    from math_agent.brief import render_discussions_for_group
+    ref = render_discussions_for_group(brief, "references")
+    assert "参考文献方向" in ref and "巷道支护" in ref
+    # 非 references 分组不注入
+    model_out = render_discussions_for_group(brief, "model")
+    assert "参考文献方向" not in model_out

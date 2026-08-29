@@ -35,8 +35,9 @@ def blueprint_critic_node(state: MathModelingState) -> dict:
     )
     out.target = "analyst"  # 防篡改
     out.critic_type = "blueprint"  # 区分同 target 的不同 reviewer
-    from math_agent.brief import brief_coverage_problems
+    from math_agent.brief import brief_coverage_problems, brief_coverage_extras
     gate_problems = brief_coverage_problems(state.brief, blueprint)
+    gate_problems.extend(brief_coverage_extras(state.brief, blueprint))
     return {
         "critic_reports": [out],
         "blueprint_iteration": state.blueprint_iteration + 1,
