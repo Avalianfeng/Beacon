@@ -27,7 +27,7 @@
 | （挂账） | 内层 execute↔generate prompt 再改 | 已喂 stderr/prev_code |
 | （挂账） | 敏感性 generate↔execute 对称 | 清单只写 coder |
 | （挂账） | 无 baseline 时发明第二套对拍 diff | 有 stdout 即喂；无则不强造 |
-| ACT-03 | 节点×brief 覆盖矩阵 | 另一条硬信号线 |
+| ACT-03 | 节点×brief 覆盖矩阵 | **已关账（D-022 兑现 P1）** |
 
 ## 备选方案
 

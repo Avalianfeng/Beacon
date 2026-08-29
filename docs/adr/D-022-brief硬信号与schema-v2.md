@@ -32,5 +32,5 @@
 
 ## 关联
 
-- 全流程分析候选 C-01～C-04；学-11 / 学-12
+- 全流程分析候选 C-01～C-04；学-11 / 学-12；**ACT-03 P1 已关账**（矩阵见 `全流程分析/brief检查/05-节点brief覆盖矩阵.md`）；**ACT-04 已关账**（evaluation 接线 + SYSTEM 去条件承诺）
 - 实现：`src/math_agent/brief.py`、`ops_review.py`、`scripts/check_redlines.py`
