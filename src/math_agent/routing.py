@@ -125,6 +125,21 @@ def after_model_code_consistency(state: MathModelingState) -> str:
     if not state.model_code_reports:
         return "retry_coder"
 
+    from math_agent.brief import hard_redline_violations
+    latest = state.latest_code_artifacts()
+    code = "\n".join(a.code or "" for a in latest)
+    stdout = "\n".join(a.stdout or "" for a in latest if a.success)
+    paper = ""
+    if state.paper:
+        paper = "\n".join(
+            getattr(state.paper, name, "") or ""
+            for name in (
+                "abstract", "model_section", "solution", "sensitivity", "conclusion",
+            )
+        )
+    if hard_redline_violations(state.brief, code=code, stdout=stdout, paper=paper):
+        return "stop"
+
     report = state.model_code_reports[-1]
     if report.approved and report.score >= MIN_MODEL_CODE_SCORE:
         return "advance"

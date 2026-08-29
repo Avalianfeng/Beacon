@@ -29,7 +29,8 @@ def analyst_node(state: MathModelingState) -> dict:
     prompt = build_prompt(state.problem, state.background, state.questions,
                           retrieved_context=ctx, critic_feedback=critic_fb,
                           data_files=state.data_files,
-                          brief=state.brief)
+                          brief=state.brief,
+                          gate_problems=state.blueprint_gate_problems or None)
     blueprint: ProblemBlueprint = complete(
         prompt,
         schema=ProblemBlueprint,

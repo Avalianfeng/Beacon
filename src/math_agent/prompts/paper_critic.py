@@ -51,6 +51,7 @@ def build_prompt(
     consistency=None,
     figures=None,
     sensitivity_runs=None,
+    brief=None,
 ):
     sections = {
         "abstract": paper.abstract, "problem_restatement": paper.problem_restatement,
@@ -97,6 +98,12 @@ def build_prompt(
         f"interpretation={run.interpretation}"
         for run in (sensitivity_runs or [])[:8]
     ) or "（无）"
+    brief_block = ""
+    if brief is not None:
+        from math_agent.brief import render_slice
+        rendered = render_slice(brief, "paper_critic")
+        if rendered:
+            brief_block = f"\n{rendered}\n"
     return (
         f"# 章节素材\n{body}\n\n"
         f"# 客观信号\n- 图表数：{n_figures}\n- 敏感性 run 数：{n_sensitivity}\n"
@@ -104,7 +111,8 @@ def build_prompt(
         f"# 图表证据清单\n{figure_summary}\n\n"
         f"# 敏感性数组\n{sensitivity_summary}\n"
         f"{stdout_block}"
-        f"{limitation_note}\n"
+        f"{limitation_note}"
+        f"{brief_block}\n"
         f"请输出 JSON：{{\"target\":\"paper\",\"score\":int,"
         f"\"issues\":[{{\"section\":\"abstract|problem_restatement|assumptions|notation|model_section|solution|sensitivity|conclusion|references|general\",\"problem\":str}}, ...],"
         f"\"suggestions\":[str],\"approved\":bool}}。"

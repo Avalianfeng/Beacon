@@ -121,6 +121,7 @@ def evaluation_node(state: MathModelingState) -> dict:
                 depth_signals=depth_signals,
                 model_critic=state.latest_critic("modeler"),
                 consistency=state.model_code_reports[-1] if state.model_code_reports else None,
+                brief=state.brief,
             ),
             schema=EvaluationReport, system=SYSTEM,
             model=MODEL_ROUTING["evaluation"],

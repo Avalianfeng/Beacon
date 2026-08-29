@@ -66,9 +66,9 @@ def build_prompt(problem, assumptions, model, blueprint=None, brief=None):
         bp = f"\n\n{_blueprint_context(blueprint)}"
     brief_block = ""
     if brief is not None:
-        from math_agent.brief import render_critic_brief
+        from math_agent.brief import render_slice
         brief_block = (
-            f"\n\n{render_critic_brief(brief)}\n"
+            f"\n\n{render_slice(brief, 'model_critic')}\n"
             "模型/推导违反上述公式注意或红线 → issue（实现级检查，不评审方向本身）。"
         )
     cov = ""

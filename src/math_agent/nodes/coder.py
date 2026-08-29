@@ -22,7 +22,7 @@ from math_agent.frozen_asset import (
     build_frozen_wrapper,
     detect_frozen_asset,
 )
-from math_agent.prompts.coder import SYSTEM, build_prompt  # noqa: F401
+from math_agent.prompts.coder import SYSTEM
 from math_agent.prompts.coder_figure_one import (
     build_prompt_figure_one,
     metric_vars,
@@ -738,7 +738,8 @@ def coder_generate_node(state: MathModelingState) -> dict:
                                           item["category"], item["instruction"],
                                           item.get("prev_err") or None,
                                           item.get("prev_kind", ""),
-                                          item.get("prev_code", "")),
+                                          item.get("prev_code", ""),
+                                          brief=state.brief),
                     schema=CoderDraft, system=SYSTEM, model=MODEL_ROUTING["coder"],
                     profile="code", temperature=0.1,
                     max_tokens=_CODER_GENERATE_MAX_TOKENS,

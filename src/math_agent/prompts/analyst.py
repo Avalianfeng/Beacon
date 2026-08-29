@@ -70,7 +70,8 @@ def build_prompt(problem: str, background: str, questions: list[str],
                  retrieved_context: str = "",
                  critic_feedback=None,
                  data_files=None,
-                 brief=None) -> str:
+                 brief=None,
+                 gate_problems: list[str] | None = None) -> str:
     qs = "\n".join(f"- {q}" for q in questions) or "（题目本身未列出独立小问）"
     ctx = f"\n{retrieved_context}\n\n" if retrieved_context else ""
     fb = ""
@@ -78,14 +79,21 @@ def build_prompt(problem: str, background: str, questions: list[str],
         issues = "\n".join(f"- {i.problem}" for i in critic_feedback.issues)
         sugs = "\n".join(f"- {s}" for s in critic_feedback.suggestions)
         fb = f"\n# 上一轮 Blueprint Critic 反馈\n问题：\n{issues}\n建议：\n{sugs}\n请据此修正蓝图。\n"
+    if gate_problems:
+        missing = "\n".join(f"- {p}" for p in gate_problems)
+        fb += (
+            "\n# brief_coverage 门禁缺口（必须逐条回应下列 id）\n"
+            f"{missing}\n"
+            "请在 brief_coverage 中为上述每条给出 followed 或 deviated+理由。\n"
+        )
     data_hint = ""
     if data_files:
         from math_agent.prompts._data_hint import build_data_summary_hint
         data_hint = build_data_summary_hint(data_files)
     brief_block = ""
     if brief is not None:
-        from math_agent.brief import render_full_brief
-        brief_block = render_full_brief(brief) + "\n\n"
+        from math_agent.brief import render_slice
+        brief_block = render_slice(brief, "analyst") + "\n\n"
     return (
         f"# 题目\n{problem}\n\n"
         f"# 背景\n{background or '（无）'}\n\n"

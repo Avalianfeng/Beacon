@@ -23,7 +23,7 @@ SYSTEM = (
 
 def build_prompt(
     paper, figures, sensitivity_runs, paper_critic, table_warnings=None,
-    *, depth_signals=None, model_critic=None, consistency=None,
+    *, depth_signals=None, model_critic=None, consistency=None, brief=None,
 ):
     crit_summary = "（无 PaperCritic 报告）"
     if paper_critic:
@@ -57,6 +57,12 @@ def build_prompt(
         f"- {item.parameter}: {item.values} -> {item.metric}={item.results}"
         for item in sensitivity_runs[:8]
     ) or "（无）"
+    brief_block = ""
+    if brief is not None:
+        from math_agent.brief import render_slice
+        rendered = render_slice(brief, "evaluation")
+        if rendered:
+            brief_block = f"{rendered}\n\n"
     return (
         f"# 论文摘要\n{paper.abstract[:1000]}\n\n"
         f"# 主体代表性节选\n模型：{excerpt(paper.model_section, 3200)}\n\n"
@@ -73,6 +79,7 @@ def build_prompt(
         f"模型—代码一致性={consistency.model_dump() if consistency else '缺失'}\n\n"
         f"{warn_summary}"
         f"{depth_summary}"
+        f"{brief_block}"
         f"# PaperCritic 摘要\n{crit_summary}\n\n"
         f"请按 schema 输出 JSON。"
     )

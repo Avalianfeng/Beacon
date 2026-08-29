@@ -30,8 +30,8 @@ def build_prompt(
         data_hint = build_data_summary_hint(data_files)
     brief_block = ""
     if brief is not None:
-        from math_agent.brief import render_full_brief
-        brief_block = render_full_brief(brief) + "\n\n"
+        from math_agent.brief import render_slice
+        brief_block = render_slice(brief, "blueprint_critic") + "\n\n"
     return (
         f"# 原始题目\n{problem}\n\n"
         f"# 题面背景与已给参数\n{background or '（无）'}\n\n"

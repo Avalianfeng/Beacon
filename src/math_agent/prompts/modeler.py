@@ -57,8 +57,8 @@ def build_prompt(problem, assumptions, prev_model, stage, critic_feedback=None,
     bp = f"\n# Problem Blueprint\n{_blueprint_summary(blueprint)}\n" if blueprint is not None else ""
     brief_block = ""
     if brief is not None:
-        from math_agent.brief import render_modeler_brief
-        brief_block = f"\n{render_modeler_brief(brief)}\n"
+        from math_agent.brief import render_slice
+        brief_block = f"\n{render_slice(brief, 'modeler')}\n"
 
     # Plan D Phase 3：final 阶段才要求 figure_purposes（basic/improved 不需要图，
     # 字段在 ModelVersion 里默认空 list，prompt 也不提及，避免污染早期建模）

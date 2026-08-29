@@ -123,6 +123,7 @@ def paper_critic_node(state: MathModelingState) -> dict:
                 consistency=state.model_code_reports[-1] if state.model_code_reports else None,
                 figures=state.figures,
                 sensitivity_runs=state.sensitivity_runs,
+                brief=state.brief,
             ),
             schema=CriticReport, system=SYSTEM,
             model=MODEL_ROUTING["paper_critic"],

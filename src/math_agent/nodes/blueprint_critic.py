@@ -14,7 +14,12 @@ def blueprint_critic_node(state: MathModelingState) -> dict:
             issues=[],
             suggestions=["analyst 未产出 problem_blueprint，请重试"],
         )
-        return {"critic_reports": [report], "blueprint_iteration": state.blueprint_iteration + 1}
+        from math_agent.brief import brief_coverage_problems
+        return {
+            "critic_reports": [report],
+            "blueprint_iteration": state.blueprint_iteration + 1,
+            "blueprint_gate_problems": brief_coverage_problems(state.brief, None),
+        }
 
     blueprint_json = blueprint.model_dump_json(indent=2)
     prompt = build_prompt(
@@ -30,7 +35,10 @@ def blueprint_critic_node(state: MathModelingState) -> dict:
     )
     out.target = "analyst"  # 防篡改
     out.critic_type = "blueprint"  # 区分同 target 的不同 reviewer
+    from math_agent.brief import brief_coverage_problems
+    gate_problems = brief_coverage_problems(state.brief, blueprint)
     return {
         "critic_reports": [out],
         "blueprint_iteration": state.blueprint_iteration + 1,
+        "blueprint_gate_problems": gate_problems,
     }

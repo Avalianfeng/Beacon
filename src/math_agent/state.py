@@ -345,6 +345,8 @@ class MathModelingState(BaseModel):
     # Problem Blueprint（覆盖语义；analyst 每次 retry 整体替换）
     problem_blueprint: ProblemBlueprint | None = None
     blueprint_iteration: int = 0    # blueprint_critic 评估次数（首次 + 最多一次 retry）
+    # 门禁 retry 定向反馈：coverage 缺口 id 列表（覆盖语义；无问题为空）
+    blueprint_gate_problems: list[str] = Field(default_factory=list)
     code_verify_iteration: int = 0  # model_code_consistency 无主证据轮次计数（兼总轮次）
     # 有主证据但分数低于门禁的“定向修复”轮次计数：与无主证据预算分开，
     # 避免无主证据轮次把低分修复预算提前耗尽（r3 曾因此拿到证据后立即停机）。

@@ -42,6 +42,7 @@ def build_baseline_prompt(
     prev_failure: str | None = None,
     prev_error_kind: str = "",
     previous_code: str = "",
+    brief=None,
 ) -> str:
     """构造对照方案代码生成 prompt。
 
@@ -62,6 +63,12 @@ def build_baseline_prompt(
             f"```python\n{previous_code[:24000]}\n```\n"
             "保留正确部分，只修复上面的运行/校验错误，不要从零重写。\n"
         )
+    brief_block = ""
+    if brief is not None:
+        from math_agent.brief import render_slice
+        rendered = render_slice(brief, "coder_baseline")
+        if rendered:
+            brief_block = f"\n{rendered}\n"
     return (
         f"# 题目\n{problem[:500]}\n\n"
         f"# 对照方案：{name}\n"
@@ -75,6 +82,6 @@ def build_baseline_prompt(
         f"重要：对照方案必须沿用主方案相同的指标名，不得改用不同的指标名，以便对比表汇总。\n"
         f"stdout 不允许只输出自然语言总结，必须包含 RESULT: 行带具体数值。\n\n"
         f"发生数据读取或求解异常时必须 raise 并以非零状态退出，不能打印错误后伪装成功。\n"
-        f"{retry}{repair}\n"
+        f"{retry}{repair}{brief_block}\n"
         f"请输出 JSON：{{\"purpose\": \"{name}对照方案\", \"code\": str}}，code 字段是完整的 Python 源码。"
     )

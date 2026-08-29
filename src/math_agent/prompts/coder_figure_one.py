@@ -142,8 +142,8 @@ def build_prompt_figure_one(model, purpose: str, prev_failure=None, prev_error_k
         data_hint = build_data_hint(data_dir, data_files)
     brief_hint = ""
     if brief is not None:
-        from math_agent.brief import render_coder_brief
-        brief_hint = render_coder_brief(brief) + "\n"
+        from math_agent.brief import render_slice
+        brief_hint = render_slice(brief, "coder_figure_one") + "\n"
     canonical_hint = ""
     if canonical_evidence:
         canonical_hint = (

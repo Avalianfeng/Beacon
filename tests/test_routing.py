@@ -136,6 +136,24 @@ def test_consistency_advances_when_approved_and_high_score():
     assert after_model_code_consistency(s) == "advance"
 
 
+def test_hard_redline_stops_even_when_consistency_would_advance():
+    from math_agent.brief import load_brief
+    from math_agent.state import CodeArtifact
+    from pathlib import Path
+
+    s = _state_with_consistency_report(approved=True, score=8, iteration=1)
+    s.brief = load_brief(Path("problems/mcm51-c/brief.json"))
+    s.code_artifacts.append(CodeArtifact(
+        purpose="primary",
+        code="print(1)",
+        stdout="no RESULT line",
+        success=True,
+        evidence_role="primary",
+        batch=1,
+    ))
+    assert after_model_code_consistency(s) == "stop"
+
+
 def test_consistency_retries_coder_when_not_approved():
     s = _state_with_consistency_report(approved=False, score=4, iteration=1)
     assert after_model_code_consistency(s) == "retry_coder"
