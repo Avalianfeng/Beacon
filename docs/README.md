@@ -66,6 +66,8 @@
 
 ## 五、验证入口
 
+- 📌 **验证区：[验证/](验证/README.md)**——大改造后的分层验证内容集 + 运行记录（D-022/D-023 已建）；回归触发时先读。
+
 ```powershell
 .venv\Scripts\python.exe -m pytest -q            # 全量基线 810 passed / 0 failed / 4 skipped（收集 814；12 失败已清零，2026-08-20 修复入库 9f2906c；A-13 后 33 新增用例 → 基线升至 843+ 待本轮收尾实测）
 npm.cmd test -- --run                            # Web 测试

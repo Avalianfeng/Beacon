@@ -1,4 +1,4 @@
-<!-- doc: type=decision status=active updated=2026-08-27 -->
+<!-- doc: type=decision status=active updated=2026-08-29 -->
 # ADR 索引（Architecture Decision Records · 决策详情文件）
 
 > **定位**：`docs/adr/` 存放**体系级决策的详情文件**（背景/后果/备选方案长文），让决策可回查、可追溯、可评审。
@@ -40,6 +40,8 @@
 | [D-020-恢复完整论文职责与A-01原义.md](D-020-恢复完整论文职责与A-01原义.md) | 恢复 Beacon 产完整论文职责 + A-01 原义（2026-08-27） | ✅ 已执行 |
 | [D-021-协作梳理优先于改机制.md](D-021-协作梳理优先于改机制.md) | 协作协议 + 三问判定准则（2026-08-27） | ✅ 已执行 |
 | [D-022-brief硬信号与schema-v2.md](D-022-brief硬信号与schema-v2.md) | brief 硬信号 + schema v2 + hard 恒停（2026-08-29） | ✅ 已落地 |
+| [D-023-重试哲学一次停.md](D-023-重试哲学一次停.md) | 门禁首次未过即 stop（学-11 / ACT-02，2026-08-29） | ✅ 已落地 |
+| [D-024-coder-llm-opt-in.md](D-024-coder-llm-opt-in.md) | coder LLM 默认关 + `--allow-coder-llm`（学-11 / ACT-01，2026-08-29） | ✅ 已落地 |
 
 ## 更新记录
 
