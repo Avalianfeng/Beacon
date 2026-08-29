@@ -779,6 +779,40 @@ def test_review_check_cli_writes_report(tmp_path):
     names = {t["name"] for t in payload["tools"]}
     assert "check_paper_numbers" in names
     assert "check_l4_gates" in names
+    assert "brief_sha256" not in payload
+
+
+def test_brief_check_mcm51_c_v2_ok():
+    result = runner.invoke(app, [
+        "brief", "check", "--brief", "problems/mcm51-c/brief.json",
+    ])
+    assert result.exit_code == 0, result.output
+    assert "schema_version=2" in result.output
+    assert "redline_rules" in result.output
+
+
+def test_review_check_cli_with_brief_records_sha256(tmp_path):
+    from pathlib import Path
+    import hashlib
+
+    fixtures = Path(__file__).parent / "fixtures" / "check_numbers"
+    paper = fixtures / "paper_clean.md"
+    brief = Path("problems/mcm51-c/brief.json")
+    report = tmp_path / "review-report.json"
+    result = runner.invoke(app, [
+        "review-check",
+        "--paper", str(paper),
+        "--evidence", str(fixtures / "evidence_a.txt"),
+        "--brief", str(brief),
+        "--out", str(report),
+        "--json",
+    ])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["brief_sha256"] == hashlib.sha256(brief.read_bytes()).hexdigest()
+    names = {t["name"] for t in payload["tools"]}
+    assert "check_redlines" in names
+    assert "check_brief_claims" in names
 
 
 def test_reference_verify_cli_ok_and_fail(tmp_path, monkeypatch):

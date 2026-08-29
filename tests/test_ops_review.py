@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """ops_review 模块测试（复用 tests/fixtures/check_numbers/）。"""
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -34,6 +35,37 @@ def test_run_review_paper_and_evidence():
     for tool in result["tools"]:
         assert set(tool.keys()) == {"name", "exit_code"}
         assert tool["exit_code"] in (0, 1, 2)
+
+
+def test_run_review_with_brief_records_sha256():
+    paper = FIXTURES / "paper_clean.md"
+    evidence = [FIXTURES / "evidence_a.txt"]
+    brief = Path("problems/mcm51-c/brief.json")
+    result = run_review(paper=paper, evidence=evidence, brief=brief, strict=False)
+    digest = hashlib.sha256(brief.read_bytes()).hexdigest()
+    assert result["brief_sha256"] == digest
+    names = {t["name"] for t in result["tools"]}
+    assert "check_redlines" in names
+    assert "check_brief_claims" in names
+    assert result["exit_code"] == 0
+
+
+def test_run_review_hard_redline_fails_without_strict(tmp_path):
+    paper = FIXTURES / "paper_clean.md"
+    evidence = [FIXTURES / "evidence_a.txt"]
+    stdout = tmp_path / "stdout.txt"
+    stdout.write_text("no result fields here\n", encoding="utf-8")
+    result = run_review(
+        paper=paper,
+        evidence=evidence,
+        brief=Path("problems/mcm51-c/brief.json"),
+        stdout=stdout,
+        strict=False,
+    )
+    red = next(t for t in result["tools"] if t["name"] == "check_redlines")
+    assert red["exit_code"] == 1
+    assert result["exit_code"] == 1
+    assert result["ok"] is False
 
 
 def test_run_review_missing_inputs():

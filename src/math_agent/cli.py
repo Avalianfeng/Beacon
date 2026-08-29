@@ -1062,8 +1062,10 @@ def _fill_paper_abstract(template: str, result_ours: dict, q_fields: dict) -> st
     return re.sub(r"\{([^{}]+)\}", _repl, template)
 
 
-def _load_paper_brief(brief: Path | None, problem_id: str) -> dict | None:
+def _load_paper_brief(brief: Path | None, problem_id: str):
     """读 brief.json：--brief 缺省尝试 problems/<id>/brief.json；都没有返回 None。"""
+    from math_agent.brief import load_brief
+
     if brief is None:
         candidate = Path("problems") / problem_id / "brief.json"
         if candidate.is_file():
@@ -1071,12 +1073,9 @@ def _load_paper_brief(brief: Path | None, problem_id: str) -> dict | None:
         else:
             return None
     try:
-        obj = json.loads(brief.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise typer.BadParameter(f"brief.json 不是有效的 UTF-8 JSON：{exc}", param_hint="--brief") from exc
-    if not isinstance(obj, dict):
-        raise typer.BadParameter("brief.json 顶层必须是对象", param_hint="--brief")
-    return obj
+        return load_brief(brief)
+    except ValueError as exc:
+        raise typer.BadParameter(f"{exc}", param_hint="--brief") from exc
 
 
 def _split_numbered_items(text: str) -> list[str]:
@@ -1101,19 +1100,13 @@ def _split_numbered_items(text: str) -> list[str]:
     return out
 
 
-def _paper_assumptions(brief: dict | None) -> tuple[str, list[str], str]:
-    """从 brief.required_discussions 取 disc-assumptions。
-
-    返回 (导语, 假设条目列表, 要求说明)；条目保留 brief 原文（含分级标注 ①/②/③），
-    只机械去掉条目开头的 ①②③ 编号，不重写、不编造。
-    """
+def _paper_assumptions(brief) -> tuple[str, list[str], str]:
+    """从 brief.required_discussions 取 disc-assumptions。"""
     if not brief:
         return "", [], ""
-    for item in brief.get("required_discussions") or []:
-        if not isinstance(item, dict):
-            continue
-        if item.get("id") == "disc-assumptions":
-            topic = item.get("topic")
+    for item in brief.required_discussions:
+        if item.id == "disc-assumptions":
+            topic = item.topic
             if isinstance(topic, str) and topic.strip():
                 parts = _split_numbered_items(topic)
                 preamble = parts[0] if parts and not parts[0].startswith("①") else ""
@@ -1122,7 +1115,7 @@ def _paper_assumptions(brief: dict | None) -> tuple[str, list[str], str]:
                     for p in parts
                     if p.startswith(("①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"))
                 ]
-                requirement = item.get("requirement")
+                requirement = item.requirement
                 return preamble, items, requirement if isinstance(requirement, str) else ""
     return "", [], ""
 
@@ -1136,15 +1129,13 @@ def _direction_first_clause(text: str) -> str:
     return text.strip()
 
 
-def _question_direction(brief: dict | None, qid: str) -> str:
+def _question_direction(brief, qid: str) -> str:
     """per_question_direction 里 question_id==qid 的 direction 第一句；无则空串。"""
     if not brief:
         return ""
-    for item in brief.get("per_question_direction") or []:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("question_id", "")) == qid:
-            direction = item.get("direction")
+    for item in brief.per_question_direction:
+        if str(item.question_id) == qid:
+            direction = item.direction
             if isinstance(direction, str) and direction.strip():
                 return _direction_first_clause(direction)
     return ""
@@ -1934,18 +1925,30 @@ def review_check(
         None, "--traceability", exists=True, readable=True, help="附录 A 溯源表 md",
     ),
     strict: bool = typer.Option(False, "--strict", help="脚本 --strict：有问题则退出码 1"),
+    brief: Path | None = typer.Option(
+        None, "--brief", exists=True, readable=True, help="brief.json（红线/claims/L4 语料）",
+    ),
+    code: list[Path] = typer.Option(
+        [], "--code", help="代码文件（check_redlines 扫描，可多次）",
+    ),
+    stdout_file: Path | None = typer.Option(
+        None, "--stdout", exists=True, readable=True, help="运行输出文本（check_redlines result_rule）",
+    ),
     out: Path | None = typer.Option(
         None, "--out", help="评审报告 JSON（默认 stdout 旁的 review-report.json）",
     ),
     as_json: bool = typer.Option(False, "--json", help="向 stdout 打印 JSON 报告"),
 ):
-    """S7 包装 check_paper_numbers / check_assumption_claims / check_gap_trigger / check_l4_gates。"""
+    """S7 包装 check_*（含红线/claims；有 --brief 时记 brief_sha256）。"""
     payload = run_review(
         paper=paper,
         evidence=list(evidence) or None,
         json_evidence=list(gap_json) or None,
         strict=strict,
         traceability=traceability,
+        brief=brief,
+        code=list(code) or None,
+        stdout=stdout_file,
     )
     report_path = out if out is not None else Path("review-report.json")
     write_review_report(payload, report_path)
@@ -2242,6 +2245,15 @@ def brief_check(
         count = len(getattr(obj, field_name) or [])
         typer.echo(f"  - {field_name}（{label}）：{count} 条")
     typer.echo(f"共 {len(ids)} 条待回应条目（brief_coverage 门禁按这些 id 校验）")
+    try:
+        raw = json.loads(brief.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raw = {}
+    from math_agent.brief import inspect_brief_warnings
+    for warn in inspect_brief_warnings(raw if isinstance(raw, dict) else {}):
+        typer.echo(f"[WARN] {warn}")
+    if obj.schema_version == 2:
+        typer.echo(f"  - redline_rules：{len(obj.redline_rules)} 条")
     if not ids:
         typer.echo("[WARN] brief 全为空——不会注入任何约束（如需约束请填写）")
 

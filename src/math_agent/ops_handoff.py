@@ -97,7 +97,7 @@ def next_command(
         evidence = _command_artifact_path(runs_root, problem_id, "evidence.json")
         return (
             f"math-agent review-check --paper {paper} "
-            f"--evidence {evidence}"
+            f"--evidence {evidence} --brief problems/{problem_id}/brief.json"
         )
     if stage == "S8":
         paper = _command_artifact_path(runs_root, problem_id, "paper.md")

@@ -92,3 +92,12 @@ def test_record_writes_markdown_and_latest(tmp_path: Path):
     assert meta is not None
     assert meta["node"] == "model_code_consistency"
     assert "通过" in meta["headline"]
+
+
+def test_jsonable_does_not_truncate_long_lists():
+    from math_agent.insight import _jsonable
+    items = [{"id": i} for i in range(51)]
+    out = _jsonable(items)
+    assert len(out) == 51
+    big = {str(i): i for i in range(90)}
+    assert len(_jsonable(big)) == 90

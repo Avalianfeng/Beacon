@@ -65,6 +65,7 @@ def test_s7_review_check_command():
     assert "math-agent review-check" in cmd
     assert "runs/mcm51-c-reference/paper.md" in cmd
     assert "runs/mcm51-c-reference/evidence.json" in cmd
+    assert "--brief problems/mcm51-c/brief.json" in cmd
 
 
 def test_s8_accept_command():
@@ -110,3 +111,4 @@ def test_s7_resolves_paper_under_runs_root(tmp_path: Path):
     assert "math-agent review-check" in cmd
     assert "mathorcup16-c-p3/paper.md" in cmd
     assert "mathorcup16-c-p3/evidence.json" in cmd
+    assert "--brief problems/mathorcup16-c/brief.json" in cmd

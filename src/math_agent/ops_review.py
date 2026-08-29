@@ -1,6 +1,7 @@
 """评审检查包装：通过 importlib 调用 scripts/check_*.py。"""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -11,6 +12,8 @@ _CHECK_NAMES = frozenset(
         "check_assumption_claims",
         "check_gap_trigger",
         "check_l4_gates",
+        "check_redlines",
+        "check_brief_claims",
     }
 )
 
@@ -20,10 +23,7 @@ def _scripts_dir() -> Path:
 
 
 def load_check_module(name: str):
-    """name in {'check_paper_numbers','check_assumption_claims','check_gap_trigger','check_l4_gates'}
-
-    Load scripts/<name>.py via importlib.util.spec_from_file_location.
-    """
+    """Load scripts/<name>.py via importlib.util.spec_from_file_location."""
     if name not in _CHECK_NAMES:
         raise ValueError(f"unknown check module: {name}")
     script = _scripts_dir() / f"{name}.py"
@@ -39,10 +39,13 @@ def _overall_exit(tools: list[dict], *, strict: bool) -> int:
     if not tools:
         return 2
     codes = [t["exit_code"] for t in tools]
-    if strict:
-        return max(codes)
     if any(c == 2 for c in codes):
         return 2
+    if any(c == 1 for c in codes):
+        # hard 红线等工具在非 --strict 下也会返回 1；其余脚本仅在传入 --strict 时返回 1
+        return 1
+    if strict:
+        return max(codes)
     return 0
 
 
@@ -53,6 +56,9 @@ def run_review(
     json_evidence: list[Path] | None = None,
     strict: bool = False,
     traceability: Path | None = None,
+    brief: Path | None = None,
+    code: list[Path] | None = None,
+    stdout: Path | None = None,
 ) -> dict:
     """Run the checkers that have inputs."""
     if paper is None and not json_evidence and traceability is None:
@@ -88,9 +94,24 @@ def run_review(
 
         mod = load_check_module("check_l4_gates")
         argv = ["--paper", str(paper)]
+        if brief is not None:
+            argv.extend(["--brief", str(brief)])
         if strict:
             argv.append("--strict")
         tools.append({"name": "check_l4_gates", "exit_code": mod.main(argv)})
+
+        if brief is not None:
+            for name in ("check_redlines", "check_brief_claims"):
+                mod = load_check_module(name)
+                argv = ["--paper", str(paper), "--brief", str(brief)]
+                if name == "check_redlines":
+                    for path in code or []:
+                        argv.extend(["--code", str(path)])
+                    if stdout is not None:
+                        argv.extend(["--stdout", str(stdout)])
+                if strict:
+                    argv.append("--strict")
+                tools.append({"name": name, "exit_code": mod.main(argv)})
 
     if json_evidence:
         mod = load_check_module("check_gap_trigger")
@@ -102,12 +123,16 @@ def run_review(
         tools.append({"name": "check_gap_trigger", "exit_code": mod.main(argv)})
 
     exit_code = _overall_exit(tools, strict=strict)
-    return {
+    payload = {
         "ok": exit_code == 0,
         "exit_code": exit_code,
         "tools": tools,
         "strict": strict,
     }
+    if brief is not None and Path(brief).is_file():
+        payload["brief_sha256"] = hashlib.sha256(Path(brief).read_bytes()).hexdigest()
+        payload["brief"] = str(brief)
+    return payload
 
 
 def write_review_report(payload: dict, out: Path) -> Path:

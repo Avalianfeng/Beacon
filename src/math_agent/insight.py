@@ -451,7 +451,7 @@ def _jsonable(value: Any) -> Any:
     if dumped is not None and dumped is not value:
         return _jsonable(dumped)
     if isinstance(value, dict):
-        return {str(k): _jsonable(v) for k, v in list(value.items())[:80]}
+        return {str(k): _jsonable(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_jsonable(item) for item in list(value)[:40]]
+        return [_jsonable(item) for item in value]
     return _clip(repr(value), 2000)

@@ -194,23 +194,18 @@ def _build_expand_prompt(
 """
 
 
-def _brief_excerpt(brief: dict | None, slot: ExpandSlot) -> str:
+def _brief_excerpt(brief, slot: ExpandSlot) -> str:
     if not brief:
         return ""
     parts: list[str] = []
-    for item in brief.get("required_discussions") or []:
-        if isinstance(item, dict) and item.get("id") == "disc-assumptions":
-            topic = item.get("topic")
-            if isinstance(topic, str):
-                parts.append(topic[:800])
+    for item in brief.required_discussions:
+        if item.id == "disc-assumptions" and item.topic:
+            parts.append(item.topic[:800])
     if slot.qid:
-        for item in brief.get("per_question_direction") or []:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("question_id", "")) == slot.qid:
-                d = item.get("direction")
-                if isinstance(d, str):
-                    parts.append(d[:600])
+        for item in brief.per_question_direction:
+            if str(item.question_id) == slot.qid:
+                if item.direction:
+                    parts.append(item.direction[:600])
                 break
     return "\n---\n".join(parts)
 
@@ -230,7 +225,7 @@ def expand_one_slot(
     *,
     paper: str,
     available_numbers: str,
-    brief: dict | None,
+    brief=None,
     complete_fn=complete,
 ) -> str:
     """调用 LLM 展开单槽；返回 prose 文本。"""
