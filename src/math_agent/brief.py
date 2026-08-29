@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -71,6 +72,31 @@ class DataNoteItem(BaseModel):
     note: str               # 数据注意（均值化/范围/缺失处理）
 
 
+class RedlineRule(BaseModel):
+    """schema v2 机器可读红线。id 建议与 red_lines 条目对齐。"""
+
+    id: str
+    target: Literal["code", "stdout", "paper"]
+    rule_type: Literal["literal_ban", "expr_ban", "symbol_ban", "result_rule", "unit_mix_ban"]
+    pattern: str
+    severity: Literal["hard", "warn"]
+    note: str = ""
+
+    @field_validator("pattern")
+    @classmethod
+    def _pattern_nonempty(cls, value: str) -> str:
+        if not (value or "").strip():
+            raise ValueError("redline_rules.pattern 不能为空")
+        return value
+
+
+class RedlineViolation(BaseModel):
+    rule_id: str
+    severity: str
+    target: str
+    message: str
+
+
 _BRIEF_ITEM_FIELDS = (
     "per_question_direction",
     "formula_notes",
@@ -104,12 +130,14 @@ class ModelingBrief(BaseModel):
     scoring_notes: list[ScoringNoteItem] = Field(default_factory=list)
     data_notes: list[DataNoteItem] = Field(default_factory=list)
     reference_direction: list[str] = Field(default_factory=list)
+    background_knowledge: list[str] = Field(default_factory=list)
+    redline_rules: list[RedlineRule] = Field(default_factory=list)
 
     @field_validator("schema_version")
     @classmethod
     def _check_version(cls, value: int) -> int:
-        if value != 1:
-            raise ValueError(f"不支持的 brief schema_version={value}（当前仅支持 1）")
+        if value not in (1, 2):
+            raise ValueError(f"不支持的 brief schema_version={value}（当前支持 1 或 2）")
         return value
 
     @model_validator(mode="after")
@@ -133,6 +161,18 @@ class ModelingBrief(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_redline_rule_ids(self) -> "ModelingBrief":
+        if not self.redline_rules:
+            return self
+        red_ids = {item.id for item in self.red_lines}
+        unknown = [r.id for r in self.redline_rules if r.id not in red_ids]
+        if unknown:
+            raise ValueError(
+                f"redline_rules.id 必须对应 red_lines 条目 id，未知：{unknown}"
+            )
+        return self
+
 
 class BriefCoverageItem(BaseModel):
     """analyst 对 brief 单一条目的回应（位于 ProblemBlueprint.brief_coverage）。"""
@@ -145,6 +185,19 @@ class BriefCoverageItem(BaseModel):
 # ---------------------------------------------------------------------------
 # 读取与校验
 # ---------------------------------------------------------------------------
+
+
+def inspect_brief_warnings(raw: dict) -> list[str]:
+    """文件级 WARN（不阻断 load）。v1 写了 v2 字段时提示升级。"""
+    warnings: list[str] = []
+    version = raw.get("schema_version", 1)
+    if version == 1:
+        for key in ("redline_rules", "background_knowledge"):
+            if key in raw:
+                warnings.append(
+                    f"schema_version=1 含 {key}，请升至 schema_version=2（避免 v1 静默丢弃）"
+                )
+    return warnings
 
 
 def load_brief(path: str | Path) -> ModelingBrief:
@@ -196,7 +249,7 @@ def brief_coverage_problems(brief: ModelingBrief | None, blueprint) -> list[str]
 
 
 # ---------------------------------------------------------------------------
-# prompt 渲染（各注入点按需取用；容量控制：整块 ≤1500 字符级）
+# prompt 渲染：有序块表 + render_slice（D-022）
 # ---------------------------------------------------------------------------
 
 
@@ -204,60 +257,86 @@ def _qid(item) -> str:
     return f"（问题 {item.question_id}）" if getattr(item, "question_id", "") else ""
 
 
-def render_full_brief(brief: ModelingBrief | None) -> str:
-    """完整 brief 块：analyst / blueprint_critic 注入用。"""
-    if brief is None:
-        return ""
-    lines = [
+def _filter_qid(items: list, question_id: str) -> list:
+    """question_id 非空时：无 qid 的全局条目 + 匹配该问的条目；空则全给。"""
+    if not question_id:
+        return list(items)
+    return [
+        item for item in items
+        if not getattr(item, "question_id", "") or str(item.question_id) == question_id
+    ]
+
+
+@dataclass(frozen=True)
+class SliceBlock:
+    """节点切片的一个有序块。kind: header | source | field | dimension | hook。"""
+
+    kind: str
+    name: str = ""
+    variant: str = ""
+
+
+_HEADERS: dict[str, list[str]] = {
+    "full": [
         "# 人工建模预备（Modeling Brief）",
         "> 以下为人工确认的建模方向约束。优先级：题面 > brief > 预训练直觉；"
         "brief 与题面冲突时以题面为准，并在 brief_coverage 中标注“偏离+理由”。",
-    ]
-    if brief.source:
-        lines.append(f"> 来源分级：{' > '.join(brief.source)}")
-    if brief.per_question_direction:
-        lines.append("\n## 逐题方向")
-        for item in brief.per_question_direction:
-            line = f"- [{item.id}]{_qid(item)} 方向：{item.direction}"
-            if item.forbidden:
-                line += f"；禁止：{item.forbidden}"
-            lines.append(line)
-    if brief.formula_notes:
-        lines.append("\n## 公式注意")
-        for item in brief.formula_notes:
-            lines.append(f"- [{item.id}]{_qid(item)} {item.note}")
-    if brief.required_discussions:
-        lines.append("\n## 论文必须体现的讨论点")
-        for item in brief.required_discussions:
-            where = f"（章节：{', '.join(item.sections)}）" if item.sections else ""
-            line = f"- [{item.id}]{where} {item.topic}"
-            if item.requirement:
-                line += f"；要求：{item.requirement}"
-            lines.append(line)
-    if brief.red_lines:
-        lines.append("\n## 红线（禁止清单）")
-        for item in brief.red_lines:
-            lines.append(f"- [{item.id}]{_qid(item)} 禁止：{item.prohibition}")
-    if brief.figure_plan:
-        lines.append("\n## 图表规划")
-        for item in brief.figure_plan:
-            line = f"- [{item.id}]{_qid(item)} {item.figure}"
-            if item.requirements:
-                line += f"；要求：{item.requirements}"
-            lines.append(line)
-    if brief.scoring_notes:
-        lines.append("\n## 评分标准要点")
-        for item in brief.scoring_notes:
-            lines.append(f"- [{item.id}]{_qid(item)} {item.note}")
-    if brief.data_notes:
-        lines.append("\n## 数据注意")
-        for item in brief.data_notes:
-            lines.append(f"- [{item.id}]{_qid(item)} {item.note}")
-    if brief.reference_direction:
-        lines.append("\n## 参考文献方向")
-        for item in brief.reference_direction:
-            lines.append(f"- {item}")
-    return "\n".join(lines)
+    ],
+    "modeler": ["# 人工建模预备（方向与公式约束）"],
+    "coder": ["# 人工建模预备（实现红线）"],
+    "critic": ["# 人工建模预备（实现级评审基准）"],
+    "scoring": ["# 人工建模预备（评分标准要点）"],
+}
+
+_FIELD_HEADING: dict[tuple[str, str], str] = {
+    ("per_question_direction", "full"): "\n## 逐题方向",
+    ("per_question_direction", "modeler"): "## 逐题方向",
+    ("formula_notes", "full"): "\n## 公式注意",
+    ("formula_notes", "modeler"): "## 公式注意",
+    ("formula_notes", "coder"): "## 公式与参数注意（实现必须遵循）",
+    ("formula_notes", "critic"): "## 公式注意（模型违反记 issue）",
+    ("required_discussions", "full"): "\n## 论文必须体现的讨论点",
+    ("red_lines", "full"): "\n## 红线（禁止清单）",
+    ("red_lines", "coder"): "## 红线（违反即失败，必须避开）",
+    ("red_lines", "critic"): "## 红线（模型/推导触碰记 issue）",
+    ("red_lines", "modeler"): "## 红线（选路线必须避开）",
+    ("figure_plan", "full"): "\n## 图表规划",
+    ("scoring_notes", "full"): "\n## 评分标准要点",
+    ("scoring_notes", "scoring"): "## 评分标准要点",
+    ("data_notes", "full"): "\n## 数据注意",
+    ("data_notes", "coder"): "## 数据注意（实现必须遵循）",
+    ("reference_direction", "full"): "\n## 参考文献方向",
+}
+
+
+def _item_line(field: str, item, variant: str) -> str:
+    if field == "per_question_direction":
+        line = f"- [{item.id}]{_qid(item)} 方向：{item.direction}"
+        if item.forbidden:
+            line += f"；禁止：{item.forbidden}"
+        return line
+    if field == "formula_notes":
+        return f"- [{item.id}]{_qid(item)} {item.note}"
+    if field == "required_discussions":
+        where = f"（章节：{', '.join(item.sections)}）" if item.sections else ""
+        line = f"- [{item.id}]{where} {item.topic}"
+        if item.requirement:
+            line += f"；要求：{item.requirement}"
+        return line
+    if field == "red_lines":
+        return f"- [{item.id}]{_qid(item)} 禁止：{item.prohibition}"
+    if field == "figure_plan":
+        line = f"- [{item.id}]{_qid(item)} {item.figure}"
+        if item.requirements:
+            line += f"；要求：{item.requirements}"
+        return line
+    if field == "scoring_notes":
+        return f"- [{item.id}]{_qid(item)} {item.note}"
+    if field == "data_notes":
+        return f"- [{item.id}]{_qid(item)} {item.note}"
+    if field == "reference_direction":
+        return f"- {item}"
+    raise KeyError(f"unknown brief field {field}")
 
 
 def _dimension_note_lines() -> list[str]:
@@ -269,63 +348,152 @@ def _dimension_note_lines() -> list[str]:
     ]
 
 
-def render_modeler_brief(brief: ModelingBrief | None) -> str:
-    """modeler 注入：逐题方向 + 公式注意（路线选择约束）。"""
+def _render_field_block(
+    brief: ModelingBrief, field: str, variant: str, *, question_id: str = "",
+) -> list[str]:
+    heading = _FIELD_HEADING.get((field, variant))
+    if heading is None:
+        raise KeyError(f"no heading for field={field!r} variant={variant!r}")
+    raw = getattr(brief, field)
+    if field == "reference_direction":
+        items = list(raw or [])
+    else:
+        items = _filter_qid(list(raw or []), question_id)
+    if not items:
+        return []
+    lines = [heading]
+    for item in items:
+        lines.append(_item_line(field, item, variant))
+    return lines
+
+
+NODE_BRIEF_SLICE: dict[str, tuple[SliceBlock, ...]] = {
+    "analyst": (
+        SliceBlock("header", variant="full"),
+        SliceBlock("source"),
+        SliceBlock("field", "per_question_direction", "full"),
+        SliceBlock("field", "formula_notes", "full"),
+        SliceBlock("field", "required_discussions", "full"),
+        SliceBlock("field", "red_lines", "full"),
+        SliceBlock("field", "figure_plan", "full"),
+        SliceBlock("field", "scoring_notes", "full"),
+        SliceBlock("field", "data_notes", "full"),
+        SliceBlock("field", "reference_direction", "full"),
+    ),
+    "blueprint_critic": (
+        SliceBlock("header", variant="full"),
+        SliceBlock("source"),
+        SliceBlock("field", "per_question_direction", "full"),
+        SliceBlock("field", "formula_notes", "full"),
+        SliceBlock("field", "required_discussions", "full"),
+        SliceBlock("field", "red_lines", "full"),
+        SliceBlock("field", "figure_plan", "full"),
+        SliceBlock("field", "scoring_notes", "full"),
+        SliceBlock("field", "data_notes", "full"),
+        SliceBlock("field", "reference_direction", "full"),
+    ),
+    "modeler": (
+        SliceBlock("header", variant="modeler"),
+        SliceBlock("field", "per_question_direction", "modeler"),
+        SliceBlock("field", "red_lines", "modeler"),
+        SliceBlock("field", "formula_notes", "modeler"),
+        SliceBlock("dimension"),
+    ),
+    "coder": (
+        SliceBlock("header", variant="coder"),
+        SliceBlock("field", "red_lines", "coder"),
+        SliceBlock("field", "formula_notes", "coder"),
+        SliceBlock("field", "data_notes", "coder"),
+        SliceBlock("dimension"),
+    ),
+    "coder_figure_one": (
+        SliceBlock("header", variant="coder"),
+        SliceBlock("field", "red_lines", "coder"),
+        SliceBlock("field", "formula_notes", "coder"),
+        SliceBlock("field", "data_notes", "coder"),
+        SliceBlock("dimension"),
+    ),
+    "coder_baseline": (
+        SliceBlock("header", variant="coder"),
+        SliceBlock("field", "red_lines", "coder"),
+        SliceBlock("field", "formula_notes", "coder"),
+        SliceBlock("field", "data_notes", "coder"),
+        SliceBlock("dimension"),
+    ),
+    "model_critic": (
+        SliceBlock("header", variant="critic"),
+        SliceBlock("field", "formula_notes", "critic"),
+        SliceBlock("field", "red_lines", "critic"),
+    ),
+    "evaluation": (
+        SliceBlock("header", variant="scoring"),
+        SliceBlock("field", "scoring_notes", "scoring"),
+    ),
+    "paper_critic": (
+        SliceBlock("header", variant="scoring"),
+        SliceBlock("field", "scoring_notes", "scoring"),
+    ),
+    "writer_section": (
+        SliceBlock("hook", "discussions_for_group"),
+    ),
+}
+
+
+def render_slice(
+    brief: ModelingBrief | None,
+    node: str,
+    *,
+    group_name: str = "",
+    question_id: str = "",
+) -> str:
+    """按 NODE_BRIEF_SLICE 有序块渲染。无 brief 返回空串。"""
     if brief is None:
         return ""
-    lines = ["# 人工建模预备（方向与公式约束）"]
-    if brief.per_question_direction:
-        lines.append("## 逐题方向")
-        for item in brief.per_question_direction:
-            line = f"- [{item.id}]{_qid(item)} 方向：{item.direction}"
-            if item.forbidden:
-                line += f"；禁止：{item.forbidden}"
-            lines.append(line)
-    if brief.formula_notes:
-        lines.append("## 公式注意")
-        for item in brief.formula_notes:
-            lines.append(f"- [{item.id}]{_qid(item)} {item.note}")
-    lines.extend(_dimension_note_lines())
-    if not lines[1:]:
+    blocks = NODE_BRIEF_SLICE.get(node)
+    if blocks is None:
+        raise KeyError(f"unknown brief slice node: {node}")
+    lines: list[str] = []
+    header_variant = ""
+    for block in blocks:
+        if block.kind == "header":
+            header_variant = block.variant
+            lines.extend(_HEADERS[block.variant])
+        elif block.kind == "source":
+            if brief.source:
+                lines.append(f"> 来源分级：{' > '.join(brief.source)}")
+        elif block.kind == "field":
+            lines.extend(
+                _render_field_block(brief, block.name, block.variant, question_id=question_id)
+            )
+        elif block.kind == "dimension":
+            lines.extend(_dimension_note_lines())
+        elif block.kind == "hook" and block.name == "discussions_for_group":
+            return render_discussions_for_group(brief, group_name)
+        else:
+            raise KeyError(f"unknown slice block {block}")
+    if header_variant in {"modeler", "coder", "critic", "scoring"} and not lines[1:]:
         return ""
     return "\n".join(lines)
+
+
+def render_full_brief(brief: ModelingBrief | None) -> str:
+    """完整 brief 块：analyst / blueprint_critic 注入用。"""
+    return render_slice(brief, "analyst")
+
+
+def render_modeler_brief(brief: ModelingBrief | None) -> str:
+    """modeler 注入：逐题方向 + 公式注意（路线选择约束）。"""
+    return render_slice(brief, "modeler")
 
 
 def render_coder_brief(brief: ModelingBrief | None) -> str:
     """coder 注入：红线 + 公式注意（实现级硬约束）。"""
-    if brief is None:
-        return ""
-    lines = ["# 人工建模预备（实现红线）"]
-    if brief.red_lines:
-        lines.append("## 红线（违反即失败，必须避开）")
-        for item in brief.red_lines:
-            lines.append(f"- [{item.id}]{_qid(item)} 禁止：{item.prohibition}")
-    if brief.formula_notes:
-        lines.append("## 公式与参数注意（实现必须遵循）")
-        for item in brief.formula_notes:
-            lines.append(f"- [{item.id}]{_qid(item)} {item.note}")
-    lines.extend(_dimension_note_lines())
-    if not lines[1:]:
-        return ""
-    return "\n".join(lines)
+    return render_slice(brief, "coder")
 
 
 def render_critic_brief(brief: ModelingBrief | None) -> str:
     """model_critic 注入：公式注意 + 红线作为实现级评审基准（不评审方向本身）。"""
-    if brief is None:
-        return ""
-    lines = ["# 人工建模预备（实现级评审基准）"]
-    if brief.formula_notes:
-        lines.append("## 公式注意（模型违反记 issue）")
-        for item in brief.formula_notes:
-            lines.append(f"- [{item.id}]{_qid(item)} {item.note}")
-    if brief.red_lines:
-        lines.append("## 红线（模型/推导触碰记 issue）")
-        for item in brief.red_lines:
-            lines.append(f"- [{item.id}]{_qid(item)} 禁止：{item.prohibition}")
-    if not lines[1:]:
-        return ""
-    return "\n".join(lines)
+    return render_slice(brief, "model_critic")
 
 
 # 分组名 → 论文章节（writer_section 分组与 PaperSections 章节的映射）
@@ -360,3 +528,74 @@ def render_discussions_for_group(
             line += f"；要求：{item.requirement}"
         lines.append(line)
     return "\n".join(lines)
+
+
+def _target_corpus(target: str, *, code: str, stdout: str, paper: str) -> str:
+    if target == "code":
+        return code
+    if target == "stdout":
+        return stdout
+    return paper
+
+
+def _literal_hit(pattern: str, text: str) -> bool:
+    if not text:
+        return False
+    if pattern in text:
+        return True
+    stripped = pattern.replace(" ", "")
+    if stripped and stripped in text.replace(" ", ""):
+        return True
+    return False
+
+
+def redline_violations(
+    brief: ModelingBrief | None,
+    *,
+    code: str = "",
+    stdout: str = "",
+    paper: str = "",
+) -> list[RedlineViolation]:
+    """纯函数：对 code/stdout/paper 扫描 redline_rules。无规则或无 brief → 空列表。"""
+    import re
+
+    if brief is None or not brief.redline_rules:
+        return []
+    found: list[RedlineViolation] = []
+    for rule in brief.redline_rules:
+        corpus = _target_corpus(rule.target, code=code, stdout=stdout, paper=paper)
+        hit = False
+        if rule.rule_type == "literal_ban":
+            hit = _literal_hit(rule.pattern, corpus)
+        elif rule.rule_type == "expr_ban":
+            try:
+                hit = bool(re.search(rule.pattern, corpus, flags=re.MULTILINE))
+            except re.error:
+                hit = rule.pattern in corpus
+        elif rule.rule_type == "symbol_ban":
+            hit = rule.pattern in corpus
+        elif rule.rule_type == "result_rule":
+            hit = bool(stdout) and not re.search(rule.pattern, stdout)
+        elif rule.rule_type == "unit_mix_ban":
+            hit = "mm/10min" in corpus and "mm/h" in corpus
+        if hit:
+            found.append(RedlineViolation(
+                rule_id=rule.id,
+                severity=rule.severity,
+                target=rule.target,
+                message=rule.note or f"{rule.rule_type} 命中 pattern={rule.pattern!r}",
+            ))
+    return found
+
+
+def hard_redline_violations(
+    brief: ModelingBrief | None,
+    *,
+    code: str = "",
+    stdout: str = "",
+    paper: str = "",
+) -> list[RedlineViolation]:
+    return [
+        v for v in redline_violations(brief, code=code, stdout=stdout, paper=paper)
+        if v.severity == "hard"
+    ]
