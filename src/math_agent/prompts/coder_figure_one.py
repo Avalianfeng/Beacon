@@ -125,6 +125,13 @@ def build_prompt_figure_one(model, purpose: str, prev_failure=None, prev_error_k
                 "请大幅缩小数据规模、迭代次数或求解精度，确保单脚本 60 秒内完成；"
                 "优先保留图所需的核心逻辑，不必追求完整大规模最优求解。\n"
             )
+        elif prev_error_kind == "consistency":
+            fb = (
+                "\n# 一致性停机后的执行证据\n"
+                f"{prev_failure[:4000]}\n"
+                "请根据上述硬信号与审查意见，在上一版代码上做最小定向修订；"
+                "不要从零重写，也不要改变已有 RESULT 指标口径。\n"
+            )
         else:
             fb = (
                 "\n# 上次运行失败（runtime）\n"

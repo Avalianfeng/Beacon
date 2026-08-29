@@ -328,12 +328,36 @@ def _consistency_repair_context(
     )
     if primary is None:
         return "", ""
-    details = [
+    from math_agent.brief import hard_redline_violations
+    from math_agent.nodes.model_code_consistency import _curate_review_stdout
+
+    hard_details: list[str] = []
+    curated_stdout = _curate_review_stdout(primary)
+    if curated_stdout.strip():
+        hard_details.append(f"主方案 stdout 证据：\n{curated_stdout}")
+    for artifact in state.code_artifacts:
+        if not artifact.success and (artifact.stderr or "").strip():
+            label = artifact.purpose or artifact.category or "artifact"
+            hard_details.append(
+                f"失败执行 stderr（{label}）：\n{artifact.stderr[:300]}"
+            )
+    violations = hard_redline_violations(
+        state.brief, code=primary.code, stdout=primary.stdout or "",
+    )
+    if violations:
+        hard_details.extend(
+            f"红线 {v.rule_id}：{v.message}" for v in violations
+        )
+    soft_details = [
         f"模型—代码一致性评分仅 {report.score}/10，必须在上一版代码上定向修订。",
         *[f"问题：{issue}" for issue in report.issues],
         *[f"建议：{suggestion}" for suggestion in report.suggestions],
+        *[
+            f"审查补充：{constraint}"
+            for constraint in report.missing_constraints
+        ],
     ]
-    return primary.code, "\n".join(details)
+    return primary.code, "\n".join([*hard_details, *soft_details])
 
 
 def _local_repair_draft(

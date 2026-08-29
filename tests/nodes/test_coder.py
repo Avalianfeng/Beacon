@@ -63,6 +63,8 @@ def test_consistency_retry_reuses_committed_primary_code_and_feedback(mocker, wo
         CodeArtifact(
             purpose="primary", code=previous_code, success=True,
             category="figure", evidence_role="primary", batch=1,
+            stdout="RESULT: baseline=ours total_cost=41600",
+            stderr="short stderr hint",
         )
     ]
     state.model_code_reports = [
@@ -81,8 +83,13 @@ def test_consistency_retry_reuses_committed_primary_code_and_feedback(mocker, wo
 
     prompt = complete.call_args.args[0]
     assert previous_code in prompt
+    assert "previous-primary-sentinel" in prompt
+    assert "RESULT:" in prompt
+    assert "41600" in prompt
     assert "缺少容量约束" in prompt
     assert "输出目标函数分解" in prompt
+    assert "一致性停机后的执行证据" in prompt
+    assert "stderr 节选" not in prompt
     assert delta["coder_phase"] == "execute"
 
 
