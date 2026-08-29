@@ -28,7 +28,7 @@ D-024 已关掉 coder 默认 LLM 写码。敏感性 `sensitivity_code_generate` 
 | （挂账） | `sensitivity_plan` / `interpret` 仍 LLM | 不是写求解代码；另案 |
 | （挂账） | inject 上 sha256 | 故意弱于 T-19；需要冻结走 T-19 |
 | （挂账） | supporting 每图一个 `.py` / 多队列 | 无 supporting 仍能出 paper |
-| ACT-05 | flag 打开后的 generate↔execute 反馈换硬信号 | 与通道正交 |
+| ACT-05 | flag 打开后的 generate↔execute 反馈换硬信号 | **已落地 D-026**（仅 consistency 接续；内层未再改） |
 
 ## 备选方案
 

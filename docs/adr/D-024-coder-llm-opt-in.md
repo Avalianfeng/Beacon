@@ -26,7 +26,7 @@
 | ID | 内容 | 状态 |
 |---|---|---|
 | ACT-14 / ACT-15 | 敏感性 codegen 默认关 + `source/inject/` | **已落地 D-025** |
-| ACT-05 | flag 打开后 generate↔execute 喂执行证据而非仅审查意见 | 仍开 |
+| ACT-05 | flag 打开后 generate↔execute 喂执行证据而非仅审查意见 | **已落地 D-026**（仅 consistency 接续） |
 | （挂账） | `_missing_baseline_items` 仍恒 `[]` | 勿当已删 |
 
 ## 备选方案

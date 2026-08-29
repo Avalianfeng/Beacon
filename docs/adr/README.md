@@ -43,6 +43,7 @@
 | [D-023-重试哲学一次停.md](D-023-重试哲学一次停.md) | 门禁首次未过即 stop（学-11 / ACT-02，2026-08-29） | ✅ 已落地 |
 | [D-024-coder-llm-opt-in.md](D-024-coder-llm-opt-in.md) | coder LLM 默认关 + `--allow-coder-llm`（学-11 / ACT-01，2026-08-29） | ✅ 已落地 |
 | [D-025-s9-inject与敏感性opt-in.md](D-025-s9-inject与敏感性opt-in.md) | inject 通道 + 敏感性 codegen 共用旗标（ACT-14/15，2026-08-29） | ✅ 已落地 |
+| [D-026-coder反馈硬信号.md](D-026-coder反馈硬信号.md) | consistency 接续喂执行证据为主（学-12 / ACT-05，2026-08-29） | ✅ 已落地 |
 
 ## 更新记录
 

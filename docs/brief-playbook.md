@@ -11,7 +11,7 @@
 - 使用对象：用户（人）+ 网页版最强模型（**2–3 家不同家族**）+ 联网搜索 / 论文检索。
 - 与体系接口：产出物 = `problems/<题号>/exploration.md`（方向性认知地图，**人侧工作文档，不直接注入**）+
   `problems/<题号>/brief.json`（八字段 + `background_knowledge` + `redline_rules`，注入流水线）；
-  `brief check` 校验；S7 `review-check --brief problems/<题号>/brief.json` 消费 brief（D-022：红线/claims/`brief_sha256`）；S9 门禁失败立即 stop（D-023）；coder/敏感性 codegen 默认不 LLM（D-024/D-025），用 T-19、`source/inject/` 或 `--allow-coder-llm` 接续，不要指望自动再开 2～3 轮；`run --dry-run` / `--pilot` 预检（见
+  `brief check` 校验；S7 `review-check --brief problems/<题号>/brief.json` 消费 brief（D-022：红线/claims/`brief_sha256`）；S9 门禁失败立即 stop（D-023）；coder/敏感性 codegen 默认不 LLM（D-024/D-025），用 T-19、`source/inject/` 或 `--allow-coder-llm` 接续；`restart --from coder` 后反馈以执行证据为主（D-026），不要指望自动再开 2～3 轮；`run --dry-run` / `--pilot` 预检（见
   [实现计划-8-20/00](实现计划-8-20/00-新题上线流程设计.md)；
   pilot 设计已归档 [archive/8-20执行批次/09-pilot模式与早期反证.md](archive/8-20执行批次/09-pilot模式与早期反证.md)，CLI 已拍板不做）。
 - 核心原则（2026-08-21 与外部讨论收敛，不可跳过）：
