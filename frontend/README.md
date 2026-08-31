@@ -1,18 +1,20 @@
 # Beacon Web UI
 
-该目录包含 Beacon 的本地 Web 工作台与 Node.js API 服务：
+可选的本地工作台，驱动的是 **S9 LangGraph 流水线**，不是本 fork 的默认做题路径（S0–S8）。竞赛主路径、相对上游差异见[根 README](../README.md)。
 
-- `server.mjs`：提供健康检查、示例题、运行控制、日志流和产物读取接口；
-- `index.html`、`app.js`、`styles.css`：浏览器端界面；
-- `assets/`：Logo 与页面图片资源。
+该目录包含：
 
-请从项目根目录启动：
+- `server.mjs`：健康检查、示例题、运行控制、日志流和产物读取；
+- `index.html`、`app.js`、`styles.css`：浏览器界面；
+- `assets/`：Logo 与页面图片。
+
+从项目根目录启动：
 
 ```bash
 npm start
 ```
 
-然后访问 `http://127.0.0.1:5173`。直接打开 `index.html` 只能查看静态页面，无法调用运行、恢复和产物接口。
+访问 `http://127.0.0.1:5173`。直接打开 `index.html` 无法调用运行 / 恢复 / 产物接口。无冻结代码时，Web 启动的流水线同样受 D-024 约束（coder LLM 默认关），需要环境变量 `MATH_AGENT_ALLOW_CODER_LLM=1` 或 CLI `--allow-coder-llm`。
 
 ## 首次配置
 
