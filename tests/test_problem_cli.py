@@ -117,6 +117,25 @@ def test_problem_import_creates_assets(tmp_path, monkeypatch):
     paths = {df["path"] for df in spec["data_files"]}
     assert paths == {"题面.md", "data.xlsx"}  # 相对 data_dir，不带前缀
     assert spec["feasibility"]["blockers"] == []
+    assert "brief init" not in result.output
+    assert "problem stage" in result.output
+
+
+def test_problem_import_skips_attachment_same_name_as_source(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    src_md = tmp_path / "题面.md"
+    src_md.write_text("# 题目\n", encoding="utf-8")
+    att_dir = tmp_path / "att"
+    att_dir.mkdir()
+    (att_dir / "题面.md").write_text("# 题目\n", encoding="utf-8")
+    (att_dir / "data.xlsx").write_bytes(b"PK\x03\x04fake")
+    result = runner.invoke(app, [
+        "problem", "import", str(src_md), "--problem-id", "t1dup", "--attachments", str(att_dir),
+    ])
+    assert result.exit_code == 0, result.output
+    spec = json.loads((tmp_path / "problems" / "t1dup" / "problem.json").read_text(encoding="utf-8"))
+    paths = [a["path"] for a in spec["source"]["source_files"]]
+    assert paths == ["题面.md", "data.xlsx"]
 
 
 def test_problem_import_rejects_existing_without_force(tmp_path, monkeypatch):
