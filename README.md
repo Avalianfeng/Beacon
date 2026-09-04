@@ -10,8 +10,7 @@
   <a href="#这是什么"><strong>这是什么</strong></a> ·
   <a href="#相对上游改了什么"><strong>相对上游</strong></a> ·
   <a href="#快速开始"><strong>快速开始</strong></a> ·
-  <a href="#默认做题路径-s0s8"><strong>做题路径</strong></a> ·
-  <a href="#可选-s9-流水线与-web-ui"><strong>S9 / Web</strong></a> ·
+  <a href="#agent-怎么用-beacon"><strong>用法</strong></a> ·
   <a href="#文档"><strong>文档</strong></a>
 </p>
 
@@ -26,16 +25,15 @@
 
 ## 这是什么
 
-Beacon 帮数学建模竞赛队伍走完「从题面到可溯源论文」这条路。它**不承诺无人值守出好论文**。
+Beacon 帮建模竞赛走完「从题面到可溯源论文」。本 fork **不承诺无人值守出好论文**。
 
-本 fork 的定位是**专家副驾驶**（人 + 外部强模型先定方向，体系忠实执行并机械校验）：
+正式用法（详情只在 [全流程定稿 00](全流程分析/全流程定稿/00-正式闭环.md)）：
 
-1. **方向在流水线外生产**：按 [brief-playbook](docs/brief-playbook.md) 做探索、对撞、清点，再写成 `brief.json`。
-2. **默认路径是分阶段操作面 S0–S8**：人 / 外部 agent 按阶段导入、探查、求解、登记、装配、评审、放行。
-3. **LangGraph 14 阶段图是可选工具（S9）**：`start` / `supervise` 不作主路径；无冻结代码时 **coder LLM 默认关闭**。
-4. **交付物以 `paper.md` 为主**：PDF 只做编译链路验证，不承诺可直接提交。
+1. 本地 agent 探索、写代码、算数、起草 brief。**自己跑完不是结束。**
+2. 启动 LangGraph：brief 驾驭方向；登记代码是改代码插座（coder LLM 默认关）；critic 照用。
+3. 图跑通后由 **writer 链**出完整初稿；人少量改后 `accept`。
 
-完整端到端图（Beacon 生产 ↔ 工作面后处理 ↔ 赛后回流）见 [内外全流程总纲](docs/内外全流程总纲.md)。
+交付以 `paper.md` 为主；PDF 只做编译预览。
 
 ---
 
@@ -45,19 +43,19 @@ Beacon 帮数学建模竞赛队伍走完「从题面到可溯源论文」这条�
 
 | 维度 | 上游 | 本 fork |
 |------|------|---------|
-| 主路径 | 一键跑 14 阶段图 | 人 / agent 分阶段 S0–S8；S9 可选 |
-| 方向从哪来 | 图内 Analyst 拆题 | 图外 brief（探索 → 对撞 → 清点 → `brief.json`） |
-| 求解代码 | coder 默认 LLM 生成 | 默认走冻结资产（T-19）或 `source/inject/`；LLM 须 `--allow-coder-llm` |
-| 失败策略 | critic 循环、分数不够再试 | 四门禁**首次未过即停**；接续用 `review` / `restart --from coder` |
-| 质量兜底 | 节点评分 + HITL | 机械闸门：数字溯源、L4、红线、claims、`brief_sha256` |
-| 题域 | 曾含城市绿色物流专用求解器 / 离线契约 | **已拆除**（2026-08-21）；只留通用闸门 + 题级 brief |
-| RAG | 可选向量检索 | 当前**不启用**（embedding 网关不支持；改文本资料包前置注入） |
-| 终稿 | 强调 PDF | **`.md` 为主**；PDF 仅预览 |
-| 论文谁产 | 流水线 writer | Beacon 仍产完整论文本体；外部工作面只做拆开 / Word / 赛后评估 |
+| 主路径 | 一键跑 14 阶段图 | 本地算明白 → 启动图（brief + 登记代码）；不是「S8 出骨架即结束」 |
+| 方向从哪来 | 图内 Analyst 拆题 | 图外探索/对撞/研究，再压成 `brief.json` 驾驭图 |
+| 求解代码 | coder 默认 LLM 生成 | 本地写；`reference` / `inject` 登记；LLM 须 `--allow-coder-llm` |
+| 失败策略 | critic 循环再试 | 门禁停机 → **交回 agent 手改** → 再登记再跑 |
+| 质量兜底 | 节点评分 + HITL | 机械闸门 + critic |
+| 题域 | 曾含物流专用求解器 | 已拆除；只留通用闸门 + 题级 brief |
+| RAG | 可选向量检索 | 不启用 |
+| 终稿 | 强调 PDF | `.md` 为主；PDF 仅预览 |
+| 论文谁产 | 流水线 writer | **仍是 writer 链**；工作面只做 Word / 少量改 |
 
-本仓还加了上游没有的操作面命令：`problem import/show/stage`、`brief init/check`、`reference add/run/tables/paper/expand/verify/recertify`、`review-check`、`accept`，以及 `pause` / `restart`。
+命令：`problem` / `brief` / `reference` / `review-check` / `accept`，以及 `pause` / `restart`。
 
-决策与证据入口：[00-体系现状与原则](docs/00-体系现状与原则.md)、[07 决策登记](docs/实现计划-8-20/07-待决策与超范围.md)（D-002 / D-005 / D-020～D-027）。
+决策入口：[00-体系现状](docs/00-体系现状与原则.md)。旧 D-xx 长文在 `docs/archive/adr-历史/`。
 
 ---
 
@@ -83,73 +81,30 @@ copy .env.example .env   # Unix: cp .env.example .env
 uv run math-agent --help
 ```
 
-应看到 **S0–S8 做题主路径**，S9 写在「可选遗留执行器」段。已有范本可直接看阶段：
+应看到做题相关命令。已有范本：
 
 ```bash
 uv run math-agent problem stage mcm51-c --json
 ```
 
-只跑 Web 工作台时再 `npm install` 与 `npm start`（见下文「S9 / Web UI」）。CLI 不依赖前端。
+只跑 Web 时再 `npm install` 与 `npm start`。CLI 不依赖前端。
 
 ---
 
-## 默认做题路径（S0–S8）
+## Agent 怎么用 Beacon
 
-命令前缀：`uv run math-agent` 或 `.venv\Scripts\python.exe -m math_agent.cli`。
+完整时间顺序与角色切换：**只读** [全流程定稿 00](全流程分析/全流程定稿/00-正式闭环.md)。
 
-```text
-赛题 ─► S0 导入 ─► S1 数据探查 ─► S2 探索 ─► S3 brief
-              ─► S4 预检 ─► S5 求解验证 ─► S6 登记装配
-              ─► S7 评审 ─► S8 人审放行 ──► paper.md
-                    │
-                    └── S9 流水线（可选，不作主路径）
-```
+命令仍可用（`problem` / `brief` / `reference` / `review-check` / `accept`），但不要按「S6=出骨架、S9=可选所以图不用」来理解。登记之后要启动图；论文从 writer 出。
 
-| 阶段 | 做什么 | 命令 / 产物 |
-|------|--------|-------------|
-| S0 | 归档题面与附件（哈希，无 AI 起草） | `problem import` / `show` / `stage` |
-| S1 | 数据探查 + 每附件概览图 | 写 `data_profile.md`（无 CLI） |
-| S2 | 探索、对撞、清点、领域知识 | 写 `exploration.md` / `领域知识.md`（协议见 playbook） |
-| S3 | 方向收敛 | `brief init` · `brief check` |
-| S4 | 预检 | `run --dry-run` → `preflight.json` |
-| S5 | 独立复核求解证据 | `reference verify` · `reference recertify` |
-| S6 | 登记参考实现 → 跑数 → 表 → 骨架 → prose | `reference add/run/tables/paper/expand` |
-| S7 | 机械评审（数字 / L4 / 红线 / claims） | `review-check` |
-| S8 | 人审登记 | `accept --approve` / `--no-approve` |
-
-`problem stage <题号> --json` 会给出已完成前缀、`next_command` 和人检缺口 `d007_missing`。细则：[操作面契约](docs/实现计划-8-20/8-27-操作面契约.md)。新题开工先读 [brief-playbook](docs/brief-playbook.md)。
-
-方向错了回 S3 改 brief，不在图内做 LLM 投票。无 T-19 冻结资产、又没有 `problems/<题>/source/inject/` 时，不要对 S9 抱「自动写码」的期望。
-
----
-
-## 可选：S9 流水线与 Web UI
-
-LangGraph 仍在：分析 → 蓝图评审 → 建模 → 编码 → 一致性 → 敏感性 → 作图 → 写作 → 论文评审 → 评估 → 人审 → LaTeX。本 fork 里它是**可选执行器**。
+LangGraph 还在。无冻结代码时 coder 立即停，除非 `--allow-coder-llm`（默认不要开）。
 
 ```bash
-# 无冻结代码时必须显式允许 LLM 写码，否则 coder 立即停
-uv run math-agent start \
-  --problem problems/<题>/problem.json \
-  --brief problems/<题>/brief.json \
-  --out runs/<run> \
-  --allow-coder-llm
-
 uv run math-agent watch --out runs/<run>
-uv run math-agent status --out runs/<run>
-```
-
-门禁首次未过会 `stop`（不是带病前进）。接续：
-
-```bash
 uv run math-agent restart --out runs/<run> --from coder
-uv run math-agent recover --out runs/<run>
-uv run math-agent review --out runs/<run>    # 流水线人审接管；勿与 review-check 混用
 ```
 
-`supervise` / `pause` / `supervise-resume` 仍可用，只是**不是默认竞赛路径**。
-
-Web UI（`npm start` → http://localhost:5173）驱动的是这条 S9 图：导入题面、看进度、从 checkpoint 恢复。它**不会**替你走 S0–S8 的 brief / reference / review-check。首次打开仍会引导写 `.env`。说明见 [frontend/README.md](frontend/README.md)。
+`--from writer` 尚未产品化（定稿 14）。Web UI 驱动的是图，不会替你做探索/brief。
 
 ---
 
@@ -165,7 +120,7 @@ Beacon/
 │   └── brief.json            # 方向约束
 ├── src/math_agent/           # CLI、graph、nodes、闸门
 ├── scripts/                  # check_paper_numbers / check_l4_gates / …
-├── docs/                     # 现行文档中心（先读 docs/README.md）
+├── docs/                     # 产品指针；用法在 全流程分析/
 ├── frontend/                 # 可选 Web 工作台
 └── tests/                    # pytest
 ```
@@ -191,15 +146,12 @@ Beacon/
 
 | 你想… | 读 |
 |--------|----|
-| 30 秒上手（人） | [docs/current/](docs/current/README.md) |
-| 现在是什么状态 | [00-体系现状与原则](docs/00-体系现状与原则.md) |
-| 新题怎么做 | [brief-playbook](docs/brief-playbook.md) → [操作面契约](docs/实现计划-8-20/8-27-操作面契约.md) |
-| 端到端一张图 | [内外全流程总纲](docs/内外全流程总纲.md) |
-| 要不要改代码 | [agent 协作协议](docs/agent协作协议.md) |
-| 抽任务 / 查决策 | [8-27 完整图景](docs/8-27-完整图景/README.md) · [07 决策表](docs/实现计划-8-20/07-待决策与超范围.md) |
-| 文档治理 / 审计 | [文档治理约定](docs/文档治理约定.md) · `python scripts/audit_docs.py` |
-
-完整索引：[docs/README.md](docs/README.md)。`docs/archive/` 不是现行事实来源。
+| **用法（唯一）** | [全流程定稿 00](全流程分析/全流程定稿/00-正式闭环.md) |
+| 各段怎么做 | [全流程定稿](全流程分析/全流程定稿/README.md) |
+| 现在卡在哪 | [docs/current/](docs/current/README.md) |
+| 改不改机制 | [agent 协作协议](docs/agent协作协议.md) |
+| 产品定位 | [00-体系现状](docs/00-体系现状与原则.md) |
+| 旧文 | [docs/archive](docs/archive/README.md) · [全流程分析/archive](全流程分析/archive/README.md) |
 
 ---
 
@@ -222,7 +174,7 @@ python scripts/audit_docs.py
 <details>
 <summary><strong>还能当上游那样一键出 PDF 吗？</strong></summary>
 
-可以跑 S9，但不作为本 fork 的承诺。无参考实现时必须 `--allow-coder-llm`；门禁不过即停；PDF 仍可能 `degraded`。竞赛主路径是 S0–S8 产出可溯源的 `paper.md`。
+可以跑图，但不作为「一键出赛」承诺。无参考实现时必须 `--allow-coder-llm`。竞赛路径是：本地算明白 → 启动图 → writer 出 `paper.md`。
 </details>
 
 <details>
