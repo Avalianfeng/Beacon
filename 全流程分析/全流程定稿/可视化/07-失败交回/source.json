@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "失败就交回手改",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "main", "label": "图上主轨" },
+    { "id": "waiting", "label": "等人" },
+    { "id": "exceptions", "label": "交回研究者" },
+    { "id": "terminal", "label": "终态" }
+  ],
+  "states": [
+    { "id": "registered", "type": "start", "label": "已登记", "sublabel": "插座插上", "lane": "main", "col": 0, "step": "01" },
+    { "id": "running", "type": "active", "label": "执行中", "sublabel": "冻结脚本", "lane": "main", "col": 1, "step": "02" },
+    { "id": "gating", "type": "decision", "label": "门禁 / critic", "sublabel": "停机是闭环", "lane": "main", "col": 2, "step": "03" },
+    { "id": "drafting", "type": "active", "label": "writer 出稿", "lane": "main", "col": 3, "step": "04" },
+    { "id": "accepted", "type": "success", "label": "accept", "sublabel": "完整初稿", "lane": "main", "col": 4, "step": "05" },
+    { "id": "human", "type": "waiting", "label": "人评", "sublabel": "少量改", "lane": "waiting", "col": 1 },
+    { "id": "rework", "type": "failure", "label": "手改", "sublabel": "脚本 / brief / 吸收", "lane": "exceptions", "col": 0 }
+  ],
+  "transitions": [
+    { "id": "t-gate-fail", "from": "gating", "to": "rework", "variant": "security" },
+    { "id": "t-rework-run", "from": "rework", "to": "running", "variant": "emphasis" },
+    { "id": "t-draft-wait", "from": "drafting", "to": "human" },
+    { "id": "t-human-acc", "from": "human", "to": "accepted" }
+  ]
+}

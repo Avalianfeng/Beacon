@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Beacon 全流程总览",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "host", "label": "人 + 主会话" },
+    { "id": "study", "label": "探索与研究" },
+    { "id": "graph", "label": "Beacon 图" }
+  ],
+  "phases": [
+    { "id": "act1", "label": "第一幕 · 找方向", "fromCol": 0, "toCol": 1 },
+    { "id": "act23", "label": "第二三幕 · 算明白", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "act45", "label": "第四五幕 · 出论文", "fromCol": 4, "toCol": 5 }
+  ],
+  "mainPath": ["import", "eda", "explore", "diff", "research", "brief", "register", "writer", "accept"],
+  "nodes": [
+    { "id": "import", "lane": "host", "col": 0, "type": "frontend", "label": "导入题面", "sublabel": "source/ 只读" },
+    { "id": "eda", "lane": "host", "col": 1, "type": "frontend", "label": "看数据", "sublabel": "EDA + 画像" },
+    { "id": "explore", "lane": "study", "col": 1, "type": "external", "label": "双边独立探索", "sublabel": "外部 ∥ 本地" },
+    { "id": "diff", "lane": "host", "col": 2, "type": "security", "label": "Diff 拍板", "sublabel": "人新开对话" },
+    { "id": "research", "lane": "study", "col": 3, "type": "backend", "label": "研究者实算", "sublabel": "准备 ≠ 结束" },
+    { "id": "brief", "lane": "host", "col": 3, "type": "database", "label": "brief.json", "sublabel": "方向手柄" },
+    { "id": "register", "lane": "graph", "col": 4, "type": "messagebus", "label": "登记代码", "sublabel": "改代码插座" },
+    { "id": "writer", "lane": "graph", "col": 5, "type": "backend", "label": "writer 链", "sublabel": "正式初稿" },
+    { "id": "accept", "lane": "host", "col": 5, "type": "cloud", "label": "人评 accept", "sublabel": "完整初稿" }
+  ],
+  "edges": [
+    { "id": "e-import-eda", "from": "import", "to": "eda" },
+    { "id": "e-eda-explore", "from": "eda", "to": "explore", "label": "发题面/EDA" },
+    { "id": "e-explore-diff", "from": "explore", "to": "diff", "label": "双图" },
+    { "id": "e-diff-research", "from": "diff", "to": "research", "label": "同一对话续跑", "variant": "emphasis" },
+    { "id": "e-research-brief", "from": "research", "to": "brief", "label": "倒推手柄" },
+    { "id": "e-brief-register", "from": "brief", "to": "register", "label": "启动图" },
+    { "id": "e-register-writer", "from": "register", "to": "writer", "label": "执行 · 一致性" },
+    { "id": "e-writer-accept", "from": "writer", "to": "accept", "variant": "emphasis" }
+  ]
+}

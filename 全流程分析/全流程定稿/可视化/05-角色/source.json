@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "角色分工",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "layout": {
+    "mode": "grid",
+    "cols": 3,
+    "gapX": 80,
+    "gapY": 90,
+    "cellW": 180,
+    "cellH": 76
+  },
+  "components": [
+    { "id": "human", "type": "external", "label": "人", "sublabel": "拍板 · 评论文", "row": 0, "col": 0 },
+    { "id": "host", "type": "frontend", "label": "主会话", "sublabel": "CLI · 拼包 · 登记", "row": 0, "col": 1 },
+    { "id": "researcher", "type": "backend", "label": "研究者会话", "sublabel": "编码 · 实验 · 出数", "row": 0, "col": 2 },
+    { "id": "ext", "type": "cloud", "label": "外部第二家", "sublabel": "外部认知地图", "row": 1, "col": 0 },
+    { "id": "local", "type": "backend", "label": "本地探索 Agent", "sublabel": "证据卡 · 本地地图", "row": 1, "col": 1 },
+    { "id": "beacon", "type": "messagebus", "label": "Beacon", "sublabel": "critic · 写论文", "row": 1, "col": 2 }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "图尚未启动：找方向", "wraps": ["ext", "local"] },
+    { "kind": "region", "label": "科学 vs 论文", "wraps": ["researcher", "beacon"] }
+  ],
+  "connections": [
+    { "id": "c-human-host", "from": "human", "to": "host", "label": "下令" },
+    { "id": "c-human-ext", "from": "human", "to": "ext", "label": "发题面", "labelDy": 24 },
+    { "id": "c-host-local", "from": "host", "to": "local", "label": "派探索", "labelDy": 24 },
+    { "id": "c-host-beacon", "from": "host", "to": "beacon", "label": "brief" },
+    { "id": "c-research-beacon", "from": "researcher", "to": "beacon", "label": "登记插座", "variant": "emphasis", "labelDy": 24 }
+  ]
+}

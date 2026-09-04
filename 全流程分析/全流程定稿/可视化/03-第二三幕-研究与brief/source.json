@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "第二三幕 · 算明白再压成手柄",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "person", "label": "人 · 主会话" },
+    { "id": "research", "label": "研究者会话" },
+    { "id": "artifacts", "label": "题目录产物" }
+  ],
+  "phases": [
+    { "id": "compute", "label": "第二幕 · 实算", "fromCol": 0, "toCol": 3, "variant": "emphasis" },
+    { "id": "handle", "label": "第三幕 · brief", "fromCol": 4, "toCol": 5 }
+  ],
+  "mainPath": ["continue", "code", "falsify", "logs", "draft", "briefjson"],
+  "nodes": [
+    { "id": "continue", "lane": "person", "col": 0, "type": "external", "label": "Diff 对话续跑", "sublabel": "勿硬切求解 Agent" },
+    { "id": "code", "lane": "research", "col": 1, "type": "backend", "label": "编码 · 实验", "sublabel": "题目录里写" },
+    { "id": "falsify", "lane": "research", "col": 2, "type": "security", "label": "否证拍板", "sublabel": "可推翻须记日志" },
+    { "id": "logs", "lane": "artifacts", "col": 3, "type": "database", "label": "研究产物", "sublabel": "日志 / 说明 / 图" },
+    { "id": "illusion", "lane": "person", "col": 3, "type": "security", "label": "停在这里的错觉", "tag": "不是结束" },
+    { "id": "draft", "lane": "artifacts", "col": 4, "type": "database", "label": "brief 草稿", "sublabel": "由研究倒推" },
+    { "id": "briefjson", "lane": "person", "col": 5, "type": "cloud", "label": "brief.json", "sublabel": "brief check 过" }
+  ],
+  "edges": [
+    { "id": "e-cont-code", "from": "continue", "to": "code", "variant": "emphasis" },
+    { "id": "e-code-falsify", "from": "code", "to": "falsify", "label": "实验可推翻" },
+    { "id": "e-falsify-logs", "from": "falsify", "to": "logs" },
+    { "id": "e-logs-draft", "from": "logs", "to": "draft" },
+    { "id": "e-draft-json", "from": "draft", "to": "briefjson", "label": "驾驭图" },
+    { "id": "e-logs-illusion", "from": "logs", "to": "illusion", "label": "数字已有", "variant": "dashed", "role": "branch" }
+  ]
+}

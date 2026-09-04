@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "第四五幕 · 启动 Beacon 直到出论文",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "host", "label": "人 + 主会话" },
+    { "id": "graph", "label": "Beacon 图" }
+  ],
+  "phases": [
+    { "id": "boot", "label": "预检 · 登记", "fromCol": 0, "toCol": 1 },
+    { "id": "run", "label": "图开始跑", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "ship", "label": "初稿 · 验收", "fromCol": 4, "toCol": 5 }
+  ],
+  "mainPath": ["dryrun", "register", "execute", "consist", "writer", "sections", "human"],
+  "nodes": [
+    { "id": "dryrun", "lane": "host", "col": 0, "type": "frontend", "label": "run --dry-run", "sublabel": "人看 blockers" },
+    { "id": "register", "lane": "host", "col": 1, "type": "messagebus", "label": "reference add", "sublabel": "改代码插座" },
+    { "id": "rework", "lane": "host", "col": 2, "type": "backend", "label": "手改再登记", "sublabel": "--force" },
+    { "id": "execute", "lane": "graph", "col": 2, "type": "backend", "label": "执行冻结脚本", "sublabel": "coder LLM 默认关" },
+    { "id": "consist", "lane": "graph", "col": 3, "type": "security", "label": "门禁", "sublabel": "consistency" },
+    { "id": "writer", "lane": "graph", "col": 4, "type": "backend", "label": "writer", "sublabel": "正式写作入口" },
+    { "id": "sections", "lane": "graph", "col": 5, "type": "backend", "label": "分节写作", "sublabel": "writer_section" },
+    { "id": "human", "lane": "host", "col": 5, "type": "cloud", "label": "人审 · accept", "sublabel": "精排放工作面" }
+  ],
+  "edges": [
+    { "id": "e-dry-reg", "from": "dryrun", "to": "register" },
+    { "id": "e-reg-ex", "from": "register", "to": "execute", "variant": "emphasis" },
+    { "id": "e-ex-con", "from": "execute", "to": "consist" },
+    { "id": "e-con-w", "from": "consist", "to": "writer" },
+    { "id": "e-w-sec", "from": "writer", "to": "sections" },
+    { "id": "e-sec-h", "from": "sections", "to": "human", "variant": "emphasis" },
+    { "id": "e-con-rework", "from": "consist", "to": "rework", "label": "不过 → 手改", "variant": "security", "role": "error" },
+    { "id": "e-rework-reg", "from": "rework", "to": "register", "variant": "dashed", "role": "branch" }
+  ]
+}

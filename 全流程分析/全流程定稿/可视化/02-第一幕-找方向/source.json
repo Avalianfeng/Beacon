@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "第一幕 · 把方向找出来",
+    "locale": "zh-CN",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "host", "label": "人 + 主会话" },
+    { "id": "explore", "label": "独立探索（禁止互看）" },
+    { "id": "diff", "label": "Diff 对话" }
+  ],
+  "phases": [
+    { "id": "intake", "label": "导入 · 看数据", "fromCol": 0, "toCol": 1 },
+    { "id": "parallel", "label": "独立探索", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "decide", "label": "综合拍板", "fromCol": 4, "toCol": 5 }
+  ],
+  "mainPath": ["import", "eda", "pack", "extmap", "prelock", "board"],
+  "nodes": [
+    { "id": "import", "lane": "host", "col": 0, "type": "frontend", "label": "导入题面", "sublabel": "人认 blockers" },
+    { "id": "eda", "lane": "host", "col": 1, "type": "database", "label": "EDA 画像", "sublabel": "勿 brief init" },
+    { "id": "pack", "lane": "host", "col": 2, "type": "messagebus", "label": "索取切片", "sublabel": "本机算再打包" },
+    { "id": "localmap", "lane": "explore", "col": 2, "type": "backend", "label": "本地地图", "sublabel": "证据卡" },
+    { "id": "extmap", "lane": "explore", "col": 3, "type": "external", "label": "外部认知地图", "sublabel": "可索取多轮" },
+    { "id": "prelock", "lane": "diff", "col": 4, "type": "security", "label": "先锁预构想", "sublabel": "人新开对话" },
+    { "id": "board", "lane": "diff", "col": 5, "type": "cloud", "label": "拍板 + 清点", "sublabel": "主会话登记" }
+  ],
+  "edges": [
+    { "id": "e-imp-eda", "from": "import", "to": "eda" },
+    { "id": "e-eda-pack", "from": "eda", "to": "pack", "label": "发题面/EDA" },
+    { "id": "e-pack-ext", "from": "pack", "to": "extmap", "label": "直到可对撞" },
+    { "id": "e-eda-local", "from": "eda", "to": "localmap", "label": "干净上下文" },
+    { "id": "e-ext-pre", "from": "extmap", "to": "prelock", "label": "双图" },
+    { "id": "e-local-pre", "from": "localmap", "to": "prelock" },
+    { "id": "e-pre-board", "from": "prelock", "to": "board", "variant": "emphasis" }
+  ]
+}

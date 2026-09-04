@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Beacon 图内节点还用哪些",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [960, 620]
+  },
+  "participants": [
+    { "id": "brief", "type": "database", "label": "brief.json", "sublabel": "手柄" },
+    { "id": "inject", "type": "messagebus", "label": "登记代码", "sublabel": "inject" },
+    { "id": "exec", "type": "backend", "label": "coder_execute", "sublabel": "要用" },
+    { "id": "gates", "type": "security", "label": "门禁", "sublabel": "critic" },
+    { "id": "writer", "type": "backend", "label": "writer", "sublabel": "论文从这出" },
+    { "id": "human", "type": "external", "label": "人审 / latex", "sublabel": "evaluation" }
+  ],
+  "segments": [
+    { "from": 150, "to": 250, "label": "注入" },
+    { "from": 265, "to": 385, "label": "跑代码" },
+    { "from": 400, "to": 540, "label": "写作" }
+  ],
+  "messages": [
+    { "id": "m-brief-inject", "from": "brief", "to": "inject", "y": 170, "label": "红线 / 路径", "variant": "emphasis" },
+    { "id": "m-inject-exec", "from": "inject", "to": "exec", "y": 215, "label": "执行冻结脚本" },
+    { "id": "m-exec-gates", "from": "exec", "to": "gates", "y": 280, "label": "结果进门禁" },
+    { "id": "m-gates-ok", "from": "gates", "to": "writer", "y": 330, "label": "过 → writer", "variant": "emphasis" },
+    { "id": "m-writer-human", "from": "writer", "to": "human", "y": 430, "label": "writer_section · latex" },
+    { "id": "m-gates-fail", "from": "gates", "to": "inject", "y": 450, "label": "不过 → 再登记", "variant": "security" },
+    { "id": "m-skip", "from": "brief", "to": "writer", "y": 505, "label": "analyst/modeler 可跳过", "variant": "dashed" }
+  ]
+}
