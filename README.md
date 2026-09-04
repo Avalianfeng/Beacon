@@ -10,7 +10,7 @@
   <a href="#这是什么"><strong>这是什么</strong></a> ·
   <a href="#相对上游改了什么"><strong>相对上游</strong></a> ·
   <a href="#快速开始"><strong>快速开始</strong></a> ·
-  <a href="#agent-怎么用-beacon"><strong>用法</strong></a> ·
+  <a href="#正式用法"><strong>用法</strong></a> ·
   <a href="#文档"><strong>文档</strong></a>
 </p>
 
@@ -27,11 +27,11 @@
 
 Beacon 帮建模竞赛走完「从题面到可溯源论文」。本 fork **不承诺无人值守出好论文**。
 
-正式用法（详情只在 [全流程定稿 00](全流程分析/全流程定稿/00-正式闭环.md)）：
+正式用法只在 [全流程定稿 00](全流程分析/全流程定稿/00-正式闭环.md)（本 README 是摘要，冲突时信定稿）：
 
-1. 本地 agent 探索、写代码、算数、起草 brief。**自己跑完不是结束。**
-2. 启动 LangGraph：brief 驾驭方向；登记代码是改代码插座（coder LLM 默认关）；critic 照用。
-3. 图跑通后由 **writer 链**出完整初稿；人少量改后 `accept`。
+1. **图外**找方向、算明白、压成 `brief.json`。本地自己跑完只是准备，**不是结束**。
+2. **启动图**：登记代码是改代码插座（不是交差；coder LLM 默认关）；critic / 门禁停机后交回人改，再登记再跑。
+3. 论文从 **writer 链**出完整初稿；人少量改后 `accept`。
 
 交付以 `paper.md` 为主；PDF 只做编译预览。
 
@@ -39,23 +39,18 @@ Beacon 帮建模竞赛走完「从题面到可溯源论文」。本 fork **不�
 
 ## 相对上游改了什么
 
-上游（[123-qw-as/Beacon](https://github.com/123-qw-as/Beacon)）把 **Web UI + 完整 LangGraph 流水线**写成主产品：粘贴题面 → 自动分析 / 建模 / 写码 / 作图 / 写论文 / 出 PDF。本 fork 保留这条图，但把它降为工具层，并拆掉题域特化。
+上游（[123-qw-as/Beacon](https://github.com/123-qw-as/Beacon)）把 **Web UI + 完整 LangGraph 流水线**写成主产品。本 fork 保留这条图，但把它降为工具层，并拆掉题域特化。
 
 | 维度 | 上游 | 本 fork |
 |------|------|---------|
-| 主路径 | 一键跑 14 阶段图 | 本地算明白 → 启动图（brief + 登记代码）；不是「S8 出骨架即结束」 |
-| 方向从哪来 | 图内 Analyst 拆题 | 图外探索/对撞/研究，再压成 `brief.json` 驾驭图 |
+| 主路径 | 一键跑图 | 本地算明白 → brief + 登记 → 启动图；写作在 writer |
+| 方向从哪来 | 图内 Analyst 拆题 | 图外探索 / Diff / 研究，再压成 `brief.json` |
 | 求解代码 | coder 默认 LLM 生成 | 本地写；`reference` / `inject` 登记；LLM 须 `--allow-coder-llm` |
-| 失败策略 | critic 循环再试 | 门禁停机 → **交回 agent 手改** → 再登记再跑 |
-| 质量兜底 | 节点评分 + HITL | 机械闸门 + critic |
-| 题域 | 曾含物流专用求解器 | 已拆除；只留通用闸门 + 题级 brief |
-| RAG | 可选向量检索 | 不启用 |
+| 失败策略 | critic 循环再试 | 门禁停机 → **交回手改** → 再登记再跑 |
 | 终稿 | 强调 PDF | `.md` 为主；PDF 仅预览 |
-| 论文谁产 | 流水线 writer | **仍是 writer 链**；工作面只做 Word / 少量改 |
+| RAG / 题域求解器 | 可选 / 曾含物流特化 | 不启用 / 已拆除 |
 
-命令：`problem` / `brief` / `reference` / `review-check` / `accept`，以及 `pause` / `restart`。
-
-决策入口：[00-体系现状](docs/00-体系现状与原则.md)。旧 D-xx 长文在 `docs/archive/adr-历史/`。
+不要用旧操作面编号 S0–S9 当「两套主路径」；那些只是命令标签。决策入口：[00-体系现状](docs/00-体系现状与原则.md)。
 
 ---
 
@@ -75,15 +70,8 @@ copy .env.example .env   # Unix: cp .env.example .env
 
 编辑 `.env`：至少填 `OPENAI_API_BASE`、`OPENAI_API_KEY`，模型名必须是 `openai/<model>`。完整旋钮以 `.env.example` 为准。
 
-第一次确认安装：
-
 ```bash
 uv run math-agent --help
-```
-
-应看到做题相关命令。已有范本：
-
-```bash
 uv run math-agent problem stage mcm51-c --json
 ```
 
@@ -91,41 +79,74 @@ uv run math-agent problem stage mcm51-c --json
 
 ---
 
-## Agent 怎么用 Beacon
+## 正式用法
 
-完整时间顺序与角色切换：**只读** [全流程定稿 00](全流程分析/全流程定稿/00-正式闭环.md)。
+完整时间顺序与角色切换：**只读** [全流程定稿 00](全流程分析/全流程定稿/00-正式闭环.md)。下面是五幕摘要。
 
-命令仍可用（`problem` / `brief` / `reference` / `review-check` / `accept`），但不要按「S6=出骨架、S9=可选所以图不用」来理解。登记之后要启动图；论文从 writer 出。
+| 幕 | 做什么 | 定稿 |
+|----|--------|------|
+| 一 · 方向 | 导入 → EDA → 外/本地独立探索 → Diff → 人拍板 | [01–09](全流程分析/全流程定稿/README.md) |
+| 二 · 算明白 | 研究者编码、实验、出数（**≠ 交卷**） | [10](全流程分析/全流程定稿/10-s5-求解推进.md) |
+| 三 · 手柄 | `brief.json` 定稿，驾驭图 | [11](全流程分析/全流程定稿/11-s3-brief定稿.md) |
+| 四 · 启动图 | 预检 → 登记插座 → **writer 出论文** | [12–14](全流程分析/全流程定稿/14-s6-论文装配.md) |
+| 五 · 收口 | critic→手改循环；人评 → `accept` | [15–16](全流程分析/全流程定稿/15-s7-评审.md) |
 
-LangGraph 还在。无冻结代码时 coder 立即停，除非 `--allow-coder-llm`（默认不要开）。
+### 启动图（产品化入口）
+
+登记不是交差：是给本机代码插上 Beacon 的改代码插座。无冻结代码时 coder 立即停，除非 `--allow-coder-llm`（默认不要开）。
 
 ```bash
+# 证据已齐、从写作段冷启动（常用）
+uv run math-agent run \
+  --problem problems/<题>/problem.json \
+  --brief problems/<题>/brief.json \
+  --from writer \
+  --evidence runs/<题>-reference/evidence.json \
+  --out runs/<题>-writer-graph
+
+# critic / 门禁停机后：改代码或 brief，再登记，再从 writer 重跑
+uv run math-agent restart --out runs/<题>-writer-graph --from writer --reason "…"
+
+# 交棒材料（停机时也会自动写出）
+uv run math-agent critic-handoff --out runs/<id>
+
 uv run math-agent watch --out runs/<run>
-uv run math-agent restart --out runs/<run> --from coder
 ```
 
-`--from writer` 尚未产品化（定稿 14）。Web UI 驱动的是图，不会替你做探索/brief。
+骨架、`reference expand`、会话手写 prose **不是**正式写作终态。Web UI 只驱动图，不会替你做探索 / Diff / brief。
 
----
+### 题目录（做题时认这个）
 
-## 项目结构（做题时看这些）
-
-```
-Beacon/
-├── problems/<题号>/          # 题目档案（导入后的事实源）
-│   ├── source/               # 题面+附件（哈希冻结；xlsx/pdf 本机保留、不入库）
-│   ├── source/reference/     # S6 登记的参考实现
-│   ├── source/inject/        # 无哈希交代码（S9 可选）
-│   ├── problem.json          # spec
-│   └── brief.json            # 方向约束
-├── src/math_agent/           # CLI、graph、nodes、闸门
-├── scripts/                  # check_paper_numbers / check_l4_gates / …
-├── docs/                     # 产品指针；用法在 全流程分析/
-├── frontend/                 # 可选 Web 工作台
-└── tests/                    # pytest
+```text
+problems/<题>/
+  problem.md|json   data_profile.md     ← CLI
+  exploration.md                        ← 研究收束后人读，不是对撞地图
+  _派发/{本地,diff,研究}.md
+  eda/   source/                        ← xlsx/pdf 本机保留、不入库
+  source/reference/ | source/inject/    ← 登记代码（插座）
+  认知地图集/外部|本地|diff|清点
+  _研究日志.md  解题说明.md  经验与坑.md
+  brief.json
 ```
 
 `runs/` 是某次执行产物，不要当题目档案改。
+
+硬禁止（定稿口径）：先 brief 后对撞；搜本题题解当依据；产本地地图时读外部地图；只把关键结论留在对话框。
+
+---
+
+## 项目结构
+
+```
+Beacon/
+├── 全流程分析/全流程定稿/   # 用法唯一指导（先读 00）
+├── problems/<题号>/          # 题目档案（见上）
+├── src/math_agent/           # CLI、graph、nodes、闸门
+├── scripts/                  # check_paper_numbers / check_l4_gates / …
+├── docs/                     # 产品指针；不做第二套流程说明书
+├── frontend/                 # 可选 Web 工作台
+└── tests/                    # pytest
+```
 
 ---
 
@@ -135,7 +156,7 @@ Beacon/
 |------|------|
 | `OPENAI_API_BASE` / `OPENAI_API_KEY` | OpenAI 兼容端点 |
 | `MATH_AGENT_*_MODEL` | 默认 / coder / 强模型 / 视觉；一律 `openai/<name>` |
-| `MATH_AGENT_ALLOW_CODER_LLM=1` | 无 T-19 / inject 时允许 S9 调 LLM 写码（默认不要开） |
+| `MATH_AGENT_ALLOW_CODER_LLM=1` | 无登记代码时允许 coder 调 LLM（默认不要开） |
 | `MATH_AGENT_RAG_ENABLED` | 保持 `0` |
 
 `MATH_AGENT_CODER_DETERMINISTIC`、`MATH_AGENT_WRITER_DETERMINISTIC`、`MATH_AGENT_OFFLINE_REVIEW` 只用于离线回归，不是做题配置。
@@ -163,9 +184,7 @@ npm test
 python scripts/audit_docs.py
 ```
 
-大改造后的验证集与运行记录在 [docs/验证/](docs/验证/README.md)。论文运行是否合格看 `completion.json`、证据角色和闸门报告，不把「生成了文件」当成功。
-
-历史全量基线：2026-08-20 为 810 passed / 4 skipped；2026-08-27 实测 949 passed / 4 skipped。D-022 之后用例续增，**以当前 `pytest -q` 为准**。
+验证集与运行记录在 [docs/验证/](docs/验证/README.md)。论文运行是否合格看 `completion.json`、证据角色和闸门报告，不把「生成了文件」当成功。以当前 `pytest -q` 为准。
 
 ---
 
@@ -174,7 +193,7 @@ python scripts/audit_docs.py
 <details>
 <summary><strong>还能当上游那样一键出 PDF 吗？</strong></summary>
 
-可以跑图，但不作为「一键出赛」承诺。无参考实现时必须 `--allow-coder-llm`。竞赛路径是：本地算明白 → 启动图 → writer 出 `paper.md`。
+可以跑图，但不作为「一键出赛」承诺。无登记代码时必须 `--allow-coder-llm`。竞赛路径是：本地算明白 → brief + 登记 → writer 出 `paper.md`。
 </details>
 
 <details>
@@ -186,7 +205,7 @@ python scripts/audit_docs.py
 <details>
 <summary><strong>崩溃了怎么续？</strong></summary>
 
-S9：`status` / `watch` 看 `failure.json`，再 `recover` 或 `restart --from coder`。人审点用 `resume --approve` / `--no-approve`。操作面（S0–S8）没有「回退到 Sx」命令，改产物后从对应阶段重跑。
+`status` / `watch` 看停机原因与 `critic-handoff`；改代码或 brief 后再登记，用 `restart --from writer`（或 `--from coder`）续跑。人审点用 `resume --approve` / `--no-approve`。
 </details>
 
 <details>
@@ -204,5 +223,5 @@ S9：`status` / `watch` 看 `failure.json`，再 `recover` 或 `restart --from c
 ---
 
 <p align="center">
-  <sub>Fork of Beacon · 方向先定，证据后随。</sub>
+  <sub>Fork of Beacon · 方向先定，证据后随 · 本地算完 ≠ 结束。</sub>
 </p>
