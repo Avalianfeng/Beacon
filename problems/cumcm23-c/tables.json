@@ -1,0 +1,31 @@
+{
+  "tables": [
+    {
+      "id": "q2-mae",
+      "title": "表1 需求回测合计MAE（2023-04–06，日历补0）",
+      "columns": ["方法", "合计MAE"],
+      "lead_columns": {
+        "方法": ["BLEND", "WD90", "YOY"]
+      },
+      "field": "q2.mae_list"
+    },
+    {
+      "id": "q2-week",
+      "title": "表2 2023-07-01至07-07 品类周方案（BLEND）",
+      "columns": ["指标", "数值"],
+      "lead_columns": {
+        "指标": ["周补货kg", "周收益代理"]
+      },
+      "field": "q2.week_list"
+    },
+    {
+      "id": "q3-scheme",
+      "title": "表3 Q3主方案（去高瓜28）",
+      "columns": ["指标", "数值"],
+      "lead_columns": {
+        "指标": ["SKU数", "补货kg", "收益代理"]
+      },
+      "field": "q3.metrics"
+    }
+  ]
+}

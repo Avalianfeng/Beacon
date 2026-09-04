@@ -1,0 +1,96 @@
+{
+  "schema_version": 2,
+  "problem_id": "cumcm23-c",
+  "title": "2023年高教社杯全国大学生数学建模竞赛 C题 蔬菜类商品的自动定价与补货决策",
+  "background": "生鲜商超蔬菜保鲜期短、当日未售隔日难售，须在凌晨进货、单品与进货价尚不确定时做品类补货；定价常用成本加成，运损与品相差时打折。需求随时间变化，供应在4–10月较丰富，货架空间有限故销售组合重要。附件1为6个蔬菜品类的商品信息；附件2、3为2020-07-01至2023-06-30销售流水与批发价；附件4为近期损耗率。本机演练：不搜公开题解。",
+  "questions": [
+    "问题1：蔬菜类商品不同品类或不同单品之间可能存在一定的关联关系，请分析蔬菜各品类及单品销售量的分布规律及相互关系。",
+    "问题2：考虑商超以品类为单位做补货计划，请分析各蔬菜品类的销售总量与成本加成定价的关系，并给出各蔬菜品类未来一周（2023年7月1-7日）的日补货总量和定价策略，使得商超收益最大。",
+    "问题3：因蔬菜类商品的销售空间有限，商超希望进一步制定单品的补货计划，要求可售单品总数控制在27-33个，且各单品订购量满足最小陈列量2.5千克的要求。根据2023年6月24-30日的可售品种，给出7月1日的单品补货量和定价策略，在尽量满足市场对各品类蔬菜商品需求的前提下，使得商超收益最大。",
+    "问题4：为了更好地制定蔬菜商品的补货和定价决策，商超还需要采集哪些相关数据，这些数据对解决上述问题有何帮助，请给出你们的意见和理由。"
+  ],
+  "source": {
+    "md_path": "problem.md",
+    "source_files": [
+      {
+        "path": "题目信息.md",
+        "sha256": "d8179ca0d2992f4d8ce24d28b59b67869d4e76e943a2f34693978e70a1ed2025"
+      },
+      {
+        "path": "C题.pdf",
+        "sha256": "f94818a4f1d84d2aaad2bcbfeb4a7047335a54dccc3a5a632ac2264bcf3d89e5"
+      },
+      {
+        "path": "附件1.xlsx",
+        "sha256": "311bcf788c9131f88064e1ceb1c2f56496af6a390c7940029ae89e3967433bd7"
+      },
+      {
+        "path": "附件2.xlsx",
+        "sha256": "d10ad4125a37a0a335d1f3a3932caaa386367ccf9452cfbf9e280d65817a0d5b"
+      },
+      {
+        "path": "附件3.xlsx",
+        "sha256": "3a383a51148c8d94afdd1a4a395a88d14dc06a507f4120185066fae92d1405e9"
+      },
+      {
+        "path": "附件4.xlsx",
+        "sha256": "d91923cc389ff3077974e9f1ccb1c2b78251f23ef17b8a6a557e681ccca1c18c"
+      },
+      {
+        "path": "reference/_entry.py",
+        "sha256": "940ba12d2c7ccf9682e0f5775b86ce2bf86b718430acc07bd1661f2d9196cc55"
+      }
+    ],
+    "imported_at": "2026-09-02T12:27:51.839844+00:00",
+    "imported_by": "cli"
+  },
+  "feasibility": {
+    "checklist": [
+      "external_data",
+      "simulation",
+      "survey",
+      "supercomputer"
+    ],
+    "blockers": [],
+    "assessment": "本机有四份 xlsx；无超算/问卷需求。blockers 空。探索性真跑：允许降级最小可交。"
+  },
+  "data_files": [
+    {
+      "filename": "题目信息.md",
+      "file_type": "md",
+      "path": "题目信息.md",
+      "summary": {}
+    },
+    {
+      "filename": "C题.pdf",
+      "file_type": "pdf",
+      "path": "C题.pdf",
+      "summary": {}
+    },
+    {
+      "filename": "附件1.xlsx",
+      "file_type": "xlsx",
+      "path": "附件1.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "附件2.xlsx",
+      "file_type": "xlsx",
+      "path": "附件2.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "附件3.xlsx",
+      "file_type": "xlsx",
+      "path": "附件3.xlsx",
+      "summary": {}
+    },
+    {
+      "filename": "附件4.xlsx",
+      "file_type": "xlsx",
+      "path": "附件4.xlsx",
+      "summary": {}
+    }
+  ],
+  "data_dir": "source"
+}

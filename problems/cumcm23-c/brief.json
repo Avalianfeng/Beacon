@@ -1,0 +1,297 @@
+{
+  "schema_version": 2,
+  "problem_id": "cumcm23-c",
+  "created_at": "2026-09-04T13:40:00+00:00",
+  "source": ["human", "model_draft"],
+  "per_question_direction": [
+    {
+      "id": "1-direction",
+      "question_id": "1",
+      "direction": "净销量分布（分位/零销/星期/季节）+品类日相关两层（近365原始 vs 去月份残差）+同SKU价量弱相关作非弹性对照。",
+      "forbidden": "行级/月切片量价相关当弹性；茄类低原始相关写成七月结构独立；三年总均值当常态。"
+    },
+    {
+      "id": "2-direction",
+      "question_id": "2",
+      "direction": "需求BLEND=近90同星期均×(窗7日均/近90日均)；窗加权成本；非打折加成P50；品类损耗；q=d̂/(1-λ)；有界易腐收益；7/1–7/7逐日量、一周一条价。对照：YOY、成本±20%粘性售价、加成P25/P75。",
+      "forbidden": "裸近90同星期作主锚；去年同周作主锚；品类统一弹性最优价；无上界订货；七天同一补货量。"
+    },
+    {
+      "id": "3-direction",
+      "question_id": "3",
+      "direction": "窗内有销49为候选；硬池=窗日均≥2.5的29；再剔除单位可售毛利≤0（高瓜(1)）得28。7/1品类需求用Q2当日BLEND按份额分配；单品损耗；q=max(2.5,d/(1-λ))。对照：27、含高瓜29、头部9.43%→品类损耗。",
+      "forbidden": "49无结构自由组合当主叙事；把27–33写成现状上架数；扩33且需求不守恒当更优；9.43%当全体真损耗。"
+    },
+    {
+      "id": "4-direction",
+      "question_id": "4",
+      "direction": "按优先级写：进货/库存/报损/缺货、标价与折扣分离、可供清单与货架格；每条对应Q1–Q3不可识别边界。",
+      "forbidden": "无机制地再采销量；天气节假日写成第一优先。"
+    }
+  ],
+  "formula_notes": [
+    {
+      "id": "2-blend",
+      "question_id": "2",
+      "note": "2023-07-01为周六(WD=5)。d̂(c,t)=WD90(c,t)×WIN7(c)/MU90(c)。WIN7=2023-06-24..30品类日均。回测勿改成裸WD90。"
+    },
+    {
+      "id": "2-replenish",
+      "question_id": "2",
+      "note": "λ：花菜0.1551,水生0.1365,花叶0.1283,菌0.0945,椒0.0924,茄0.0668（附件4品类表，百分数/100）。q=d̂/(1-λ)。"
+    },
+    {
+      "id": "2-price-profit",
+      "question_id": "2",
+      "note": "ĉ=窗内Σ(销量×批发)/Σ销量。m=近90非打折(单价/批发-1)的P50。p=ĉ(1+m)一周不变。π=p·d̂-ĉ·q。粘性售价：p不变、c←ĉ(1+δ)。"
+    },
+    {
+      "id": "3-alloc",
+      "question_id": "3",
+      "note": "d_i=d̂(c,7/1)×(net_i/Σ_同类硬池net)。q_i=max(2.5,d_i/(1-λ_i))，λ_i用单品损耗率。π_i=p_i·min(d_i,(1-λ_i)q_i)-c_i q_i。"
+    },
+    {
+      "id": "3-margin",
+      "question_id": "3",
+      "note": "单位可售毛利=p-c/(1-λ)；≤0不上架。高瓜(1) λ=0.2925 且加成偏低，本轮剔除后主方案28 SKU。"
+    }
+  ],
+  "required_discussions": [
+    {
+      "id": "disc-assumptions",
+      "sections": ["assumptions"],
+      "topic": "销量是需求代理；有界易腐；可售=窗内有销；一周成本未知用窗中心",
+      "requirement": "均标【推断】，勿写成题面原文。备选：有缺货数据后再升级审查/报童。"
+    },
+    {
+      "id": "disc-blend",
+      "sections": ["model_section"],
+      "topic": "为何用BLEND而非裸WD90或去年同周",
+      "requirement": "必须引用2023-04–06走步MAE：BLEND约13、WIN7约16.5、WD90约17.8且正偏差、YOY约28且负偏差。"
+    },
+    {
+      "id": "disc-q2-table",
+      "sections": ["solution"],
+      "topic": "Q2品类×日补货与定价表",
+      "requirement": "6品类×7日补货kg+一条售价/加成；复现自研究/data/Q2_7月周_补货定价.csv，禁止手改数。"
+    },
+    {
+      "id": "disc-q3-table",
+      "sections": ["solution"],
+      "topic": "Q3的7/1单品补货与定价",
+      "requirement": "主表28行（去高瓜）；满足27–33与≥2.5kg；六品类均有覆盖。路径研究/data/Q3_主方案_去高瓜28.csv。"
+    },
+    {
+      "id": "disc-sens",
+      "sections": ["sensitivity"],
+      "topic": "成本冲击、加成带、YOY压力、9.43%、27vs28",
+      "requirement": "粘性售价±20%收益约±58%；P25/P50/P75收益线性故P75不是最优价；9.43改品类损耗合计约-2%。"
+    },
+    {
+      "id": "disc-q4",
+      "sections": ["conclusion"],
+      "topic": "Q4对准不可识别边界",
+      "requirement": "进货库存缺货报损第一；价折分离第二；可供/货架第三。不要另起愿望清单。"
+    }
+  ],
+  "red_lines": [
+    {
+      "id": "rl-no-longmean",
+      "question_id": "2",
+      "prohibition": "不得用2020–2021或三年日均作为2023-07需求主锚（分级②：回测否证；备选=BLEND）。"
+    },
+    {
+      "id": "rl-no-elasticity",
+      "question_id": "1",
+      "prohibition": "不得把行级/月切片量价相关写入定价弹性公式（分级②：同SKU中位弱负；备选=加成带P50）。"
+    },
+    {
+      "id": "rl-sales-not-demand",
+      "question_id": "",
+      "prohibition": "不得把观测净销量称为已识别的潜在需求（分级①题面无库存/缺货；备选=代理+Q4升级）。"
+    },
+    {
+      "id": "rl-bounded-profit",
+      "question_id": "2",
+      "prohibition": "禁止无上界会计（订得越多收益越高）。分级②易腐未售全损；备选=残值仅敏感性。"
+    },
+    {
+      "id": "rl-q3-not-251",
+      "question_id": "3",
+      "prohibition": "Q3可售不得默认为目录251。操作定义=2023-06-24–30净销量≠0的SKU（分级②；备选=有价无销12仅对照）。"
+    },
+    {
+      "id": "rl-no-handedit",
+      "question_id": "",
+      "prohibition": "改损耗/加成/需求定义必须重跑研究/scripts，禁止手改3503/795等绑定数字。"
+    },
+    {
+      "id": "rl-gaogua",
+      "question_id": "3",
+      "prohibition": "高瓜(1)若出现在上架表必须交代单位可售毛利为负或改为已剔除（分级②本轮计算）。"
+    },
+    {
+      "id": "rl-no-public-sol",
+      "question_id": "",
+      "prohibition": "不得引用本题公开优秀论文/评分标准作为方向依据（分级①防泄漏）。"
+    }
+  ],
+  "figure_plan": [
+    {
+      "id": "fig-q1-box",
+      "question_id": "1",
+      "figure": "品类日销量箱线或分位",
+      "requirements": "单位kg；声明日历补0或有售日。"
+    },
+    {
+      "id": "fig-q1-corr",
+      "question_id": "1",
+      "figure": "品类日相关热力（近365原始）",
+      "requirements": "可复用认知地图集/本地/V2/figures/品类日相关_近365.png。"
+    },
+    {
+      "id": "fig-q1-resid",
+      "question_id": "1",
+      "figure": "去月份残差相关热力",
+      "requirements": "须能看出茄类并入共同因子。路径认知地图集/diff/figures/品类残差相关.png。"
+    },
+    {
+      "id": "fig-q2-mae",
+      "question_id": "2",
+      "figure": "需求主锚走步回测MAE",
+      "requirements": "BLEND/WIN7/WD90/YOY四条。路径研究/figures/Q2回测_合计MAE.png。"
+    },
+    {
+      "id": "fig-q2-stack",
+      "question_id": "2",
+      "figure": "7/1–7/7品类日补货堆叠",
+      "requirements": "单位kg；周六日起。路径研究/figures/Q2_一周补货堆叠.png。"
+    },
+    {
+      "id": "fig-q3-geo",
+      "question_id": "3",
+      "figure": "Q3硬池与27–33几何",
+      "requirements": "2.5kg线与第27/33名。路径认知地图集/diff/figures/Q3硬池与27-33.png。"
+    },
+    {
+      "id": "fig-q3-bars",
+      "question_id": "3",
+      "figure": "7/1单品补货条形",
+      "requirements": "主方案用去高瓜28，勿把含负毛利高瓜的29图当终稿。"
+    }
+  ],
+  "scoring_notes": [
+    {
+      "id": "sc-demand",
+      "question_id": "1",
+      "note": "自拟非官方：是否区分实现销量与潜在需求；是否给出星期/季节与两层相关。"
+    },
+    {
+      "id": "sc-q2",
+      "question_id": "2",
+      "note": "是否处理凌晨不知价；星期是否进入逐日补货；是否交代量与成本加成关系（加成带而非伪弹性最优）。"
+    },
+    {
+      "id": "sc-q3",
+      "question_id": "3",
+      "note": "可售数是否落在27–33；单品订购是否≥2.5kg；是否根据6/24–30可售池；是否兼顾品类覆盖与收益。"
+    },
+    {
+      "id": "sc-loss-profit",
+      "question_id": "",
+      "note": "是否交代损耗双口径；收益是否有界。数字须可追溯到附件或研究/data。"
+    }
+  ],
+  "data_notes": [
+    {
+      "id": "dn-att1",
+      "question_id": "1",
+      "note": "附件1：6品类251SKU；流水出现246。分类编码与附件4品类sheet一致。"
+    },
+    {
+      "id": "dn-att2",
+      "question_id": "",
+      "note": "附件2：878503行；退货461行销量为负。需求用净千克。份/盒/包按表内千克，不换算份数。"
+    },
+    {
+      "id": "dn-att3",
+      "question_id": "2",
+      "note": "已售(日,SKU)全部命中当天批发价。Q2成本用6/24–30品类加权，不是7月真进价。"
+    },
+    {
+      "id": "dn-att4",
+      "question_id": "",
+      "note": "附件4品类平均≠单品简单均值；85个恰9.43%。Q2用品类表、Q3用单品表。"
+    },
+    {
+      "id": "dn-repro",
+      "question_id": "",
+      "note": "品类日面板研究/data/品类日销量_日历补0.csv。茄类零销日多，Q1须声明补0。脚本研究/scripts/01_q2_demand_backtest.py与02_q2q3_plan.py。"
+    }
+  ],
+  "reference_direction": [
+    "成本加成定价；易腐品补货（点预测，不估报童参数）",
+    "时序：同星期形状×近窗水位；对照去年同周",
+    "品类聚合需求与SKU份额分配；最小陈列约束"
+  ],
+  "background_knowledge": [
+    "[human] 生鲜当日未售隔日难售；无库存/缺货时只能把净销量当需求代理。",
+    "[human] 定价惯例为成本加成；进货在凌晨，决策时单品与进价不完全可知。",
+    "[human] 2023-07-01为周六，目标周星期序为六日起。",
+    "[model_draft] 行级量价强负相关常被时间/构成驱动，不能直接当品类弹性。",
+    "[human] 附件4损耗来自近期盘点，与单品表口径可能不一致；9.43%高频值须敏感。",
+    "[human] 单品名数字编号常表示供应来源，可与份/散构成货架替代组。",
+    "[model_draft] 无弹性时有界收益对加成率线性，不能在带内求最优价。",
+    "[model_draft] 若(1+m)(1-λ)<1，该SKU在此会计下不应订货。"
+  ],
+  "redline_rules": [
+    {
+      "id": "rl-no-longmean",
+      "target": "paper",
+      "rule_type": "literal_ban",
+      "pattern": "三年日均作为2023年7月需求",
+      "severity": "warn",
+      "note": "主锚须为BLEND，不得把三年日均当7月需求。"
+    },
+    {
+      "id": "rl-no-elasticity",
+      "target": "paper",
+      "rule_type": "literal_ban",
+      "pattern": "行级相关即弹性",
+      "severity": "warn",
+      "note": "禁止把行级相关直接称为弹性。"
+    },
+    {
+      "id": "rl-sales-not-demand",
+      "target": "paper",
+      "rule_type": "literal_ban",
+      "pattern": "潜在需求已完全识别",
+      "severity": "warn",
+      "note": "销量只是需求代理。"
+    },
+    {
+      "id": "rl-bounded-profit",
+      "target": "paper",
+      "rule_type": "literal_ban",
+      "pattern": "订货越多收益越高",
+      "severity": "warn",
+      "note": "收益必须有界；正文若正面主张无上界订货再升 hard。"
+    },
+    {
+      "id": "rl-q3-not-251",
+      "target": "paper",
+      "rule_type": "literal_ban",
+      "pattern": "以目录251为可售全集",
+      "severity": "warn",
+      "note": "Q3可售是窗内有销子集。"
+    },
+    {
+      "id": "rl-no-public-sol",
+      "target": "paper",
+      "rule_type": "literal_ban",
+      "pattern": "按官方优秀论文",
+      "severity": "warn",
+      "note": "禁止把公开题解当方向依据。"
+    }
+  ]
+}

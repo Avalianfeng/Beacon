@@ -1,0 +1,13 @@
+{
+  "n_window": 49,
+  "n_hard": 29,
+  "share_hard_net": 0.929978116067172,
+  "share_portion_net": 0.4925320839898833,
+  "n_quoted_unsold_window": 12,
+  "hard_9_43": 8,
+  "same_sku_n": 126,
+  "same_sku_abs_r_gt_0_3": 30,
+  "sat_sku_median": 1.3318613698900397,
+  "sat_sku_min_name": "木耳菜",
+  "sat_sku_min": 1.0249248552011494
+}

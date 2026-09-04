@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "problem_id": "cumcm23-c",
+  "evidence_path": "runs\\cumcm23-c-reference\\evidence.json",
+  "evidence_sha256": "349e69119f65a3117421bab1f0640b86d2a2fb92a7f565318ef50deb8d513be2",
+  "verdict": "pass",
+  "actor": "beacon-s6-2026-09-04",
+  "notes": "S6白名单补对照：加成P25/50/75、成本冲击20、硬池29/27/33、9.43；数字仍读研究/data",
+  "rerun": {
+    "ran": false
+  },
+  "at": "2026-09-04T14:27:50.878287+00:00"
+}

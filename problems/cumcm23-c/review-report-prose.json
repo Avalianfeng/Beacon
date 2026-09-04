@@ -1,0 +1,29 @@
+{
+  "ok": true,
+  "exit_code": 0,
+  "tools": [
+    {
+      "name": "check_paper_numbers",
+      "exit_code": 0
+    },
+    {
+      "name": "check_assumption_claims",
+      "exit_code": 0
+    },
+    {
+      "name": "check_l4_gates",
+      "exit_code": 0
+    },
+    {
+      "name": "check_redlines",
+      "exit_code": 0
+    },
+    {
+      "name": "check_brief_claims",
+      "exit_code": 0
+    }
+  ],
+  "strict": false,
+  "brief_sha256": "d7577c718137bd21fb46d56ad71ebdd39146b8d3f13dd87a90413542931f92c4",
+  "brief": "problems\\cumcm23-c\\brief.json"
+}
