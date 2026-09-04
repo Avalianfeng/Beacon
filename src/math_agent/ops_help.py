@@ -13,13 +13,14 @@ ROOT_HELP = """\
   S3 方向     math-agent brief init|check
   S4 预检     math-agent run --dry-run
   S5 验证     math-agent reference verify|recertify
-  S6 登记     math-agent reference add|run|tables|paper
-  S7 评审     math-agent review-check
+  S6 写作     math-agent run --from writer --evidence …（先 reference add|run）
+  S7 评审     math-agent review-check；停机交棒 math-agent critic-handoff
   S8 人审     math-agent accept
 
-可选遗留执行器（S9；不作默认主路径，D-005）：
-  math-agent start|supervise|watch|status|pause|recover|restart
-  全图 run（无 --dry-run）/ review / resume 亦属 S9，勿与 review-check / accept 混用
+可选遗留执行器（S9；不作无人值守主路径，D-005）：
+  math-agent start|supervise|watch|status|pause|recover
+  math-agent restart --from coder|writer；review / resume
+  全图 run（无 --from / 无 --dry-run）亦可用；勿与 review-check / accept 混用
 
 非做题路径：ingest（RAG，当前不启用）· bench（回归基准）· brief dialogue（TTY 交互，真跑不用）
 """

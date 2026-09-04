@@ -100,7 +100,8 @@ def after_model_code_consistency(state: MathModelingState) -> str:
     """model_code_consistency 审查完后的去向。
 
     hard 红线（D-022）与未通过/无主证据/无报告一律立即 stop。
-    通过且达到配置门槛 → advance。接续用 restart --from coder。
+    通过且达到配置门槛 → advance。
+    接续：编码门禁用 ``restart --from coder``；写作门禁用 ``restart --from writer``。
     """
     if not state.model_code_reports:
         return "stop"

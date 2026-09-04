@@ -305,6 +305,9 @@ def _problem_fingerprint(spec: dict) -> str:
 def _write_run_manifest(
     out: Path, thread: str, spec: dict, *, no_interrupt: bool = False,
     brief_sha256: str | None = None,
+    entry: str | None = None,
+    evidence: str | None = None,
+    model_card: str | None = None,
 ) -> None:
     path = out / "run_manifest.json"
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
@@ -316,6 +319,12 @@ def _write_run_manifest(
     }
     if brief_sha256:
         payload["brief_sha256"] = brief_sha256
+    if entry:
+        payload["entry"] = entry
+    if evidence:
+        payload["evidence"] = evidence
+    if model_card:
+        payload["model_card"] = model_card
     try:
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, path)
@@ -1113,6 +1122,10 @@ def _paper_assumptions(brief) -> tuple[str, list[str], str]:
                     for p in parts
                     if p.startswith(("①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"))
                 ]
+                # 无 ①②③ 分条时，整段 topic 仍是假设（勿误报 brief 缺失）
+                if not items and topic.strip():
+                    items = [topic.strip()]
+                    preamble = ""
                 requirement = item.requirement
                 return preamble, items, requirement if isinstance(requirement, str) else ""
     return "", [], ""
@@ -1998,10 +2011,15 @@ def problem_import(
         return {"path": path.name, "sha256": digest, "name": path.name}
 
     archived = [_archive(source)]
+    seen_names = {source.name}
     if attachments is not None:
         for f in sorted(attachments.iterdir()):
-            if f.is_file():
-                archived.append(_archive(f))
+            if not f.is_file():
+                continue
+            if f.name in seen_names:
+                continue
+            seen_names.add(f.name)
+            archived.append(_archive(f))
 
     # 事实层 problem.md：md/txt 直接复制；pdf/docx 走现有 ingest 管线（乱码可视觉回退）
     if source.suffix.lower() in {".md", ".txt"}:
@@ -2066,8 +2084,8 @@ def problem_import(
     )
 
     typer.echo(f"[OK] problems/{problem_id} 已导入：source 归档 {len(archived)} 个文件 + 哈希 + problem.md + spec 骨架")
-    typer.echo("下一步（按 brief-playbook）：人工填写 problem.json 的 title/background/questions/feasibility，")
-    typer.echo(f"然后 `math-agent brief init --problem problems/{problem_id}/problem.json --out problems/{problem_id}/brief.json`")
+    typer.echo("下一步：填写 problem.json 的 title / background / questions / feasibility.blockers，")
+    typer.echo(f"然后 `math-agent problem stage {problem_id}`；先写 data_profile 与探索/对撞，brief 在对撞之后。")
 
 
 @problem_app.command("show")
@@ -2393,6 +2411,19 @@ def run(
     thread: str = typer.Option("default"),
     brief: Path | None = typer.Option(None, "--brief", exists=True, readable=True,
                                       help="人工建模预备 brief.json（可选）"),
+    from_node: str = typer.Option(
+        "",
+        "--from",
+        help="冷启动入口：空=全图自 analyst；writer=evidence 接桥进写作段",
+    ),
+    evidence: Path | None = typer.Option(
+        None, "--evidence", exists=True, readable=True,
+        help="--from writer 时必填：reference run 产出的 evidence.json",
+    ),
+    model_card: Path | None = typer.Option(
+        None, "--model-card", exists=True, readable=True,
+        help="--from writer 可选：覆盖默认最小模型卡的 JSON",
+    ),
     no_interrupt: bool = typer.Option(False, "--no-interrupt", help="跳过 HITL，直接跑到底"),
     dry_run: bool = typer.Option(
         False,
@@ -2410,7 +2441,21 @@ def run(
         help="允许 coder 节点调用 LLM 生成代码（默认关；无 T-19 冻结资产时需显式开启）",
     ),
 ):
-    """S4：``--dry-run`` 做题默认预检。无该旗标则跑完整 LangGraph（S9 可选执行器，D-005）。"""
+    """S4：``--dry-run`` 做题默认预检。无该旗标则跑 LangGraph（全图或 ``--from writer``）。"""
+    entry = (from_node or "").strip().lower()
+    if entry not in {"", "writer"}:
+        raise typer.BadParameter("--from 目前仅支持空（全图）或 writer", param_hint="--from")
+    if entry == "writer" and evidence is None:
+        raise typer.BadParameter("--from writer 需要 --evidence", param_hint="--evidence")
+    if entry != "writer" and evidence is not None:
+        raise typer.BadParameter("--evidence 仅在 --from writer 时使用", param_hint="--evidence")
+    if entry != "writer" and model_card is not None:
+        raise typer.BadParameter("--model-card 仅在 --from writer 时使用", param_hint="--model-card")
+    if entry == "writer" and allow_coder_llm:
+        raise typer.BadParameter("--from writer 不与 --allow-coder-llm 同用", param_hint="--allow-coder-llm")
+    if entry == "writer" and dry_run:
+        raise typer.BadParameter("--from writer 不与 --dry-run 同用", param_hint="--dry-run")
+
     spec = _read_problem_spec(problem)
     brief_obj = None
     brief_sha256 = None
@@ -2432,39 +2477,78 @@ def run(
     out.mkdir(parents=True, exist_ok=True)
     interrupt = [] if no_interrupt else ["human_review"]
 
-    initial = {
-        "problem": spec.get("title", "") + "\n" + "\n".join(spec.get("questions", [])),
-        "background": spec.get("background", ""),
-        "questions": spec.get("questions", []),
-        "brief": brief_obj,
-        "stage_target": "basic",
-        "iteration": 0,
-        "output_dir": str(out),
-        "data_dir": spec.get("data_dir") or None,
-        "data_files": [DataFileInfo(**f) for f in spec.get("data_files", [])],
-        "latex_template": template,
-        "school": school or None,
-        "team_id": team_id or None,
-        "members": members or None,
-        # --no-interrupt 表示显式跳过人审，等价于自动批准；否则拒绝路由
-        # 无法区分“自动模式”与“恢复时遗漏决定”。
-        "human_decision": HumanDecision(approved=True, notes="--no-interrupt") if no_interrupt else None,
-    }
-    if allow_coder_llm:
-        initial["allow_coder_llm"] = True
+    problem_text = None
+    md_candidate = problem.parent / "problem.md"
+    if md_candidate.is_file():
+        problem_text = md_candidate.read_text(encoding="utf-8")
+
+    if entry == "writer":
+        from math_agent.adapters.evidence_to_state import build_writer_state, validate_writer_state
+        bridge_state = build_writer_state(
+            problem_spec=spec,
+            brief=brief_obj if brief_obj is not None else brief,
+            evidence=evidence,  # type: ignore[arg-type]
+            output_dir=out,
+            model_card=model_card,
+            problem_text=problem_text,
+        )
+        bridge_state.latex_template = template
+        bridge_state.school = school or None
+        bridge_state.team_id = team_id or None
+        bridge_state.members = members or None
+        if no_interrupt:
+            bridge_state.human_decision = HumanDecision(approved=True, notes="--no-interrupt")
+        issues = validate_writer_state(bridge_state)
+        if issues:
+            raise typer.BadParameter(
+                "writer 接桥 state 不完整：" + "; ".join(issues),
+                param_hint="--evidence",
+            )
+        initial = None
+        seed_values = bridge_state.model_dump()
+        seed_values["figure_phase"] = "done"
+    else:
+        seed_values = None
+        initial = {
+            "problem": problem_text or (
+                spec.get("title", "") + "\n" + "\n".join(spec.get("questions", []))
+            ),
+            "background": spec.get("background", ""),
+            "questions": spec.get("questions", []),
+            "brief": brief_obj,
+            "stage_target": "basic",
+            "iteration": 0,
+            "output_dir": str(out),
+            "data_dir": spec.get("data_dir") or None,
+            "data_files": [DataFileInfo(**f) for f in spec.get("data_files", [])],
+            "latex_template": template,
+            "school": school or None,
+            "team_id": team_id or None,
+            "members": members or None,
+            # --no-interrupt 表示显式跳过人审，等价于自动批准；否则拒绝路由
+            # 无法区分“自动模式”与“恢复时遗漏决定”。
+            "human_decision": HumanDecision(approved=True, notes="--no-interrupt") if no_interrupt else None,
+        }
+        if allow_coder_llm:
+            initial["allow_coder_llm"] = True
     clear_failed_node()
     tracer = None
     tok = None
     try:
         with RunLock(out):
             _prepare_run_output(out, thread, force)
-            if brief_obj is not None:
+            if brief_obj is not None and brief is not None:
                 _copy_brief_to_out(out, brief)
-            _write_run_manifest(out, thread, spec, no_interrupt=no_interrupt, brief_sha256=brief_sha256)
+            _write_run_manifest(
+                out, thread, spec, no_interrupt=no_interrupt, brief_sha256=brief_sha256,
+                entry=entry or "analyst",
+                evidence=str(evidence.resolve()) if evidence else None,
+                model_card=str(model_card.resolve()) if model_card else None,
+            )
             clear_failure_report(out)
             try:
                 from math_agent.progress import emit_run_boundary
-                emit_run_boundary(out, attempt=1, mode="run")
+                emit_run_boundary(out, attempt=1, mode="run-writer" if entry == "writer" else "run")
             except Exception:
                 pass
             try:
@@ -2476,7 +2560,12 @@ def run(
             tok = set_current(tracer)
             with _saver_cm(out) as saver:
                 g = build_graph(checkpointer=saver, interrupt_before=interrupt)
-                g.invoke(initial, config=_config(thread))
+                config = _config(thread)
+                if entry == "writer":
+                    g.update_state(config, seed_values, as_node="figure_analysis")
+                    g.invoke(None, config=config)
+                else:
+                    g.invoke(initial, config=config)
     except RunLockedError as e:
         typer.echo(f"[BUSY] {e}", err=True)
         raise typer.Exit(75)
@@ -2520,6 +2609,7 @@ def run(
     pause_control.clear_pause(out)
     _dump_state_summary(out, thread)
     _echo_run_outcome(out, thread)
+    _maybe_write_critic_handoff(out, thread)
 
 
 @app.command()
@@ -2567,6 +2657,39 @@ def _echo_run_outcome(out: Path, thread: str) -> None:
         )
         return
     typer.echo(f"done. paper at {out / 'paper.md'}; trace at {out / 'trace.json'}")
+
+
+@app.command("critic-handoff")
+def critic_handoff_cmd(
+    out: Path = typer.Option(Path("runs/latest")),
+    thread: str = typer.Option("default"),
+    write: bool = typer.Option(True, "--write/--no-write", help="写入 critic-handoff.json"),
+):
+    """读取门禁停机 checkpoint，聚合 critic/一致性 issues 为交棒包。"""
+    _require_checkpoint(out)
+    out = out.resolve()
+    with _saver_cm(out) as saver:
+        g = build_graph(checkpointer=saver)
+        snap = g.get_state(_config(thread))
+        if snap is None or not snap.values:
+            typer.echo("[FAIL] checkpoint 无 state", err=True)
+            raise typer.Exit(1)
+        if snap.next:
+            typer.echo(
+                f"[SKIP] checkpoint 未停机（next={snap.next}）；交棒包仅用于门禁 stop。",
+                err=True,
+            )
+            raise typer.Exit(1)
+        state = MathModelingState.model_validate(snap.values)
+        reason = _gate_stop_reason(state)
+        from math_agent.critic_handoff import build_critic_handoff, write_critic_handoff
+        payload = build_critic_handoff(
+            state, out=out, gate_reason=reason, thread=thread,
+        )
+        if write:
+            path = write_critic_handoff(out, payload)
+            typer.echo(f"wrote {path}")
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 @app.command()
@@ -2853,6 +2976,42 @@ def _is_gate_stop_state(state: MathModelingState) -> bool:
     return True
 
 
+def _is_paper_gate_stop_state(state: MathModelingState) -> bool:
+    """paper_critic 未通过（或论文关键节为空）导致的停机。"""
+    paper_ok = all([
+        (state.paper.abstract or "").strip(),
+        (state.paper.model_section or "").strip(),
+        (state.paper.solution or "").strip(),
+        (state.paper.conclusion or "").strip(),
+    ])
+    if not paper_ok:
+        return True
+    critic = state.latest_critic("paper")
+    if critic is None:
+        return True
+    if critic.approved and critic.score >= MIN_PAPER_CRITIC_SCORE:
+        return False
+    return True
+
+
+def _maybe_write_critic_handoff(out: Path, thread: str) -> None:
+    """门禁停机时写出 critic-handoff.json，供本地 agent 手改。"""
+    try:
+        from math_agent.critic_handoff import maybe_write_critic_handoff_from_checkpoint
+        path = maybe_write_critic_handoff_from_checkpoint(
+            out,
+            thread,
+            gate_reason_fn=_gate_stop_reason,
+            build_graph_fn=build_graph,
+            saver_cm=_saver_cm,
+            config_fn=_config,
+        )
+        if path is not None:
+            typer.echo(f"critic handoff written: {path}")
+    except Exception as exc:
+        typer.echo(f"[WARN] critic-handoff 未写出：{exc}", err=True)
+
+
 def _gate_stop_reason(state: MathModelingState) -> str:
     """给用户看的停机原因：覆盖全部 routing 门禁，不只 code_verify 耗尽。"""
     from math_agent.brief import brief_coverage_problems, hard_redline_violations
@@ -2996,19 +3155,19 @@ def _emit_restart_boundary(out: Path) -> None:
 def restart(
     out: Path = typer.Option(Path("runs/latest")),
     thread: str = typer.Option("default"),
-    from_node: str = typer.Option("coder", "--from", help="目前仅支持 coder"),
+    from_node: str = typer.Option("coder", "--from", help="coder | writer"),
     reason: str = typer.Option(..., "--reason", help="人工判定重启原因，写入 run_manifest"),
     problem: Path | None = typer.Option(None, "--problem", exists=True, readable=True, help="用于校验输入不变性"),
 ):
     """门禁停机后，从指定节点前重新执行。
 
-    仅当 checkpoint 处于门禁停机态（next 为空、一致性审查未通过）时可用；
-    不绕过任何门禁，只是让人工判定守卫/方向无问题后重试一次合法节点。
+    ``--from coder``：一致性审查未通过后重跑编码段。
+    ``--from writer``：paper_critic 未通过后重跑写作段。
     """
     _require_checkpoint(out)
     _require_trace_thread(out, thread)
-    if from_node != "coder":
-        raise typer.BadParameter("目前 --from 只支持 coder", param_hint="--from")
+    if from_node not in {"coder", "writer"}:
+        raise typer.BadParameter("--from 只支持 coder 或 writer", param_hint="--from")
     out = out.resolve()
 
     # 1. 读取当前 checkpoint 并验证停机态
@@ -3030,13 +3189,21 @@ def restart(
         if inspection.final_status in {"completed", "degraded", "rejected"}:
             typer.echo(f"[REJECT] run 已终态完成（{inspection.final_status}），不能 restart。", err=True)
             raise typer.Exit(1)
-        if not _is_gate_stop_state(state):
-            typer.echo(
-                "[REJECT] checkpoint 不是 coder/一致性门禁停机态，不能 restart。\n"
-                "  只有一致性审查未通过导致的停机才允许人工放行重试。",
-                err=True,
-            )
-            raise typer.Exit(1)
+        if from_node == "coder":
+            if not _is_gate_stop_state(state):
+                typer.echo(
+                    "[REJECT] checkpoint 不是 coder/一致性门禁停机态，不能 restart --from coder。\n"
+                    "  只有一致性审查未通过导致的停机才允许人工放行重试。",
+                    err=True,
+                )
+                raise typer.Exit(1)
+        else:
+            if not _is_paper_gate_stop_state(state):
+                typer.echo(
+                    "[REJECT] checkpoint 不是 paper_critic 门禁停机态，不能 restart --from writer。",
+                    err=True,
+                )
+                raise typer.Exit(1)
 
     # 2. 输入不变性校验
     manifest_path = out / "run_manifest.json"
@@ -3121,14 +3288,26 @@ def restart(
             # fork 配置必须带 checkpoint_ns（LangGraph 要求 thread_id+ns+checkpoint_id 三元组），
             # 直接从目标快照的 config 继承，避免手写缺键。
             restart_config = {"configurable": {**target.config.get("configurable", {}), "checkpoint_id": checkpoint_id}}
-            g.update_state(
-                restart_config,
-                {
-                    "code_verify_iteration": 0,
-                    "code_verify_low_score_iteration": 0,
-                },
-                as_node="model_code_consistency",
-            )
+            if from_node == "coder":
+                g.update_state(
+                    restart_config,
+                    {
+                        "code_verify_iteration": 0,
+                        "code_verify_low_score_iteration": 0,
+                    },
+                    as_node="model_code_consistency",
+                )
+            else:
+                g.update_state(
+                    restart_config,
+                    {
+                        "writer_section_queue": [],
+                        "paper_review_takeover": False,
+                        "writer_iteration": int(getattr(state, "writer_iteration", 0) or 0) + 1,
+                        "figure_phase": "done",
+                    },
+                    as_node="figure_analysis",
+                )
             _append_restart_record(out, from_node, reason, checkpoint_id)
             _supersede_gate_diagnostics(out)
             clear_failure_report(out)
@@ -3180,6 +3359,7 @@ def restart(
         _heartbeat_stop.set()
     _dump_state_summary(out, thread)
     _echo_run_outcome(out, thread)
+    _maybe_write_critic_handoff(out, thread)
 
 
 def _supervisor_exit(result, out: Path, thread: str) -> None:

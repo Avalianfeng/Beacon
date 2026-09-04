@@ -233,7 +233,7 @@ def test_restart_rejects_missing_brief_copy(tmp_path, monkeypatch):
 
 
 def test_restart_rejects_other_from_node(tmp_path, monkeypatch):
-    """--from 目前只接受 coder。"""
+    """--from 只接受 coder / writer。"""
     out = tmp_path / "run"
     out.mkdir()
     (out / "checkpoints.sqlite").write_bytes(b"placeholder")
@@ -241,3 +241,121 @@ def test_restart_rejects_other_from_node(tmp_path, monkeypatch):
     result = _invoke_restart(out, monkeypatch, extra_args=["--from", "modeler"])
 
     assert result.exit_code != 0
+
+
+def _install_writer_path_fakes(monkeypatch, *, approve_paper_on):
+    """从 analyst 假跑到 writer → paper_critic；approve_paper_on(n) 控制第 n 次 paper_critic。"""
+    from math_agent.state import (
+        CodeArtifact, CriticReport, ModelCodeConsistencyReport, PaperSections,
+        ProblemBlueprint, SubQuestionBlueprint,
+    )
+    calls = {"writer": 0, "paper_critic": 0}
+
+    def fake_analyst(state):
+        return {
+            "problem_blueprint": ProblemBlueprint(
+                core_task="t",
+                subquestions=[SubQuestionBlueprint(id="1", original_text="q", task_type="generic")],
+            ),
+            "code_artifacts": [
+                CodeArtifact(
+                    purpose="p", code="#", stdout="RESULT: baseline=ours x=1",
+                    success=True, evidence_role="primary",
+                )
+            ],
+        }
+
+    def fake_bp(state):
+        return {"critic_reports": [CriticReport(target="analyst", critic_type="blueprint", score=9, approved=True)]}
+
+    def fake_modeler(state):
+        return {}
+
+    def fake_mc(state):
+        return {"critic_reports": [CriticReport(target="modeler", score=9, approved=True)]}
+
+    def fake_coder(state):
+        return {}
+
+    def fake_cons(state):
+        return {"model_code_reports": [ModelCodeConsistencyReport(score=9, approved=True)]}
+
+    def fake_sens(state):
+        return {"sensitivity_phase": "done"}
+
+    def fake_fig(state):
+        return {"figure_phase": "done"}
+
+    def fake_writer(state):
+        calls["writer"] += 1
+        return {
+            "writer_section_queue": [],
+            "writer_outline_dump": {},
+            "writer_iteration": max(1, int(state.writer_iteration or 0)),
+            "paper": PaperSections(
+                abstract="a", model_section="m", solution="s", conclusion="c",
+            ),
+        }
+
+    def fake_paper(state):
+        calls["paper_critic"] += 1
+        ok = approve_paper_on(calls["paper_critic"])
+        return {
+            "critic_reports": [
+                CriticReport(target="paper", score=9 if ok else 3, approved=ok),
+            ],
+        }
+
+    def fake_table(state):
+        return {}
+
+    def fake_eval(state):
+        return {}
+
+    monkeypatch.setattr("math_agent.graph.analyst_node", fake_analyst)
+    monkeypatch.setattr("math_agent.graph.blueprint_critic_node", fake_bp)
+    monkeypatch.setattr("math_agent.graph.modeler_prepare_node", fake_modeler)
+    monkeypatch.setattr("math_agent.graph.model_critic_node", fake_mc)
+    monkeypatch.setattr("math_agent.graph.coder_prepare_node", fake_coder)
+    monkeypatch.setattr("math_agent.graph.model_code_consistency_node", fake_cons)
+    monkeypatch.setattr("math_agent.graph.sensitivity_plan_node", fake_sens)
+    monkeypatch.setattr("math_agent.graph.figure_prepare_node", fake_fig)
+    monkeypatch.setattr("math_agent.graph.writer_node", fake_writer)
+    monkeypatch.setattr("math_agent.graph.paper_critic_node", fake_paper)
+    monkeypatch.setattr("math_agent.graph.table_assembler_node", fake_table)
+    monkeypatch.setattr("math_agent.graph.evaluation_node", fake_eval)
+    return calls
+
+
+def test_restart_from_writer_reexecutes_writing(tmp_path, monkeypatch):
+    """paper_critic 停机 → restart --from writer → writer 再跑一次。"""
+    from math_agent.graph import build_graph
+
+    out = tmp_path / "run"
+    out.mkdir()
+    calls = _install_writer_path_fakes(monkeypatch, approve_paper_on=lambda n: n >= 2)
+
+    with _saver_cm(out) as saver:
+        g = build_graph(checkpointer=saver, interrupt_before=["human_review"])
+        g.invoke(MathModelingState(problem="p", output_dir=str(out)), _config())
+        snap = g.get_state(_config())
+    assert snap.next == (), f"应停在 paper 门禁，实际 next={snap.next}"
+    assert calls["writer"] == 1 and calls["paper_critic"] == 1
+    _write_manifest(out)
+
+    def factory(checkpointer=None, interrupt_before=None):
+        return build_graph(checkpointer=checkpointer, interrupt_before=["human_review"])
+
+    monkeypatch.setattr("math_agent.cli.build_graph", factory)
+    result = runner.invoke(
+        app,
+        [
+            "restart", "--out", str(out), "--from", "writer",
+            "--reason", "按 critic 意见重写",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls["writer"] == 2
+    assert calls["paper_critic"] == 2
+    snap2 = _snapshot(out)
+    assert snap2.next == ("human_review",), f"二次放行后应到 human_review，实际 {snap2.next}"
