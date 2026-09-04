@@ -113,7 +113,7 @@ uv run math-agent restart --out runs/<run> --from coder
 ```
 Beacon/
 ├── problems/<题号>/          # 题目档案（导入后的事实源）
-│   ├── source/               # 题面+附件（哈希冻结）
+│   ├── source/               # 题面+附件（哈希冻结；xlsx/pdf 本机保留、不入库）
 │   ├── source/reference/     # S6 登记的参考实现
 │   ├── source/inject/        # 无哈希交代码（S9 可选）
 │   ├── problem.json          # spec
