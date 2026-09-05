@@ -55,7 +55,26 @@ def _build_model_draft(state: MathModelingState) -> ModelVersion | None:
 
 
 def modeler_prepare_node(state: MathModelingState) -> dict:
-    """生成草稿；final 阶段初始化逐步推导队列。"""
+    """生成草稿；final 阶段初始化逐步推导队列。
+
+    ``plan_injected``：已有 final 模型卡，跳过 LLM 与推导链，直接交 model_critic。
+    """
+    if state.plan_injected:
+        final = next(
+            (m for m in reversed(state.model_versions) if m.stage == "final"),
+            state.latest_model(),
+        )
+        if final is None:
+            return {
+                "errors": ["modeler: plan_injected but no final model"],
+                "modeler_phase": "done",
+            }
+        return {
+            "modeler_phase": "done",
+            "modeler_draft": None,
+            "modeler_derivation_queue": [],
+            "modeler_completed_derivations": [],
+        }
     out = _build_model_draft(state)
     if out is None:
         return {"errors": ["modeler: missing problem_blueprint"], "modeler_phase": "done"}

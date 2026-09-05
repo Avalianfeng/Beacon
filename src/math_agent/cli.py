@@ -305,6 +305,7 @@ def _problem_fingerprint(spec: dict) -> str:
 def _write_run_manifest(
     out: Path, thread: str, spec: dict, *, no_interrupt: bool = False,
     brief_sha256: str | None = None,
+    plan_sha256: str | None = None,
     entry: str | None = None,
     evidence: str | None = None,
     model_card: str | None = None,
@@ -319,6 +320,8 @@ def _write_run_manifest(
     }
     if brief_sha256:
         payload["brief_sha256"] = brief_sha256
+    if plan_sha256:
+        payload["plan_sha256"] = plan_sha256
     if entry:
         payload["entry"] = entry
     if evidence:
@@ -348,6 +351,14 @@ def _copy_brief_to_out(out: Path, brief_path: Path) -> None:
     if brief_path.resolve() == target.resolve():
         return
     shutil.copyfile(brief_path, target)
+
+
+def _copy_plan_to_out(out: Path, plan_path: Path) -> None:
+    import shutil
+    target = out / "plan.json"
+    if plan_path.resolve() == target.resolve():
+        return
+    shutil.copyfile(plan_path, target)
 
 def _validate_existing_run_manifest(out: Path, thread: str, spec: dict, force: bool) -> None:
     if force or not (out / "checkpoints.sqlite").is_file():
@@ -415,6 +426,73 @@ brief_app = typer.Typer(
     help=GROUP_HELP["brief"],
 )
 app.add_typer(brief_app, name="brief")
+
+plan_app = typer.Typer(
+    help=GROUP_HELP["plan"],
+)
+app.add_typer(plan_app, name="plan")
+
+
+@plan_app.command("build")
+def plan_build(
+    brief: Path = typer.Option(..., "--brief", exists=True, readable=True),
+    out: Path = typer.Option(Path("plan.json"), "--out"),
+    problem: Path | None = typer.Option(None, "--problem", exists=True, readable=True),
+    force: bool = typer.Option(False, "--force"),
+):
+    """从 brief 合成 plan v0（coverage 带小问/方程锚；变量表与验证区间待补）。"""
+    from math_agent.brief import load_brief
+    from math_agent.plan import build_plan_v0, write_plan
+
+    if out.exists() and not force:
+        raise typer.BadParameter(f"{out} 已存在；覆盖请加 --force", param_hint="--out")
+    try:
+        brief_obj = load_brief(brief)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--brief") from exc
+    title = ""
+    questions: list[str] = []
+    if problem is not None:
+        spec = _read_problem_spec(problem)
+        title = spec.get("title") or ""
+        questions = list(spec.get("questions") or [])
+    card = build_plan_v0(brief_obj, questions=questions, title=title)
+    write_plan(out, card)
+    typer.echo(f"[OK] 已写 plan v0 → {out}")
+    typer.echo("  coverage 已锚到 question_ids / equation_ids；请手补决策变量与验证区间后 plan check。")
+    typer.echo("  敏感数字不以 plan 为准，须由 source/inject/sensitivity.py 图内重跑。")
+
+
+@plan_app.command("check")
+def plan_check_cmd(
+    plan: Path = typer.Option(..., "--plan", exists=True, readable=True),
+    brief: Path | None = typer.Option(None, "--brief", exists=True, readable=True),
+):
+    """零 token：对照 critic / coverage 会打回的字段缺口。"""
+    from math_agent.brief import load_brief
+    from math_agent.plan import check_plan, load_plan
+
+    try:
+        card = load_plan(plan)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        typer.echo(f"[FAIL] 无法读取 plan：{exc}", err=True)
+        raise typer.Exit(1)
+    brief_obj = None
+    if brief is not None:
+        try:
+            brief_obj = load_brief(brief)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--brief") from exc
+    result = check_plan(card, brief=brief_obj)
+    for warn in result.warnings:
+        typer.echo(f"[WARN] {warn}")
+    if result.ok:
+        typer.echo(f"[OK] {plan} 通过 plan check")
+        raise typer.Exit(0)
+    for err in result.errors:
+        typer.echo(f"[FAIL] {err}", err=True)
+    typer.echo(f"plan check 未通过（{len(result.errors)} 项）", err=True)
+    raise typer.Exit(1)
 
 
 reference_app = typer.Typer(
@@ -2424,6 +2502,10 @@ def run(
         None, "--model-card", exists=True, readable=True,
         help="--from writer 可选：覆盖默认最小模型卡的 JSON",
     ),
+    plan: Path | None = typer.Option(
+        None, "--plan", exists=True, readable=True,
+        help="正式入口：注入蓝图+模型卡，从 blueprint_critic 真跑全图",
+    ),
     no_interrupt: bool = typer.Option(False, "--no-interrupt", help="跳过 HITL，直接跑到底"),
     dry_run: bool = typer.Option(
         False,
@@ -2441,10 +2523,22 @@ def run(
         help="允许 coder 节点调用 LLM 生成代码（默认关；无 T-19 冻结资产时需显式开启）",
     ),
 ):
-    """S4：``--dry-run`` 做题默认预检。无该旗标则跑 LangGraph（全图或 ``--from writer``）。"""
+    """S4：``--dry-run`` 做题默认预检。无该旗标则跑 LangGraph（全图 / ``--plan`` / ``--from writer``）。"""
     entry = (from_node or "").strip().lower()
     if entry not in {"", "writer"}:
         raise typer.BadParameter("--from 目前仅支持空（全图）或 writer", param_hint="--from")
+    if plan is not None and entry == "writer":
+        raise typer.BadParameter("--plan 不与 --from writer 同用", param_hint="--plan")
+    if plan is not None and brief is None:
+        raise typer.BadParameter("--plan 需要 --brief（coverage 硬门）", param_hint="--brief")
+    if plan is not None and dry_run:
+        raise typer.BadParameter("--plan 不与 --dry-run 同用；先 plan check", param_hint="--plan")
+    if plan is not None and allow_coder_llm:
+        raise typer.BadParameter("--plan 不与 --allow-coder-llm 同用", param_hint="--plan")
+    if plan is not None and evidence is not None:
+        raise typer.BadParameter("--evidence 仅在 --from writer 时使用", param_hint="--evidence")
+    if plan is not None and model_card is not None:
+        raise typer.BadParameter("--model-card 仅在 --from writer 时使用", param_hint="--model-card")
     if entry == "writer" and evidence is None:
         raise typer.BadParameter("--from writer 需要 --evidence", param_hint="--evidence")
     if entry != "writer" and evidence is not None:
@@ -2459,10 +2553,13 @@ def run(
     spec = _read_problem_spec(problem)
     brief_obj = None
     brief_sha256 = None
+    plan_sha256 = None
     if brief is not None:
         brief_obj = _load_brief_or_raise(brief)
         brief_sha256 = hashlib.sha256(brief.read_bytes()).hexdigest()
         _warn_brief_problem_mismatch(brief_obj, spec)
+    if plan is not None:
+        plan_sha256 = hashlib.sha256(plan.read_bytes()).hexdigest()
     if template not in {"default", "gmcm"}:
         raise typer.BadParameter("template 只能是 default 或 gmcm", param_hint="--template")
 
@@ -2507,8 +2604,29 @@ def run(
         initial = None
         seed_values = bridge_state.model_dump()
         seed_values["figure_phase"] = "done"
+        seed_as_node = "figure_analysis"
+    elif plan is not None:
+        from math_agent.plan import build_plan_state
+        plan_state = build_plan_state(
+            problem_spec=spec,
+            brief=brief_obj,  # type: ignore[arg-type]
+            plan=plan,
+            output_dir=out,
+            problem_text=problem_text,
+        )
+        plan_state.latex_template = template
+        plan_state.school = school or None
+        plan_state.team_id = team_id or None
+        plan_state.members = members or None
+        if no_interrupt:
+            plan_state.human_decision = HumanDecision(approved=True, notes="--no-interrupt")
+        initial = None
+        seed_values = plan_state.model_dump()
+        seed_as_node = "analyst"
+        entry = "plan"
     else:
         seed_values = None
+        seed_as_node = None
         initial = {
             "problem": problem_text or (
                 spec.get("title", "") + "\n" + "\n".join(spec.get("questions", []))
@@ -2539,8 +2657,11 @@ def run(
             _prepare_run_output(out, thread, force)
             if brief_obj is not None and brief is not None:
                 _copy_brief_to_out(out, brief)
+            if plan is not None:
+                _copy_plan_to_out(out, plan)
             _write_run_manifest(
                 out, thread, spec, no_interrupt=no_interrupt, brief_sha256=brief_sha256,
+                plan_sha256=plan_sha256,
                 entry=entry or "analyst",
                 evidence=str(evidence.resolve()) if evidence else None,
                 model_card=str(model_card.resolve()) if model_card else None,
@@ -2548,7 +2669,10 @@ def run(
             clear_failure_report(out)
             try:
                 from math_agent.progress import emit_run_boundary
-                emit_run_boundary(out, attempt=1, mode="run-writer" if entry == "writer" else "run")
+                emit_run_boundary(
+                    out, attempt=1,
+                    mode="run-writer" if entry == "writer" else ("run-plan" if entry == "plan" else "run"),
+                )
             except Exception:
                 pass
             try:
@@ -2561,8 +2685,8 @@ def run(
             with _saver_cm(out) as saver:
                 g = build_graph(checkpointer=saver, interrupt_before=interrupt)
                 config = _config(thread)
-                if entry == "writer":
-                    g.update_state(config, seed_values, as_node="figure_analysis")
+                if seed_as_node is not None:
+                    g.update_state(config, seed_values, as_node=seed_as_node)
                     g.invoke(None, config=config)
                 else:
                     g.invoke(initial, config=config)
@@ -3020,6 +3144,11 @@ def _gate_stop_reason(state: MathModelingState) -> str:
     for err in state.errors:
         if "LLM generate disabled" in err or "allow-coder-llm" in err:
             return "未允许 coder LLM"
+        if "sensitivity:" in err:
+            return "sensitivity 扫参失败"
+
+    if getattr(state, "sensitivity_phase", "") == "stop":
+        return "sensitivity 扫参失败"
 
     reports = state.model_code_reports
     if reports:
@@ -3234,6 +3363,30 @@ def restart(
             err=True,
         )
         raise typer.Exit(1)
+    plan_path = out / "plan.json"
+    if plan_path.is_file() and manifest.get("plan_sha256"):
+        if hashlib.sha256(plan_path.read_bytes()).hexdigest() != manifest["plan_sha256"]:
+            typer.echo(
+                "[REJECT] out/plan.json 与 run_manifest 不匹配；plan 已变，只能全新 run。",
+                err=True,
+            )
+            raise typer.Exit(1)
+    elif not plan_path.is_file() and manifest.get("plan_sha256"):
+        typer.echo(
+            "[REJECT] 原 run 使用了 plan，但 out/plan.json 缺失；无法验证输入不变性。",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    if from_node == "coder" and state.data_dir:
+        from math_agent.frozen_asset import FrozenDetectError, detect_frozen_asset
+        frozen = detect_frozen_asset(state.data_dir)
+        if isinstance(frozen, FrozenDetectError):
+            typer.echo(
+                f"[WARN] 冻结资产校验失败：{frozen.message}\n"
+                "  若刚改过代码，先 `reference add --force` 再 restart --from coder。",
+                err=True,
+            )
 
     # 3.5 自注册监督状态（restart 是前台进程；不写 supervisor.json 会让
     #     watch/status 显示旧 worker 的过期状态——2026-08-21 实证）

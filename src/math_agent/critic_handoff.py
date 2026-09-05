@@ -16,6 +16,8 @@ from math_agent.state import MathModelingState
 def infer_gate_node(state: MathModelingState, gate_reason: str) -> str:
     if "coder LLM" in gate_reason:
         return "coder"
+    if "sensitivity" in gate_reason:
+        return "sensitivity"
     if gate_reason.startswith("hard ") or gate_reason.startswith("code_verify"):
         return "model_code_consistency"
     if "brief_coverage" in gate_reason or "blueprint_critic" in gate_reason:
@@ -24,6 +26,8 @@ def infer_gate_node(state: MathModelingState, gate_reason: str) -> str:
         return "model_critic"
     if "paper" in gate_reason or "论文" in gate_reason:
         return "paper_critic"
+    if getattr(state, "sensitivity_phase", "") == "stop":
+        return "sensitivity"
     # fallback：看最近报告
     if state.model_code_reports:
         last = state.model_code_reports[-1]
@@ -37,11 +41,18 @@ def infer_gate_node(state: MathModelingState, gate_reason: str) -> str:
     return "unknown"
 
 
-def infer_handoff_action(gate_reason: str, gate_node: str) -> str:
+def infer_handoff_action(
+    gate_reason: str,
+    gate_node: str,
+    *,
+    plan_injected: bool = False,
+) -> str:
+    if gate_node == "sensitivity":
+        return "edit_code"
     if gate_node == "model_code_consistency" or "coder LLM" in gate_reason:
         return "edit_code"
     if gate_node in {"blueprint_critic", "model_critic"} or "brief_coverage" in gate_reason:
-        return "edit_brief"
+        return "edit_plan" if plan_injected else "edit_brief"
     if gate_node == "paper_critic":
         if "论文关键 section 为空" in gate_reason:
             return "edit_paper"
@@ -60,8 +71,23 @@ def build_next_commands(
     cmds: list[str] = []
     if handoff_action == "edit_code":
         cmds.append(
+            "# 改 source/reference 或 source/inject/sensitivity.py 后必须重登记"
+        )
+        cmds.append(
+            "math-agent reference add --problem <problem.json> "
+            "--solver problems/<id>/source/reference --entry _entry.py --force"
+        )
+        cmds.append(
             f'math-agent restart --out {out_s} --thread {thread} '
             f'--from coder --reason "手改代码后放行"'
+        )
+    elif handoff_action == "edit_plan":
+        cmds.append(
+            "# 改 plan.json / brief.json 后请新开 run（勿 restart；输入戳会拒）"
+        )
+        cmds.append(
+            "math-agent run --problem <problem.json> --brief <brief.json> "
+            "--plan <plan.json> --out <new-run>"
         )
     elif handoff_action == "edit_brief":
         cmds.append(
@@ -92,7 +118,9 @@ def build_critic_handoff(
     thread: str = "default",
 ) -> dict[str, Any]:
     gate_node = infer_gate_node(state, gate_reason)
-    action = infer_handoff_action(gate_reason, gate_node)
+    action = infer_handoff_action(
+        gate_reason, gate_node, plan_injected=bool(state.plan_injected),
+    )
 
     critic_payload = None
     if gate_node == "blueprint_critic":

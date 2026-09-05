@@ -355,6 +355,8 @@ class MathModelingState(BaseModel):
     paper_review_takeover: bool = False
     # 仅 ``math-agent run --allow-coder-llm`` 置位：无 T-19 冻结资产时允许 coder 调 LLM
     allow_coder_llm: bool = False
+    # ``run --plan``：已播种 analyst/modeler 产出位，modeler_prepare 短路、不跑推导链
+    plan_injected: bool = False
 
     # writer 子流程状态（覆盖语义）。队列空 = 本轮写完。
     # ponytail: 队列即进度，不需要 completed_groups/current_group/pending_rewrite。
@@ -375,7 +377,7 @@ class MathModelingState(BaseModel):
     coder_current_batch: int = 0
     coder_pending_draft: dict = Field(default_factory=dict)
 
-    sensitivity_phase: str = "done"          # done | code_generate | code_execute | interpret
+    sensitivity_phase: str = "done"          # done | code_generate | code_execute | interpret | stop
     sensitivity_plan_dump: dict = Field(default_factory=dict)
     sensitivity_code_attempt: int = 0
     sensitivity_code_error: str = ""

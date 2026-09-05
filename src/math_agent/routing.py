@@ -88,6 +88,8 @@ def after_coder_work(state: MathModelingState) -> str:
 
 
 def after_sensitivity_work(state: MathModelingState) -> str:
+    if state.sensitivity_phase == "stop":
+        return "stop"
     valid = {"code_generate", "code_execute", "interpret"}
     return state.sensitivity_phase if state.sensitivity_phase in valid else "done"
 

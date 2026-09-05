@@ -180,6 +180,9 @@ class BriefCoverageItem(BaseModel):
     brief_item_id: str
     status: Literal["followed", "deviated"]
     reason: str = ""  # deviated 时必须非空
+    # plan 注入骨架：把该条目锚到蓝图小问 / 模型方程 id，避免空 followed。
+    question_ids: list[str] = Field(default_factory=list)
+    equation_ids: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

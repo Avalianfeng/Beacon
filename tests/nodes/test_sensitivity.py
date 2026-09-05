@@ -11,6 +11,7 @@ from math_agent.nodes.sensitivity import (
 def _allow_coder_llm(monkeypatch, request):
     if request.function.__name__ in {
         "test_sensitivity_generate_skips_llm_without_flag",
+        "test_sensitivity_generate_stops_when_plan_injected",
     }:
         monkeypatch.delenv("MATH_AGENT_ALLOW_CODER_LLM", raising=False)
     else:
@@ -521,6 +522,29 @@ def test_generate_falls_back_to_llm_after_code_error(mocker, workdir):
     spy.assert_called_once()
     assert delta["sensitivity_pending_code"] == "print('repaired')"
     assert "unsupported sensitivity parameter" in spy.call_args.args[0]
+
+
+def test_sensitivity_generate_stops_when_plan_injected(mocker, workdir):
+    state = _primary_state(workdir, "K = 0.18\nprint('RESULT: T_max=1')\n")
+    state.plan_injected = True
+    state.sensitivity_plan_dump = SensitivityPlan(runs=[
+        {"parameter": "K", "values": [0.12, 0.18, 0.24], "metric": "T_max"},
+    ]).model_dump()
+    state.allow_coder_llm = False
+    spy = mocker.patch("math_agent.nodes.sensitivity.complete")
+
+    delta = sensitivity_code_generate_node(state)
+
+    spy.assert_not_called()
+    assert delta["sensitivity_phase"] == "stop"
+
+
+def test_after_sensitivity_work_stop():
+    from math_agent.routing import after_sensitivity_work
+    from math_agent.state import MathModelingState
+
+    state = MathModelingState(problem="p", sensitivity_phase="stop")
+    assert after_sensitivity_work(state) == "stop"
 
 
 def test_sensitivity_generate_skips_llm_without_flag(mocker, workdir):

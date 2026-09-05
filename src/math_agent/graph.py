@@ -195,17 +195,17 @@ def build_graph(
     g.add_conditional_edges(
         "sensitivity", after_sensitivity_work,
         {"code_generate": "sensitivity_code_generate", "code_execute": "sensitivity_code_execute",
-         "interpret": "sensitivity_interpret", "done": "figure_pipeline"},
+         "interpret": "sensitivity_interpret", "done": "figure_pipeline", "stop": END},
     )
     g.add_conditional_edges(
         "sensitivity_code_generate", after_sensitivity_work,
         {"code_generate": "sensitivity_code_generate", "code_execute": "sensitivity_code_execute",
-         "interpret": "sensitivity_interpret", "done": "figure_pipeline"},
+         "interpret": "sensitivity_interpret", "done": "figure_pipeline", "stop": END},
     )
     g.add_conditional_edges(
         "sensitivity_code_execute", after_sensitivity_work,
         {"code_generate": "sensitivity_code_generate", "code_execute": "sensitivity_code_execute",
-         "interpret": "sensitivity_interpret", "done": "figure_pipeline"},
+         "interpret": "sensitivity_interpret", "done": "figure_pipeline", "stop": END},
     )
     g.add_edge("sensitivity_interpret", "figure_pipeline")
     g.add_conditional_edges(

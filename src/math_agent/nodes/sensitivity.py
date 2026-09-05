@@ -308,6 +308,11 @@ _SENSITIVITY_LLM_DISABLED_MSG = (
 )
 
 
+def _sensitivity_fail_phase(state: MathModelingState) -> str:
+    """``run --plan`` 上扫参失败必须停机；旧路径保持 phase=done 滑走以兼容。"""
+    return "stop" if state.plan_injected else "done"
+
+
 def sensitivity_plan_node(state: MathModelingState) -> dict:
     """Ask the model for a sensitivity scan plan."""
     final = next((m for m in reversed(state.model_versions) if m.stage == "final"), None)
@@ -342,9 +347,10 @@ def sensitivity_code_generate_node(state: MathModelingState) -> dict:
                 "sensitivity_phase": "code_execute",
             }
         if not (state.allow_coder_llm or allow_coder_llm()):
+            phase = _sensitivity_fail_phase(state)
             return {
                 "errors": [_SENSITIVITY_LLM_DISABLED_MSG],
-                "sensitivity_phase": "done",
+                "sensitivity_phase": phase,
             }
         final = next(
             (model for model in reversed(state.model_versions) if model.stage == "final"),
@@ -390,7 +396,7 @@ def sensitivity_code_generate_node(state: MathModelingState) -> dict:
                 }
             return {
                 "errors": [f"sensitivity: code generation failed: {str(exc)[:500]}"],
-                "sensitivity_phase": "done",
+                "sensitivity_phase": _sensitivity_fail_phase(state),
             }
     return {"sensitivity_pending_code": code_out.code, "sensitivity_phase": "code_execute"}
 
@@ -418,7 +424,8 @@ def sensitivity_code_execute_node(state: MathModelingState) -> dict:
             }
         return {
             "errors": [f"sensitivity: code execution failed: {result.stderr[:500]}"],
-            "sensitivity_phase": "done", "sensitivity_pending_code": "",
+            "sensitivity_phase": _sensitivity_fail_phase(state),
+            "sensitivity_pending_code": "",
         }
 
     output_failure = detect_output_failure(result.stdout, result.stderr)
@@ -458,7 +465,8 @@ def sensitivity_code_execute_node(state: MathModelingState) -> dict:
             }
         return {
             "errors": [f"sensitivity: output validation failed: {reason[:500]}"],
-            "sensitivity_phase": "done", "sensitivity_pending_code": "",
+            "sensitivity_phase": _sensitivity_fail_phase(state),
+            "sensitivity_pending_code": "",
         }
     for run in aligned:
         run.figure_path = _render_verified_figure(run, workdir / f"attempt_{attempt}")

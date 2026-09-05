@@ -34,6 +34,7 @@ def test_handoff_edit_code_for_consistency(tmp_path: Path):
     assert payload["handoff_action"] == "edit_code"
     assert payload["consistency"]["issues"] == ["missing primary"]
     assert any("restart" in c and "coder" in c for c in payload["next_commands"])
+    assert any("reference add" in c and "--force" in c for c in payload["next_commands"])
     path = write_critic_handoff(tmp_path, payload)
     assert path.is_file()
     assert (tmp_path / "critic-handoff.md").is_file()
@@ -63,3 +64,22 @@ def test_handoff_edit_paper_for_paper_critic(tmp_path: Path):
     assert payload["critic"]["issues"][0]["problem"] == "缺对照"
     assert any("--from writer" in c for c in payload["next_commands"])
     assert infer_handoff_action("brief_coverage 缺口", "blueprint_critic") == "edit_brief"
+    assert infer_handoff_action(
+        "blueprint_critic 未通过", "blueprint_critic", plan_injected=True,
+    ) == "edit_plan"
+
+
+def test_handoff_edit_plan_when_injected(tmp_path: Path):
+    state = MathModelingState(
+        problem="p",
+        output_dir=str(tmp_path),
+        plan_injected=True,
+        critic_reports=[
+            CriticReport(target="modeler", score=3, approved=False, stage="final"),
+        ],
+    )
+    payload = build_critic_handoff(
+        state, out=tmp_path, gate_reason="model_critic 未通过",
+    )
+    assert payload["handoff_action"] == "edit_plan"
+    assert any("--plan" in c for c in payload["next_commands"])
