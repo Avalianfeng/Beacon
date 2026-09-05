@@ -14,7 +14,7 @@ ROOT_HELP = """\
   S4 预检     math-agent run --dry-run
   S5 验证     math-agent reference verify|recertify
   S6 写作     math-agent run --plan plan.json --brief …（先 plan check + reference add + inject/sensitivity.py；应急才 --from writer）
-  S7 评审     math-agent review-check；停机交棒 math-agent critic-handoff
+  S7 评审     math-agent review-check（--strict 先核 RESULT 键，exit 1 见定稿 00 §7）；停机交棒 math-agent critic-handoff
   S8 人审     math-agent accept
 
 可选遗留执行器（S9；不作无人值守主路径，D-005）：
