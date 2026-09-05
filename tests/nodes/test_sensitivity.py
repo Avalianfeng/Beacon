@@ -585,3 +585,4 @@ def test_sensitivity_generate_uses_inject_file(mocker, workdir):
     spy.assert_not_called()
     assert delta["sensitivity_phase"] == "code_execute"
     assert "parameter=K" in delta["sensitivity_pending_code"]
+    assert "data_dir" in delta["sensitivity_pending_code"]

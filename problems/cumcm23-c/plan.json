@@ -5,6 +5,21 @@
       "statement": "销量是需求代理；有界易腐；可售=窗内有销；一周成本未知用窗中心",
       "rationale": "required_discussions:disc-assumptions",
       "sensitivity_relevant": false
+    },
+    {
+      "statement": "粘性售价：标价钉死，实际批发成本冲击 δ∈{-0.2,-0.1,0,0.1,0.2}；扫参参数名必须用 成本冲击 (cost_shock)，指标 q2_week_profit",
+      "rationale": "sensitivity:cost_shock",
+      "sensitivity_relevant": true
+    },
+    {
+      "statement": "加成取近90非打折分位 25/37.5/50/62.5/75；扫参参数名必须用 加成分位 (markup_p)，指标 q2_week_profit",
+      "rationale": "sensitivity:markup_p",
+      "sensitivity_relevant": true
+    },
+    {
+      "statement": "品类损耗率整体缩放 s∈{0.8,0.9,1.0,1.1,1.2}，q=d̂/(1-sλ)；扫参参数名必须用 损耗率缩放 (loss_scale)，指标 q2_week_profit",
+      "rationale": "sensitivity:loss_scale",
+      "sensitivity_relevant": true
     }
   ],
   "model_versions": [
@@ -254,6 +269,21 @@
         "statement": "销量是需求代理；有界易腐；可售=窗内有销；一周成本未知用窗中心",
         "rationale": "required_discussions:disc-assumptions",
         "sensitivity_relevant": false
+      },
+      {
+        "statement": "粘性售价：标价钉死，实际批发成本冲击 δ∈{-0.2,-0.1,0,0.1,0.2}；扫参参数名必须用 成本冲击 (cost_shock)，指标 q2_week_profit",
+        "rationale": "sensitivity:cost_shock",
+        "sensitivity_relevant": true
+      },
+      {
+        "statement": "加成取近90非打折分位 25/37.5/50/62.5/75；扫参参数名必须用 加成分位 (markup_p)，指标 q2_week_profit",
+        "rationale": "sensitivity:markup_p",
+        "sensitivity_relevant": true
+      },
+      {
+        "statement": "品类损耗率整体缩放 s∈{0.8,0.9,1.0,1.1,1.2}，q=d̂/(1-sλ)；扫参参数名必须用 损耗率缩放 (loss_scale)，指标 q2_week_profit",
+        "rationale": "sensitivity:loss_scale",
+        "sensitivity_relevant": true
       }
     ],
     "problem_domains": [],

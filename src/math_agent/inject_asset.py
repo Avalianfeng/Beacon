@@ -117,3 +117,21 @@ def read_inject_sensitivity(data_dir: str | Path | None) -> str | None:
     except OSError:
         return None
     return text if text.strip() else None
+
+
+def wrap_inject_sensitivity(code: str, data_dir: str | Path | None) -> str:
+    """在独立编译单元里 exec 扫参脚本，并注入 ``data_dir``。
+
+    不能把赋值语句拼到源码开头：inject 脚本常有 ``from __future__``。
+    """
+    if not data_dir:
+        return code
+    data_path = Path(data_dir).resolve()
+    data_dir_posix = data_path.as_posix()
+    file_posix = (data_path / "inject" / _SENSITIVITY_NAME).as_posix()
+    return (
+        "from pathlib import Path\n"
+        f"_ns = {{'data_dir': Path({data_dir_posix!r}), "
+        f"'__name__': 'inject_sensitivity', '__file__': {file_posix!r}}}\n"
+        f"exec({code!r}, _ns)\n"
+    )

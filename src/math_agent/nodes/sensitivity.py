@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from math_agent.config import MAX_CODE_RETRIES, MODEL_ROUTING, allow_coder_llm
-from math_agent.inject_asset import read_inject_sensitivity
+from math_agent.inject_asset import read_inject_sensitivity, wrap_inject_sensitivity
 from math_agent.llm import complete
 from math_agent.prompts.sensitivity import (
     PLAN_SYSTEM, CODE_SYSTEM, INTERPRET_SYSTEM,
@@ -94,7 +94,11 @@ def _canonical_primary(state: MathModelingState) -> tuple[str, dict[str, float]]
     return artifact.code, extract_numeric_results(artifact.stdout).get("ours", {})
 
 
-_SENSITIVITY_METRIC_ALIASES: dict[str, str] = {}
+_SENSITIVITY_METRIC_ALIASES: dict[str, str] = {
+    "week_profit": "q2_week_profit",
+    "周收益代理": "q2_week_profit",
+    "q2周收益代理": "q2_week_profit",
+}
 
 
 def _center_alignment_error(
@@ -343,7 +347,9 @@ def sensitivity_code_generate_node(state: MathModelingState) -> dict:
         inject_code = read_inject_sensitivity(state.data_dir)
         if inject_code:
             return {
-                "sensitivity_pending_code": inject_code,
+                "sensitivity_pending_code": wrap_inject_sensitivity(
+                    inject_code, state.data_dir
+                ),
                 "sensitivity_phase": "code_execute",
             }
         if not (state.allow_coder_llm or allow_coder_llm()):

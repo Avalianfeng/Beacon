@@ -13,6 +13,7 @@ from math_agent.inject_asset import (
     build_inject_wrapper,
     detect_inject_asset,
     read_inject_sensitivity,
+    wrap_inject_sensitivity,
 )
 from math_agent.nodes.coder import (
     coder_execute_node,
@@ -125,6 +126,16 @@ def test_read_inject_sensitivity(tmp_path: Path):
     assert read_inject_sensitivity(tmp_path / "missing") is None
     path.write_text("   \n", encoding="utf-8")
     assert read_inject_sensitivity(data) is None
+
+
+def test_wrap_inject_sensitivity_injects_data_dir(tmp_path: Path):
+    data = tmp_path / "source"
+    data.mkdir()
+    wrapped = wrap_inject_sensitivity("print(data_dir.exists())\n", data)
+    assert "from pathlib import Path" in wrapped
+    assert data.resolve().as_posix() in wrapped
+    assert "exec(" in wrapped
+    assert wrap_inject_sensitivity("print(1)\n", None) == "print(1)\n"
 
 
 def test_prepare_inject_queue_one_primary(tmp_path: Path):
