@@ -459,6 +459,22 @@ def writer_section_node(state: MathModelingState) -> dict:
                 setattr(paper, field, getattr(section_out, field))
             break
     ensure_figure_citations(paper, unique_figures(list(state.figures or [])))
+    # 引图会把 figure.analysis 拼进正文；图说常残留扫参机读名，须再洗一遍
+    for field in (
+        "abstract",
+        "problem_restatement",
+        "assumptions",
+        "notation",
+        "model_section",
+        "solution",
+        "sensitivity",
+        "conclusion",
+        "references",
+    ):
+        cleaned, _warnings = _clean_forbidden_words(
+            str(getattr(paper, field, "") or ""), field,
+        )
+        setattr(paper, field, cleaned)
 
     return {"paper": paper, "writer_section_queue": queue}
 

@@ -385,6 +385,38 @@ def test_writer_retries_once_when_section_is_below_content_budget(mocker):
     assert delta["paper"].solution.startswith("VAL_solution")
 
 
+def test_writer_recleans_after_figure_citation_injection(mocker):
+    """引图拼入的 analysis 若带扫参机读名，落盘前须再洗掉。"""
+    state = _rich_state()
+    state.writer_iteration = 1
+    state.writer_outline_dump = WriterOutline(sensitivity="敏感性锚点").model_dump()
+    state.writer_section_queue = ["sensitivity"]
+    state.figures = [
+        FigureArtifact(
+            path="sensitivity_markup.png",
+            purpose="敏感性分析：加成分位",
+            caption="加成分位扫描",
+            analysis="markup_p 从 25 升至 75 时利润上升，loss_scale 增大则利润下降。",
+        ),
+    ]
+    body = (
+        "成本冲击对周利润呈负向线性，"
+        + "甲" * 200
+    )
+    mocker.patch(
+        "math_agent.nodes.writer.complete",
+        return_value=schema_for_group("sensitivity")(sensitivity=body),
+    )
+
+    delta = writer_section_node(state)
+
+    text = delta["paper"].sensitivity
+    assert "markup_p" not in text
+    assert "loss_scale" not in text
+    assert "加成分位" in text
+    assert "损耗率缩放" in text
+
+
 def test_writer_keeps_short_sensitivity_when_no_formal_runs(mocker):
     state = _rich_state()
     state.writer_iteration = 1

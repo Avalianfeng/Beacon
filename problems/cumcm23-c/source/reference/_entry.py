@@ -129,6 +129,16 @@ print(
 )
 print(
     f"RESULT: baseline=ours blend_mae={blend_mae:.4f} "
+    f"wd90_mae={wd90_mae:.4f} yoy_mae={yoy_mae:.4f} "
     f"q2_week_profit={q2_profit:.4f} q2_week_qty={q2_qty:.4f} "
     f"q3_n={q3_n} q3_profit={q3_profit:.4f} q3_qty={q3_qty:.4f}"
+)
+# 独立 RESULT 对照：与 ours 共享 blend_mae 且数值不同；每行 ≥3 指标（coder 主方案门）
+print(
+    f"RESULT: baseline=WD90 blend_mae={wd90_mae:.4f} "
+    f"wd90_mae={wd90_mae:.4f} yoy_mae={yoy_mae:.4f}"
+)
+print(
+    f"RESULT: baseline=YOY blend_mae={yoy_mae:.4f} "
+    f"wd90_mae={wd90_mae:.4f} yoy_mae={yoy_mae:.4f}"
 )

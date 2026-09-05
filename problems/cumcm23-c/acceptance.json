@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "problem_id": "cumcm23-c",
+  "paper_path": "runs\\cumcm23-c-graph-r3\\paper.md",
+  "paper_sha256": "2dd199bb385213426990c8fd761745d94d58c42491109a5fd0d251bc706aed87",
+  "approved": true,
+  "actor": "assumed",
+  "notes": "假设本轮 accept：对照门已绿；页数19/Overfull 仍黄",
+  "at": "2026-09-05T12:11:00.474051+00:00"
+}
