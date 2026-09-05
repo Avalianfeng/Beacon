@@ -28,7 +28,7 @@ class _RunCtx:
 
 
 def _build_paper_numbers(ctx: _RunCtx) -> list[str] | None:
-    """paper 或 traceability 任一存在才运行；--evidence 展开 + --traceability + --strict。"""
+    """paper 或 traceability 任一存在才运行；写后对账用 --key-results（只核 RESULT 键）。"""
     if ctx.paper is None and ctx.traceability is None:
         return None
     argv: list[str] = []
@@ -39,6 +39,8 @@ def _build_paper_numbers(ctx: _RunCtx) -> list[str] | None:
         argv.extend(str(p) for p in ctx.evidence)
     if ctx.traceability is not None:
         argv.extend(["--traceability", str(ctx.traceability)])
+    if ctx.paper is not None and ctx.evidence:
+        argv.append("--key-results")
     if ctx.strict:
         argv.append("--strict")
     return argv

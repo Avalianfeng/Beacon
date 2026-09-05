@@ -1,0 +1,13 @@
+{
+  "problem_id": "fixture-keys",
+  "result": {
+    "ours": {
+      "blend_mae": 12.9643,
+      "q2_week_profit": 3502.5203,
+      "q3_n": 28.0
+    }
+  },
+  "q_lines": [
+    "RESULT: baseline=ours blend_mae=12.9643 q2_week_profit=3502.5203 q3_n=28"
+  ]
+}

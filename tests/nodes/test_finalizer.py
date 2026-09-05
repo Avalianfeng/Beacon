@@ -217,6 +217,41 @@ def test_finalizer_rejects_baseline_with_mixed_result_roles(workdir):
     assert any("有效对照方案仅 1 个" in warning for warning in report.warnings)
 
 
+def test_finalizer_counts_structured_inline_baselines(workdir):
+    """同一 stdout 里两条可比较的 RESULT 对照算有效对照。"""
+    state = _ready_state(workdir)
+    state.code_artifacts = [CodeArtifact(
+        purpose="主方案", code="", success=True,
+        stdout=(
+            "RESULT: baseline=ours total_cost=80 service_rate=0.95 vehicles=7\n"
+            "RESULT: baseline=no_schedule total_cost=120 service_rate=0.80 vehicles=8\n"
+            "RESULT: baseline=greedy total_cost=100 service_rate=0.90 vehicles=7\n"
+        ),
+    )]
+
+    report = finalizer_node(state)["finalization"]
+
+    assert not any("有效对照方案" in warning for warning in report.warnings)
+    assert report.status == "completed"
+
+
+def test_finalizer_ignores_duplicate_inline_baseline(workdir):
+    """对照与主方案数值完全相同，不算有效对照。"""
+    state = _ready_state(workdir)
+    state.code_artifacts = [CodeArtifact(
+        purpose="主方案", code="", success=True,
+        stdout=(
+            "RESULT: baseline=ours total_cost=80 service_rate=0.95 vehicles=7\n"
+            "RESULT: baseline=clone total_cost=80 service_rate=0.95 vehicles=7\n"
+        ),
+    )]
+
+    report = finalizer_node(state)["finalization"]
+
+    assert report.status == "degraded"
+    assert any("有效对照方案仅 0 个" in warning for warning in report.warnings)
+
+
 def test_finalizer_marks_severe_latex_overflow_degraded(workdir):
     state = _ready_state(workdir)
     (workdir / "compile.log").write_text(

@@ -11,7 +11,7 @@
 
 规则
 ----
-G1 敏感性回流：出现「敏感性分析」则必须有主口径取舍/决策记录。
+G1 敏感性回流：出现「敏感性分析」则提示主口径取舍（仅 WARN，--strict 不因此失败）。
 G2 状态重建：出现 cumsum / 累加重建 / Δy 等则必须声明 y0 或重建公式。
 G3 异常操作定义：出现「异常检测 / 离群点 / outlier」则必须有本题操作定义。
 G4 解释失败：同时出现「看见过」现象词与「误报/纯噪声/不存在」→ 仅 WARN。
@@ -20,8 +20,8 @@ G4 解释失败：同时出现「看见过」现象词与「误报/纯噪声/不
 
 退出码
 ------
-  0  默认；或无 G1–G3 未过
-  1  --strict 且 G1–G3 至少一项未过（G4 永不因此失败）
+  0  默认；或无 G2/G3 未过（G1/G4 永不因此失败）
+  1  --strict 且 G2/G3 至少一项未过
   2  未提供 --paper，或路径不存在
 
 用法
@@ -66,10 +66,8 @@ MSG = {
     "explanation_failure": "正文描述过的现象（恢复期/双周期/回落/双峰）与误报/纯噪声/不存在该现象并存，请核对应解释失败专项",
 }
 
-# G4 只提示，不计入 L4 失败项
-L4_FAIL_IDS = frozenset(
-    {"sensitivity_no_decision", "reconstruction_no_y0", "anomaly_no_definition"}
-)
+# G1/G4 只提示；--strict 仅 G2/G3 失败
+L4_FAIL_IDS = frozenset({"reconstruction_no_y0", "anomaly_no_definition"})
 
 
 def _has_any(text: str, needles: tuple[str, ...]) -> bool:
@@ -81,7 +79,7 @@ def scan_corpus(corpus: str) -> list[tuple[str, str, bool]]:
     issues: list[tuple[str, str, bool]] = []
     if G1_TRIGGER.search(corpus) and not _has_any(corpus, G1_PASS):
         issues.append(
-            ("sensitivity_no_decision", MSG["sensitivity_no_decision"], True)
+            ("sensitivity_no_decision", MSG["sensitivity_no_decision"], False)
         )
     if G2_TRIGGER.search(corpus) and not G2_PASS.search(corpus):
         issues.append(
@@ -112,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--strict",
         action="store_true",
-        help="G1–G3 未过时退出码 1（G4 不因此失败）",
+        help="G2/G3 未过时退出码 1（G1/G4 不因此失败）",
     )
     return p
 

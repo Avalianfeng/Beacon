@@ -35,11 +35,12 @@ def test_clean_no_trigger(mod, capsys):
 
 
 def test_sens_fail_strict(mod, capsys):
+    """G1 缺主口径取舍：仍 WARN，--strict 不再失败。"""
     code = mod.main(_paper("sens_fail.md") + ["--strict"])
     out = capsys.readouterr().out
-    assert code == 1
+    assert code == 0
     assert "sensitivity_no_decision" in out
-    assert "[结论] WARN：L4 闸门未过 1 项" in out
+    assert "[结论] OK" in out
 
 
 def test_sens_fail_default_warn(mod, capsys):

@@ -185,3 +185,28 @@ def test_cli_subprocess_exit_codes():
                          "--allow", "216203,127985,214853,126635,250000,350000"],
                         capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r3.returncode == 0
+
+
+def test_key_results_ignores_extra_paper_numbers(mod, capsys):
+    """写后对账：关键 RESULT 在正文即过；年份/题面约束不挡 --strict。"""
+    rc = mod.main([
+        "--paper", *_paths("paper_keys_ok.md"),
+        "--evidence", *_paths("evidence_keys.json"),
+        "--key-results", "--strict",
+    ])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "关键 RESULT" in out
+    assert "[结论] OK" in out
+    assert "2023" in out or "不挡" in out
+
+
+def test_key_results_strict_fails_when_key_missing(mod, capsys):
+    rc = mod.main([
+        "--paper", *_paths("paper_keys_missing.md"),
+        "--evidence", *_paths("evidence_keys.json"),
+        "--key-results", "--strict",
+    ])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "3502.5203" in out

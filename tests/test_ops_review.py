@@ -67,6 +67,19 @@ def test_run_review_with_brief_records_sha256():
     assert result["exit_code"] == 0
 
 
+def test_run_review_key_results_strict_ignores_years():
+    """review-check --strict 只核关键 RESULT，论文里的年份不挡闸。"""
+    result = run_review(
+        paper=FIXTURES / "paper_keys_ok.md",
+        evidence=[FIXTURES / "evidence_keys.json"],
+        strict=True,
+    )
+    numbers = next(t for t in result["tools"] if t["name"] == "check_paper_numbers")
+    assert numbers["exit_code"] == 0
+    assert result["exit_code"] == 0
+    assert result["ok"] is True
+
+
 def test_run_review_hard_redline_fails_without_strict(tmp_path):
     paper = FIXTURES / "paper_clean.md"
     evidence = [FIXTURES / "evidence_a.txt"]

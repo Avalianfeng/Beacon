@@ -19,6 +19,11 @@
     放行）者记入"未溯源清单"（文件、行号、行内上下文约 40 字符）。
     默认退出码 0（WARN）；--strict 时存在未溯源数字则退出码 1。
 
+  功能 A'（--key-results，写后对账）
+    只核证据里的关键 RESULT（JSON 的 result.* 数值，以及 RESULT: baseline|scenario|method|config= 行）。
+    这些数必须出现在论文中；论文里多出来的年份/题面约束/参考文献年只 WARN，--strict 不因此失败。
+    缺关键 RESULT 且 --strict → 退出码 1。review-check 走这一路。
+
   功能 B（附录 A 溯源核对，可选模式）
     --traceability 给定附录 A 数值溯源表 md，解析"文件名 + 行号/行号范围"引用，
     读取被引用文件对应行，断言该行内容包含所声称的数字，逐条输出 通过/失败/无法解析。
@@ -129,6 +134,68 @@ def load_evidence_whitelist(paths):
     return whitelist, total_tokens, warnings
 
 
+_KEY_RESULT_LINE_RE = re.compile(
+    r"^RESULT:\s*(?:baseline|scenario|method|config)=\S+\s+(.+)$",
+    re.MULTILINE,
+)
+_KEY_PAIR_RE = re.compile(r"\w+=(-?\d+\.?\d*(?:[eE][+-]?\d+)?)")
+
+
+def _token_aliases(token):
+    """整数形浮点互认：28.0 ↔ 28。"""
+    aliases = {token}
+    if re.fullmatch(r"-?\d+\.0+", token):
+        aliases.add(token.split(".")[0])
+    elif re.fullmatch(r"-?\d+", token):
+        aliases.add(token + ".0")
+    return aliases
+
+
+def _add_numeric_token(keys, raw):
+    for tok in extract_number_tokens(str(raw)):
+        keys.update(_token_aliases(tok))
+
+
+def _add_result_line_values(keys, text):
+    if not text:
+        return
+    for match in _KEY_RESULT_LINE_RE.finditer(text.replace("\u2212", "-")):
+        for pair in _KEY_PAIR_RE.finditer(match.group(1)):
+            _add_numeric_token(keys, pair.group(1))
+
+
+def extract_key_result_tokens(paths):
+    """从证据中提取关键 RESULT 数字（只认 result.* 与 RESULT 协议行）。"""
+    keys = set()
+    warnings = []
+    for path in paths:
+        try:
+            text = _read_text(path)
+        except OSError as exc:
+            warnings.append("无法读取证据文件：%s（%s）" % (path, exc))
+            continue
+        if path.lower().endswith(".json"):
+            try:
+                obj = json.loads(text)
+            except (ValueError, TypeError) as exc:
+                warnings.append("证据文件 %s 不是合法 JSON，按纯文本提取 RESULT 行（%s）" % (path, exc))
+                _add_result_line_values(keys, text)
+                continue
+            result = obj.get("result") if isinstance(obj, dict) else None
+            if isinstance(result, dict):
+                for metrics in result.values():
+                    if isinstance(metrics, dict):
+                        for value in metrics.values():
+                            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                                _add_numeric_token(keys, value)
+            for line in (obj.get("q_lines") or []) if isinstance(obj, dict) else []:
+                if isinstance(line, str):
+                    _add_result_line_values(keys, line)
+        else:
+            _add_result_line_values(keys, text)
+    return keys, warnings
+
+
 def _context(line, token, width=20):
     """取 token 所在行的行内上下文（token 前后各约 width 字符）。"""
     idx = line.find(token)
@@ -235,6 +302,64 @@ def run_whitelist_check(paper_pats, evid_pats, allow_csv, strict, verbose):
               "--allow 可放行，--strict 时退出码为 1）" % un_all)
         return 1 if strict else 0
     print("\n[结论] OK：论文全部数字均可在证据白名单中找到溯源。")
+    return 0
+
+
+def run_key_results_check(paper_pats, evid_pats, strict):
+    """只核关键 RESULT 是否出现在论文；额外数字只 WARN。"""
+    papers = _expand(paper_pats, "论文文件")
+    evidences = _expand(evid_pats, "证据文件")
+    if not evidences:
+        print("[错误] 没有可用的证据文件，无法提取关键 RESULT。", file=sys.stderr)
+        return 2
+    if not papers:
+        print("[错误] 没有可用的论文文件。", file=sys.stderr)
+        return 2
+
+    keys, warns = extract_key_result_tokens(evidences)
+    for warning in warns:
+        print("[警告] %s" % warning, file=sys.stderr)
+
+    print("\n===== 功能 A'：关键 RESULT 对账 =====")
+    if not keys:
+        print("[结论] WARN：证据中没有 result.* / RESULT 协议行，跳过关键数核对。")
+        return 0
+
+    paper_tokens = set()
+    paper_text = []
+    for path in papers:
+        text = _read_text(path)
+        paper_text.append(text)
+        paper_tokens.update(extract_number_tokens(text))
+    paper_tokens.update({alias for tok in paper_tokens for alias in _token_aliases(tok)})
+
+    missing = sorted(k for k in keys if k not in paper_tokens)
+    print("关键 RESULT token %d 个；论文未覆盖 %d 个" % (len(keys), len(missing)))
+    if missing:
+        print("[缺失清单] " + ", ".join(missing))
+
+    whitelist, _total, _w = load_evidence_whitelist(evidences)
+    extra_n = 0
+    for path, text in zip(papers, paper_text):
+        extra = [
+            (i, tok, _context(line, tok))
+            for i, line in enumerate(text.splitlines(), 1)
+            for tok in extract_number_tokens(line)
+            if tok not in whitelist and tok not in keys
+        ]
+        extra_n += len(extra)
+        if extra:
+            print("\n[论文额外数字，不挡 --strict] %s" % path)
+            for lineno, tok, ctx in extra[:30]:
+                print("  %s:%d | %s | %s" % (path, lineno, tok, ctx))
+            if len(extra) > 30:
+                print("  … 其余 %d 条省略" % (len(extra) - 30))
+
+    if missing:
+        print("\n[结论] WARN：缺 %d 个关键 RESULT（--strict 时退出码为 1）" % len(missing))
+        return 1 if strict else 0
+    extra_note = "；另有 %d 个论文数字不在证据白名单（年份/题面/文献等，不挡闸）" % extra_n if extra_n else ""
+    print("\n[结论] OK：关键 RESULT 均在正文%s。" % extra_note)
     return 0
 
 
@@ -468,7 +593,9 @@ def build_parser():
     p.add_argument("--allow", default="",
                    help="逗号分隔的放行数字（人工确认的噪音，如 2026,2001,2010）")
     p.add_argument("--strict", action="store_true",
-                   help="存在未溯源数字（或功能 B 失败条目）时退出码为 1")
+                   help="功能 A 未溯源、功能 A' 缺关键 RESULT、或功能 B 失败时退出码为 1")
+    p.add_argument("--key-results", action="store_true",
+                   help="只核证据关键 RESULT 是否出现在论文（写后对账）；额外数字不挡 --strict")
     p.add_argument("--verbose", action="store_true", help="打印匹配明细与白名单大小")
     p.add_argument("--traceability", default=None, metavar="附录A.md",
                    help="附录 A 数值溯源表 md（功能 B 溯源核对）")
@@ -490,8 +617,12 @@ def main(argv=None):
 
     exit_code = 0
     if args.paper:
-        exit_code = max(exit_code, run_whitelist_check(
-            args.paper, args.evidence, args.allow, args.strict, args.verbose))
+        if args.key_results:
+            exit_code = max(exit_code, run_key_results_check(
+                args.paper, args.evidence, args.strict))
+        else:
+            exit_code = max(exit_code, run_whitelist_check(
+                args.paper, args.evidence, args.allow, args.strict, args.verbose))
     if args.traceability:
         exit_code = max(exit_code, run_traceability(
             args.traceability, args.strict, args.verbose))

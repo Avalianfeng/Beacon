@@ -25,6 +25,34 @@ from math_agent.tools.runner import (
 )
 
 
+_INLINE_BASELINE_EPS = 1e-9
+
+
+def _inline_baseline_categories(
+    parsed: dict[str, dict[str, float]],
+    ours: dict[str, float],
+) -> set[str]:
+    """同一 stdout 里、与主方案可比较的对照标识。
+
+    结构条件：独立 RESULT 标识（非 ours）、有共同指标、至少一项数值不同、非全零。
+    """
+    found: set[str] = set()
+    if not ours:
+        return found
+    for ident, metrics in parsed.items():
+        if ident == "ours" or not metrics:
+            continue
+        if all(abs(value) <= 1e-12 for value in metrics.values()):
+            continue
+        shared = set(metrics) & set(ours)
+        if not shared:
+            continue
+        if all(abs(metrics[key] - ours[key]) <= _INLINE_BASELINE_EPS for key in shared):
+            continue
+        found.add(f"inline:{ident}")
+    return found
+
+
 def _atomic_json(path: Path, payload: dict) -> None:
     """同目录临时文件 + replace，避免进程被杀后留下半截 JSON。"""
     tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
@@ -367,9 +395,12 @@ def _collect_quality_warnings(state: MathModelingState, out: Path) -> list[str]:
         if not valid:
             continue
         if artifact.category == "figure" and artifact.evidence_role == "primary":
-            if set(parsed) != {"ours"}:
+            if "ours" not in parsed:
                 continue
             valid_main += 1
+            valid_baseline_categories.update(
+                _inline_baseline_categories(parsed, parsed["ours"])
+            )
         elif (
             artifact.category.startswith("baseline:")
             and artifact.evidence_role == "baseline"
