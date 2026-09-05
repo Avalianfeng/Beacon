@@ -13,7 +13,7 @@ ROOT_HELP = """\
   S3 方向     math-agent brief init|check；收束后 math-agent plan build|check
   S4 预检     math-agent run --dry-run
   S5 验证     math-agent reference verify|recertify
-  S6 写作     math-agent run --plan plan.json --brief …（先 reference add；应急 --from writer）
+  S6 写作     math-agent run --plan plan.json --brief …（先 plan check + reference add + inject/sensitivity.py；应急才 --from writer）
   S7 评审     math-agent review-check；停机交棒 math-agent critic-handoff
   S8 人审     math-agent accept
 

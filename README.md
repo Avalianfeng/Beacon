@@ -125,12 +125,13 @@ uv run math-agent watch --out runs/<run>
 problems/<题>/
   problem.md|json   data_profile.md     ← CLI
   exploration.md                        ← 研究收束后人读，不是对撞地图
+  交接-beacon.md                        ← 收束后按 13附 出
   _派发/{本地,diff,研究}.md
   eda/   source/                        ← xlsx/pdf 本机保留、不入库
-  source/reference/ | source/inject/    ← 登记代码（插座）
+  source/reference/ | source/inject/    ← 登记代码与图内扫参
   认知地图集/外部|本地|diff|清点
   _研究日志.md  解题说明.md  经验与坑.md
-  brief.json
+  brief.json   plan.json
 ```
 
 `runs/` 是某次执行产物，不要当题目档案改。
@@ -197,7 +198,7 @@ python scripts/audit_docs.py
 <details>
 <summary><strong>还能当上游那样一键出 PDF 吗？</strong></summary>
 
-可以跑图，但不作为「一键出赛」承诺。无登记代码时必须 `--allow-coder-llm`。竞赛路径是：本地算明白 → brief + 登记 → writer 出 `paper.md`。
+可以跑图，但不作为「一键出赛」承诺。无登记代码时必须 `--allow-coder-llm`。竞赛路径是：本地算明白 → brief + plan + 登记 → **`run --plan`** 出 `paper.md`。
 </details>
 
 <details>
