@@ -90,8 +90,14 @@ def build_anchored_coverage(brief: ModelingBrief) -> list[BriefCoverageItem]:
                 eq_ids = _formula_ids_for_question(brief, qid)
             if not q_ids and not eq_ids:
                 eq_ids = [f"anchor:{item.id}"]
-            reason = (
-                f"plan-skeleton: questions={q_ids or ['—']} equations={eq_ids}"
+            snippet = ""
+            for attr in ("direction", "note", "statement", "text", "title", "rule"):
+                val = getattr(item, attr, None)
+                if isinstance(val, str) and val.strip():
+                    snippet = val.strip().replace("\n", " ")[:160]
+                    break
+            reason = snippet or (
+                f"followed：条目 {item.id} 锚到小问 {q_ids or ['—']}、方程 {eq_ids}"
             )
             out.append(
                 BriefCoverageItem(

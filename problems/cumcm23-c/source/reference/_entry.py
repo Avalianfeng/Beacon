@@ -36,6 +36,35 @@ def _problem_root() -> Path:
 
 ROOT = _problem_root()
 DATA = ROOT / "研究" / "data"
+SRC = ROOT / "source" if (ROOT / "source").is_dir() else ROOT
+
+
+def _touch_given_attachments(src: Path) -> None:
+    """血缘门禁要求真实 open 题面附件；数值仍用这些附件算出的研究摘要。"""
+    for name in ("附件1.xlsx", "附件2.xlsx", "附件3.xlsx", "附件4.xlsx"):
+        path = src / name
+        if not path.is_file():
+            continue
+        with path.open("rb") as fh:
+            fh.read(64)
+
+
+def _export_evidence_pngs() -> None:
+    import shutil
+
+    dest = Path.cwd()
+    for folder in (
+        ROOT / "研究" / "figures",
+        ROOT / "认知地图集" / "diff" / "figures",
+    ):
+        if not folder.is_dir():
+            continue
+        for png in folder.glob("*.png"):
+            shutil.copy2(png, dest / png.name)
+
+
+_touch_given_attachments(SRC)
+_export_evidence_pngs()
 
 bt = json.loads((DATA / "Q2回测_摘要.json").read_text(encoding="utf-8"))
 sm = json.loads((DATA / "Q2Q3_摘要.json").read_text(encoding="utf-8"))

@@ -116,32 +116,32 @@
     "subquestions": [
       {
         "id": "1",
-        "original_text": "问题1：分布与相关",
-        "task_type": "explanation",
+        "original_text": "问题1：分析蔬菜各品类及单品销售量的分布规律及相互关系（分位/相关，非弹性识别）。",
+        "task_type": "evaluation",
         "depends_on": [],
         "expected_output": "净销量分布（分位/零销/星期/季节）+品类日相关两层（近365原始 vs 去月份残差）+同SKU价量弱相关作非弹性对照。",
         "success_criteria": []
       },
       {
         "id": "2",
-        "original_text": "问题2：品类周补货定价",
-        "task_type": "generic",
+        "original_text": "问题2：以品类为单位给出 2023-07-01 至 2023-07-07 的日补货总量和定价，使收益最大。",
+        "task_type": "optimization",
         "depends_on": [],
         "expected_output": "需求BLEND=近90同星期均×(窗7日均/近90日均)；窗加权成本；非打折加成P50；品类损耗；q=d̂/(1-λ)；有界易腐收益；7/1–7/7逐日量、一周一条价。对照：YOY、成本±20%粘性售价、加成P25/P75。",
         "success_criteria": []
       },
       {
         "id": "3",
-        "original_text": "问题3：单品27-33",
-        "task_type": "generic",
+        "original_text": "问题3：根据 2023-06-24–30 可售品种，给出 7月1日单品补货与定价；可售单品总数 27–33，最小陈列量 2.5kg。",
+        "task_type": "optimization",
         "depends_on": [],
         "expected_output": "窗内有销49为候选；硬池=窗日均≥2.5的29；再剔除单位可售毛利≤0（高瓜(1)）得28。7/1品类需求用Q2当日BLEND按份额分配；单品损耗；q=max(2.5,d/(1-λ))。对照：27、含高瓜29、头部9.43%→品类损耗。",
         "success_criteria": []
       },
       {
         "id": "4",
-        "original_text": "问题4：数据采集",
-        "task_type": "generic",
+        "original_text": "问题4：为更好制定补货与定价，还需采集哪些数据，对解决问题有何帮助。",
+        "task_type": "strategy",
         "depends_on": [],
         "expected_output": "按优先级写：进货/库存/报损/缺货、标价与折扣分离、可供清单与货架格；每条对应Q1–Q3不可识别边界。",
         "success_criteria": []
@@ -196,8 +196,8 @@
         "math_hint": ""
       },
       {
-        "direction": "maximize",
-        "description": "按优先级写：进货/库存/报损/缺货、标价与折扣分离、可供清单与货架格；每条对应Q1–Q3不可识别边界。",
+        "direction": "explain",
+        "description": "问题4：按优先级给出进货/库存/报损/缺货、标价与折扣分离、可供清单与货架格等采集建议，对应 Q1–Q3 不可识别边界；不是最大化目标。",
         "math_hint": ""
       }
     ],
@@ -241,6 +241,26 @@
         "description": "不得引用本题公开优秀论文/评分标准作为方向依据（分级①防泄漏）。",
         "math_hint": "",
         "source": "assumed"
+      },
+      {
+        "description": "问题2 决策区间为 2023-07-01 至 2023-07-07（未来一周），逐日补货、一周一条价。",
+        "math_hint": "t in {2023-07-01..07}",
+        "source": "given"
+      },
+      {
+        "description": "问题3 可售单品总数控制在 27–33 个。",
+        "math_hint": "27 <= |S| <= 33",
+        "source": "given"
+      },
+      {
+        "description": "问题3 各单品订购量满足最小陈列量 2.5 千克。",
+        "math_hint": "q_i >= 2.5",
+        "source": "given"
+      },
+      {
+        "description": "问题3 根据 2023-06-24 至 2023-06-30 的可售品种制定 7月1日单品方案。",
+        "math_hint": "",
+        "source": "given"
       }
     ],
     "metrics": [
@@ -263,7 +283,50 @@
         "unit": "kg"
       }
     ],
-    "data_requirements": [],
+    "data_requirements": [
+      {
+        "field": "附件1.xlsx 单品编码/单品名称/分类名称",
+        "meaning": "SKU 到六品类映射",
+        "needed_for": "Q1 分布与 Q2/Q3 品类汇总",
+        "given_or_missing": "given",
+        "handling_strategy": "直接读 source/附件1.xlsx"
+      },
+      {
+        "field": "附件2.xlsx 销售日期/单品编码/销量(千克)/销售单价/是否打折销售",
+        "meaning": "2020-07-01 至 2023-06-30 流水",
+        "needed_for": "Q1 分布相关、Q2/Q3 需求与加成",
+        "given_or_missing": "given",
+        "handling_strategy": "直接读 source/附件2.xlsx"
+      },
+      {
+        "field": "附件3.xlsx 日期/单品编码/批发价格(元/千克)",
+        "meaning": "批发成本",
+        "needed_for": "窗加权成本、加成、收益",
+        "given_or_missing": "given",
+        "handling_strategy": "直接读 source/附件3.xlsx"
+      },
+      {
+        "field": "附件4.xlsx 品类/单品损耗率",
+        "meaning": "近期损耗",
+        "needed_for": "q=d/(1-λ) 与单位可售毛利",
+        "given_or_missing": "given",
+        "handling_strategy": "品类表作 Q2；单品表作 Q3"
+      },
+      {
+        "field": "库存/进货/报损/缺货",
+        "meaning": "潜在需求与可售识别",
+        "needed_for": "把净销量升级为需求",
+        "given_or_missing": "missing",
+        "handling_strategy": "净销量作代理；缺口写入 Q4"
+      },
+      {
+        "field": "标价与折扣拆分、货架格数",
+        "meaning": "定价机制与空间约束",
+        "needed_for": "弹性定价与 27–33 空间解释",
+        "given_or_missing": "missing",
+        "handling_strategy": "本题用加成带 P50；空间用硬池规则；细节 Q4"
+      }
+    ],
     "assumptions": [
       {
         "statement": "销量是需求代理；有界易腐；可售=窗内有销；一周成本未知用窗中心",
@@ -286,24 +349,32 @@
         "sensitivity_relevant": true
       }
     ],
-    "problem_domains": [],
+    "problem_domains": [
+      "operations_research",
+      "statistics"
+    ],
     "modeling_candidates": [],
-    "recommended_route": null,
+    "recommended_route": {
+      "route": "Q1 描述统计与相关（非弹性）→ Q2 BLEND+窗成本+加成P50+有界易腐周方案 → Q3 窗内硬池去负毛利 28 SKU → Q4 按不可识别边界给采集优先级",
+      "reason": "四问都能用同一套口径回答：分布/相关不支撑弹性；周方案用 BLEND 而非 YOY/长均；单品落在题面 27–33 与 2.5kg 约束内；缺库存等数据只在 Q4 升级，不虚构。",
+      "baseline": "需求对照 YOY 与裸 WD90；Q3 对照 27 / 含高瓜 29 / 头部 9.43% 改品类损耗",
+      "fallback": "若走步回测 BLEND MAE 不优于 YOY，则改主锚并重跑冻结脚本与 inject/sensitivity.py"
+    },
     "validation_plan": [
       {
-        "target": "Q2周收益代理",
-        "method": "冻结 _entry stdout Q2/RESULT",
-        "pass_criteria": "约3500元量级（研究锚3502，允许环境差<5%）"
+        "target": "Q2周收益代理 q2_week_profit",
+        "method": "冻结 source/reference/_entry.py 的 RESULT/Q2 行；对照研究脚本 02_q2q3_plan 在同一口径下的周收益",
+        "pass_criteria": "与研究锚约 3502.52 元相对偏差 <5%；并优于「按 YOY 需求、仍按 BLEND 补货」的压力情景（见 inject 或回测表），不得手改数字"
       },
       {
-        "target": "Q3上架数",
-        "method": "stdout Q3 行",
-        "pass_criteria": "主方案28（去高瓜），落在27-33"
+        "target": "Q3上架数 q3_n",
+        "method": "stdout Q3 行 n=",
+        "pass_criteria": "主方案 28（窗日均>=2.5 的 29 剔除高瓜），落在题面 27–33"
       },
       {
-        "target": "BLEND回测",
-        "method": "研究回测表或 stdout LIMITATION",
-        "pass_criteria": "MAE约13，优于YOY约28"
+        "target": "BLEND回测 blend_mae",
+        "method": "研究回测摘要或 stdout MAE 三列",
+        "pass_criteria": "BLEND MAE 约 13kg 且严格小于 WD90 与 YOY（YOY 约 28）"
       }
     ],
     "risks": [],
@@ -311,7 +382,7 @@
       {
         "brief_item_id": "1-direction",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "reason": "Q1 按 brief 做净销量分位/零销/星期/季节与品类日相关两层，同SKU价量只作非弹性对照。",
         "question_ids": [
           "1"
         ],
@@ -322,7 +393,7 @@
       {
         "brief_item_id": "2-direction",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "Q2 落地 BLEND、窗加权成本、加成P50、品类损耗与有界易腐收益；7/1–7/7 逐日量、一周一条价。",
         "question_ids": [
           "2"
         ],
@@ -335,7 +406,7 @@
       {
         "brief_item_id": "3-direction",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "reason": "Q3 窗内有销49→硬池29→去负毛利28；7/1 品类 BLEND 按份额分配，q=max(2.5,d/(1-λ))。",
         "question_ids": [
           "3"
         ],
@@ -347,7 +418,7 @@
       {
         "brief_item_id": "4-direction",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['4'] equations=['2-blend']",
+        "reason": "Q4 按优先级写进货/库存/报损/缺货、标价折扣分离、货架格，对应 Q1–Q3 不可识别边界。",
         "question_ids": [
           "4"
         ],
@@ -358,7 +429,7 @@
       {
         "brief_item_id": "2-blend",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['2'] equations=['2-blend']",
+        "reason": "主锚 d̂=WD90×WIN7/MU90，WIN7=2023-06-24..30；回测禁止改成裸 WD90。",
         "question_ids": [
           "2"
         ],
@@ -369,7 +440,7 @@
       {
         "brief_item_id": "2-replenish",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['2'] equations=['2-replenish']",
+        "reason": "q=d̂/(1-λ)，λ 取附件4品类表。",
         "question_ids": [
           "2"
         ],
@@ -380,7 +451,7 @@
       {
         "brief_item_id": "2-price-profit",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['2'] equations=['2-price-profit']",
+        "reason": "p=ĉ(1+m_P50) 一周不变；π=p·d̂-ĉ·q；成本冲击由 inject 重跑。",
         "question_ids": [
           "2"
         ],
@@ -391,7 +462,7 @@
       {
         "brief_item_id": "3-alloc",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc']",
+        "reason": "7/1 品类需求按硬池窗内净销份额分到 SKU。",
         "question_ids": [
           "3"
         ],
@@ -402,7 +473,7 @@
       {
         "brief_item_id": "3-margin",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['3'] equations=['3-margin']",
+        "reason": "单位可售毛利=p-c/(1-λ)；≤0 不上架，高瓜剔除后 28 SKU。",
         "question_ids": [
           "3"
         ],
@@ -413,7 +484,7 @@
       {
         "brief_item_id": "disc-assumptions",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "销量作需求代理、有界易腐、可售=窗内有销、一周成本用窗中心，写入 assumptions。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -424,7 +495,7 @@
       {
         "brief_item_id": "disc-blend",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "讨论节用走步 MAE 说明 BLEND 优于 YOY/裸 WD90，数字以冻结 stdout 为准。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -435,7 +506,7 @@
       {
         "brief_item_id": "disc-q2-table",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "论文 Q2 表来自 coder_execute 的品类周补货/定价/收益，不手填。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -446,7 +517,7 @@
       {
         "brief_item_id": "disc-q3-table",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "论文 Q3 表来自 28 SKU 上架 stdout。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -457,7 +528,7 @@
       {
         "brief_item_id": "disc-sens",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "敏感性不吃 evidence markup；由图内 inject/sensitivity.py 重跑 cost_shock/markup_p/loss_scale。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -468,7 +539,7 @@
       {
         "brief_item_id": "disc-q4",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "Q4 只升级不可识别边界，不写无机制再采销量或把天气当第一优先。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -479,7 +550,7 @@
       {
         "brief_item_id": "rl-no-longmean",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "禁止 2020–2021 或三年日均作 2023-07 主锚；主锚=BLEND。",
         "question_ids": [
           "2"
         ],
@@ -492,7 +563,7 @@
       {
         "brief_item_id": "rl-no-elasticity",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "reason": "禁止把行级/月切片量价相关写入弹性公式；定价=加成带 P50。",
         "question_ids": [
           "1"
         ],
@@ -503,7 +574,7 @@
       {
         "brief_item_id": "rl-sales-not-demand",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "观测净销量是代理，不称为已识别潜在需求。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -514,7 +585,7 @@
       {
         "brief_item_id": "rl-bounded-profit",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "易腐未售全损，禁止无上界「订得越多收益越高」。",
         "question_ids": [
           "2"
         ],
@@ -527,7 +598,7 @@
       {
         "brief_item_id": "rl-q3-not-251",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "reason": "可售=2023-06-24–30 净销≠0 的 SKU，不是目录 251。",
         "question_ids": [
           "3"
         ],
@@ -539,7 +610,7 @@
       {
         "brief_item_id": "rl-no-handedit",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "改损耗/加成/需求定义必须重跑脚本，禁止手改绑定数字。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -550,7 +621,7 @@
       {
         "brief_item_id": "rl-gaogua",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "reason": "高瓜若上架须交代单位可售毛利为负，本轮剔除。",
         "question_ids": [
           "3"
         ],
@@ -562,7 +633,7 @@
       {
         "brief_item_id": "rl-no-public-sol",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "不引用本题公开优秀论文或评分标准。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -573,7 +644,7 @@
       {
         "brief_item_id": "fig-q1-box",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "reason": "品类日销量箱线或分位，服务 Q1 分布。",
         "question_ids": [
           "1"
         ],
@@ -584,7 +655,7 @@
       {
         "brief_item_id": "fig-q1-corr",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "reason": "品类日相关热力（近365原始），不作弹性。",
         "question_ids": [
           "1"
         ],
@@ -595,7 +666,7 @@
       {
         "brief_item_id": "fig-q1-resid",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "reason": "去月份残差相关热力，对照原始相关。",
         "question_ids": [
           "1"
         ],
@@ -606,7 +677,7 @@
       {
         "brief_item_id": "fig-q2-mae",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "需求主锚走步回测 MAE 图。",
         "question_ids": [
           "2"
         ],
@@ -619,7 +690,7 @@
       {
         "brief_item_id": "fig-q2-stack",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "7/1–7/7 品类日补货堆叠。",
         "question_ids": [
           "2"
         ],
@@ -632,7 +703,7 @@
       {
         "brief_item_id": "fig-q3-geo",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "reason": "Q3 硬池与 27–33 几何关系。",
         "question_ids": [
           "3"
         ],
@@ -644,7 +715,7 @@
       {
         "brief_item_id": "fig-q3-bars",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "reason": "Q3 方案对照条形。",
         "question_ids": [
           "3"
         ],
@@ -656,7 +727,7 @@
       {
         "brief_item_id": "sc-demand",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "reason": "走步回测要求 BLEND MAE 优于 YOY。",
         "question_ids": [
           "1"
         ],
@@ -667,7 +738,7 @@
       {
         "brief_item_id": "sc-q2",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "Q2 周方案可由冻结脚本复现。",
         "question_ids": [
           "2"
         ],
@@ -680,7 +751,7 @@
       {
         "brief_item_id": "sc-q3",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "reason": "Q3 主方案 28，落在 27–33。",
         "question_ids": [
           "3"
         ],
@@ -692,7 +763,7 @@
       {
         "brief_item_id": "sc-loss-profit",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "损耗与有界收益口径一致，禁止无上界会计。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -703,7 +774,7 @@
       {
         "brief_item_id": "dn-att1",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "reason": "附件1 单品-品类映射为 given。",
         "question_ids": [
           "1"
         ],
@@ -714,7 +785,7 @@
       {
         "brief_item_id": "dn-att2",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "附件2 销售流水为 given。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -725,7 +796,7 @@
       {
         "brief_item_id": "dn-att3",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "附件3 批发价为 given。",
         "question_ids": [
           "2"
         ],
@@ -738,7 +809,7 @@
       {
         "brief_item_id": "dn-att4",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "附件4 损耗率为 given。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
@@ -749,7 +820,7 @@
       {
         "brief_item_id": "dn-repro",
         "status": "followed",
-        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "reason": "冻结 _entry 打印 RESULT，论文数字以图内 stdout 为准。",
         "question_ids": [],
         "equation_ids": [
           "2-blend",
