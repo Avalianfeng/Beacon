@@ -1,0 +1,737 @@
+{
+  "schema": "model-card",
+  "assumptions": [
+    {
+      "statement": "销量是需求代理；有界易腐；可售=窗内有销；一周成本未知用窗中心",
+      "rationale": "required_discussions:disc-assumptions",
+      "sensitivity_relevant": false
+    }
+  ],
+  "model_versions": [
+    {
+      "stage": "final",
+      "description": "净销量分布（分位/零销/星期/季节）+品类日相关两层（近365原始 vs 去月份残差）+同SKU价量弱相关作非弹性对照。；需求BLEND=近90同星期均×(窗7日均/近90日均)；窗加权成本；非打折加成P50；品类损耗；q=d̂/(1-λ)；有界易腐收益；7/1–7/7逐日量、一周一条价。对照：YOY、成本±20%粘性售价、加成P25/P75。；窗内有销49为候选；硬池=窗日均≥2.5的29；再剔除单位可售毛利≤0（高瓜(1)）得28。7/1品类需求用Q2当日BLEND按份额分配；单品损耗；q=max(2.5,d/(1-λ))。对照：27、含高瓜29、头部9.43%→品类损耗。；按优先级写：进货/库存/报损/缺货、标价与折扣分离、可供清单与货架格；每条对应Q1–Q3不可识别边界。",
+      "equations": [
+        "2023-07-01为周六(WD=5)。d̂(c,t)=WD90(c,t)×WIN7(c)/MU90(c)。WIN7=2023-06-24..30品类日均。回测勿改成裸WD90。",
+        "λ：花菜0.1551,水生0.1365,花叶0.1283,菌0.0945,椒0.0924,茄0.0668（附件4品类表，百分数/100）。q=d̂/(1-λ)。",
+        "ĉ=窗内Σ(销量×批发)/Σ销量。m=近90非打折(单价/批发-1)的P50。p=ĉ(1+m)一周不变。π=p·d̂-ĉ·q。粘性售价：p不变、c←ĉ(1+δ)。",
+        "d_i=d̂(c,7/1)×(net_i/Σ_同类硬池net)。q_i=max(2.5,d_i/(1-λ_i))，λ_i用单品损耗率。π_i=p_i·min(d_i,(1-λ_i)q_i)-c_i q_i。",
+        "单位可售毛利=p-c/(1-λ)；≤0不上架。高瓜(1) λ=0.2925 且加成偏低，本轮剔除后主方案28 SKU。"
+      ],
+      "variables": {
+        "2-blend": "2023-07-01为周六(WD=5)。d̂(c,t)=WD90(c,t)×WIN7(c)/MU90(c)。WIN7=2023-06-24..30品类日均。回测勿改成裸WD90。",
+        "2-replenish": "λ：花菜0.1551,水生0.1365,花叶0.1283,菌0.0945,椒0.0924,茄0.0668（附件4品类表，百分数/100）。q=d̂/(1-λ)。",
+        "2-price-profit": "ĉ=窗内Σ(销量×批发)/Σ销量。m=近90非打折(单价/批发-1)的P50。p=ĉ(1+m)一周不变。π=p·d̂-ĉ·q。粘性售价：p不变、c←ĉ(1+δ)。",
+        "3-alloc": "d_i=d̂(c,7/1)×(net_i/Σ_同类硬池net)。q_i=max(2.5,d_i/(1-λ_i))，λ_i用单品损耗率。π_i=p_i·min(d_i,(1-λ_i)q_i)-c_i q_i。",
+        "3-margin": "单位可售毛利=p-c/(1-λ)；≤0不上架。高瓜(1) λ=0.2925 且加成偏低，本轮剔除后主方案28 SKU。"
+      },
+      "notes": "plan v0：coverage 已锚到小问/公式 id。决策变量、验证区间、映射请手补后再 plan check。敏感数字不以本文件为准，由图内 inject/sensitivity.py 重跑。",
+      "figure_purposes": [
+        "品类日销量箱线或分位",
+        "品类日相关热力（近365原始）",
+        "去月份残差相关热力",
+        "需求主锚走步回测MAE",
+        "7/1–7/7品类日补货堆叠",
+        "Q3硬池与27–33几何"
+      ],
+      "derivation_steps": [],
+      "derivation_notes": "",
+      "question_coverage": [
+        {
+          "question_id": "1",
+          "how_answered": "净销量分布（分位/零销/星期/季节）+品类日相关两层（近365原始 vs 去月份残差）+同SKU价量弱相关作非弹性对照。",
+          "related_equations": [
+            "2-blend"
+          ],
+          "related_metrics": []
+        },
+        {
+          "question_id": "2",
+          "how_answered": "需求BLEND=近90同星期均×(窗7日均/近90日均)；窗加权成本；非打折加成P50；品类损耗；q=d̂/(1-λ)；有界易腐收益；7/1–7/7逐日量、一周一条价。对照：YOY、成本±20%粘性售价、加成P25/P75。",
+          "related_equations": [
+            "2-blend",
+            "2-replenish",
+            "2-price-profit"
+          ],
+          "related_metrics": []
+        },
+        {
+          "question_id": "3",
+          "how_answered": "窗内有销49为候选；硬池=窗日均≥2.5的29；再剔除单位可售毛利≤0（高瓜(1)）得28。7/1品类需求用Q2当日BLEND按份额分配；单品损耗；q=max(2.5,d/(1-λ))。对照：27、含高瓜29、头部9.43%→品类损耗。",
+          "related_equations": [
+            "3-alloc",
+            "3-margin"
+          ],
+          "related_metrics": []
+        },
+        {
+          "question_id": "4",
+          "how_answered": "按优先级写：进货/库存/报损/缺货、标价与折扣分离、可供清单与货架格；每条对应Q1–Q3不可识别边界。",
+          "related_equations": [
+            "2-blend"
+          ],
+          "related_metrics": []
+        }
+      ],
+      "objective_mapping": [
+        "净销量分布（分位/零销/星期/季节）+品类日相关两层（近365原始 vs 去月份残差）+同SKU价量弱相关作非弹性对照。",
+        "需求BLEND=近90同星期均×(窗7日均/近90日均)；窗加权成本；非打折加成P50；品类损耗；q=d̂/(1-λ)；有界易腐收益；7/1–7/7逐日量、一周一条价。对照：YOY、成本±20%粘性售价、加成P25/P75。",
+        "窗内有销49为候选；硬池=窗日均≥2.5的29；再剔除单位可售毛利≤0（高瓜(1)）得28。7/1品类需求用Q2当日BLEND按份额分配；单品损耗；q=max(2.5,d/(1-λ))。对照：27、含高瓜29、头部9.43%→品类损耗。",
+        "按优先级写：进货/库存/报损/缺货、标价与折扣分离、可供清单与货架格；每条对应Q1–Q3不可识别边界。"
+      ],
+      "constraint_mapping": [
+        "不得用2020–2021或三年日均作为2023-07需求主锚（分级②：回测否证；备选=BLEND）。",
+        "不得把行级/月切片量价相关写入定价弹性公式（分级②：同SKU中位弱负；备选=加成带P50）。",
+        "不得把观测净销量称为已识别的潜在需求（分级①题面无库存/缺货；备选=代理+Q4升级）。",
+        "禁止无上界会计（订得越多收益越高）。分级②易腐未售全损；备选=残值仅敏感性。",
+        "Q3可售不得默认为目录251。操作定义=2023-06-24–30净销量≠0的SKU（分级②；备选=有价无销12仅对照）。",
+        "改损耗/加成/需求定义必须重跑研究/scripts，禁止手改3503/795等绑定数字。",
+        "高瓜(1)若出现在上架表必须交代单位可售毛利为负或改为已剔除（分级②本轮计算）。",
+        "不得引用本题公开优秀论文/评分标准作为方向依据（分级①防泄漏）。"
+      ],
+      "validation_mapping": [
+        "week_profit 对照 validation_plan Q2 约3500",
+        "q3_n=28 对照 27-33 与去高瓜",
+        "blend_mae 约13 对照 YOY28"
+      ]
+    }
+  ],
+  "problem_blueprint": {
+    "core_task": "cumcm23-c 蔬菜定价与补货",
+    "subquestions": [
+      {
+        "id": "1",
+        "original_text": "问题1：分布与相关",
+        "task_type": "explanation",
+        "depends_on": [],
+        "expected_output": "净销量分布（分位/零销/星期/季节）+品类日相关两层（近365原始 vs 去月份残差）+同SKU价量弱相关作非弹性对照。",
+        "success_criteria": []
+      },
+      {
+        "id": "2",
+        "original_text": "问题2：品类周补货定价",
+        "task_type": "generic",
+        "depends_on": [],
+        "expected_output": "需求BLEND=近90同星期均×(窗7日均/近90日均)；窗加权成本；非打折加成P50；品类损耗；q=d̂/(1-λ)；有界易腐收益；7/1–7/7逐日量、一周一条价。对照：YOY、成本±20%粘性售价、加成P25/P75。",
+        "success_criteria": []
+      },
+      {
+        "id": "3",
+        "original_text": "问题3：单品27-33",
+        "task_type": "generic",
+        "depends_on": [],
+        "expected_output": "窗内有销49为候选；硬池=窗日均≥2.5的29；再剔除单位可售毛利≤0（高瓜(1)）得28。7/1品类需求用Q2当日BLEND按份额分配；单品损耗；q=max(2.5,d/(1-λ))。对照：27、含高瓜29、头部9.43%→品类损耗。",
+        "success_criteria": []
+      },
+      {
+        "id": "4",
+        "original_text": "问题4：数据采集",
+        "task_type": "generic",
+        "depends_on": [],
+        "expected_output": "按优先级写：进货/库存/报损/缺货、标价与折扣分离、可供清单与货架格；每条对应Q1–Q3不可识别边界。",
+        "success_criteria": []
+      }
+    ],
+    "decision_variables": [
+      {
+        "name": "q_{c,t}",
+        "meaning": "品类c在日t的补货量",
+        "domain": ">=0",
+        "unit": "kg"
+      },
+      {
+        "name": "p_c",
+        "meaning": "品类一周售价（成本加成P50）",
+        "domain": ">0",
+        "unit": "yuan/kg"
+      },
+      {
+        "name": "dhat_{c,t}",
+        "meaning": "BLEND需求代理",
+        "domain": ">=0",
+        "unit": "kg"
+      },
+      {
+        "name": "S",
+        "meaning": "Q3上架SKU集合",
+        "domain": "27-33且去负毛利",
+        "unit": "count"
+      },
+      {
+        "name": "q_i",
+        "meaning": "单品补货",
+        "domain": ">=2.5",
+        "unit": "kg"
+      }
+    ],
+    "objectives": [
+      {
+        "direction": "evaluate",
+        "description": "净销量分布（分位/零销/星期/季节）+品类日相关两层（近365原始 vs 去月份残差）+同SKU价量弱相关作非弹性对照。",
+        "math_hint": ""
+      },
+      {
+        "direction": "maximize",
+        "description": "需求BLEND=近90同星期均×(窗7日均/近90日均)；窗加权成本；非打折加成P50；品类损耗；q=d̂/(1-λ)；有界易腐收益；7/1–7/7逐日量、一周一条价。对照：YOY、成本±20%粘性售价、加成P25/P75。",
+        "math_hint": ""
+      },
+      {
+        "direction": "maximize",
+        "description": "窗内有销49为候选；硬池=窗日均≥2.5的29；再剔除单位可售毛利≤0（高瓜(1)）得28。7/1品类需求用Q2当日BLEND按份额分配；单品损耗；q=max(2.5,d/(1-λ))。对照：27、含高瓜29、头部9.43%→品类损耗。",
+        "math_hint": ""
+      },
+      {
+        "direction": "maximize",
+        "description": "按优先级写：进货/库存/报损/缺货、标价与折扣分离、可供清单与货架格；每条对应Q1–Q3不可识别边界。",
+        "math_hint": ""
+      }
+    ],
+    "constraints": [
+      {
+        "description": "不得用2020–2021或三年日均作为2023-07需求主锚（分级②：回测否证；备选=BLEND）。",
+        "math_hint": "",
+        "source": "assumed"
+      },
+      {
+        "description": "不得把行级/月切片量价相关写入定价弹性公式（分级②：同SKU中位弱负；备选=加成带P50）。",
+        "math_hint": "",
+        "source": "assumed"
+      },
+      {
+        "description": "不得把观测净销量称为已识别的潜在需求（分级①题面无库存/缺货；备选=代理+Q4升级）。",
+        "math_hint": "",
+        "source": "assumed"
+      },
+      {
+        "description": "禁止无上界会计（订得越多收益越高）。分级②易腐未售全损；备选=残值仅敏感性。",
+        "math_hint": "",
+        "source": "assumed"
+      },
+      {
+        "description": "Q3可售不得默认为目录251。操作定义=2023-06-24–30净销量≠0的SKU（分级②；备选=有价无销12仅对照）。",
+        "math_hint": "",
+        "source": "assumed"
+      },
+      {
+        "description": "改损耗/加成/需求定义必须重跑研究/scripts，禁止手改3503/795等绑定数字。",
+        "math_hint": "",
+        "source": "assumed"
+      },
+      {
+        "description": "高瓜(1)若出现在上架表必须交代单位可售毛利为负或改为已剔除（分级②本轮计算）。",
+        "math_hint": "",
+        "source": "assumed"
+      },
+      {
+        "description": "不得引用本题公开优秀论文/评分标准作为方向依据（分级①防泄漏）。",
+        "math_hint": "",
+        "source": "assumed"
+      }
+    ],
+    "metrics": [
+      {
+        "name": "week_profit",
+        "meaning": "Q2一周收益代理",
+        "direction": "higher_better",
+        "unit": "yuan"
+      },
+      {
+        "name": "q3_n",
+        "meaning": "Q3上架SKU数",
+        "direction": "target",
+        "unit": "count"
+      },
+      {
+        "name": "blend_mae",
+        "meaning": "需求主锚走步MAE",
+        "direction": "lower_better",
+        "unit": "kg"
+      }
+    ],
+    "data_requirements": [],
+    "assumptions": [
+      {
+        "statement": "销量是需求代理；有界易腐；可售=窗内有销；一周成本未知用窗中心",
+        "rationale": "required_discussions:disc-assumptions",
+        "sensitivity_relevant": false
+      }
+    ],
+    "problem_domains": [],
+    "modeling_candidates": [],
+    "recommended_route": null,
+    "validation_plan": [
+      {
+        "target": "Q2周收益代理",
+        "method": "冻结 _entry stdout Q2/RESULT",
+        "pass_criteria": "约3500元量级（研究锚3502，允许环境差<5%）"
+      },
+      {
+        "target": "Q3上架数",
+        "method": "stdout Q3 行",
+        "pass_criteria": "主方案28（去高瓜），落在27-33"
+      },
+      {
+        "target": "BLEND回测",
+        "method": "研究回测表或 stdout LIMITATION",
+        "pass_criteria": "MAE约13，优于YOY约28"
+      }
+    ],
+    "risks": [],
+    "brief_coverage": [
+      {
+        "brief_item_id": "1-direction",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "question_ids": [
+          "1"
+        ],
+        "equation_ids": [
+          "2-blend"
+        ]
+      },
+      {
+        "brief_item_id": "2-direction",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [
+          "2"
+        ],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "3-direction",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "question_ids": [
+          "3"
+        ],
+        "equation_ids": [
+          "3-alloc",
+          "3-margin"
+        ]
+      },
+      {
+        "brief_item_id": "4-direction",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['4'] equations=['2-blend']",
+        "question_ids": [
+          "4"
+        ],
+        "equation_ids": [
+          "2-blend"
+        ]
+      },
+      {
+        "brief_item_id": "2-blend",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['2'] equations=['2-blend']",
+        "question_ids": [
+          "2"
+        ],
+        "equation_ids": [
+          "2-blend"
+        ]
+      },
+      {
+        "brief_item_id": "2-replenish",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['2'] equations=['2-replenish']",
+        "question_ids": [
+          "2"
+        ],
+        "equation_ids": [
+          "2-replenish"
+        ]
+      },
+      {
+        "brief_item_id": "2-price-profit",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['2'] equations=['2-price-profit']",
+        "question_ids": [
+          "2"
+        ],
+        "equation_ids": [
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "3-alloc",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc']",
+        "question_ids": [
+          "3"
+        ],
+        "equation_ids": [
+          "3-alloc"
+        ]
+      },
+      {
+        "brief_item_id": "3-margin",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['3'] equations=['3-margin']",
+        "question_ids": [
+          "3"
+        ],
+        "equation_ids": [
+          "3-margin"
+        ]
+      },
+      {
+        "brief_item_id": "disc-assumptions",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "disc-blend",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "disc-q2-table",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "disc-q3-table",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "disc-sens",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "disc-q4",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "rl-no-longmean",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [
+          "2"
+        ],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "rl-no-elasticity",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "question_ids": [
+          "1"
+        ],
+        "equation_ids": [
+          "2-blend"
+        ]
+      },
+      {
+        "brief_item_id": "rl-sales-not-demand",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "rl-bounded-profit",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [
+          "2"
+        ],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "rl-q3-not-251",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "question_ids": [
+          "3"
+        ],
+        "equation_ids": [
+          "3-alloc",
+          "3-margin"
+        ]
+      },
+      {
+        "brief_item_id": "rl-no-handedit",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "rl-gaogua",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "question_ids": [
+          "3"
+        ],
+        "equation_ids": [
+          "3-alloc",
+          "3-margin"
+        ]
+      },
+      {
+        "brief_item_id": "rl-no-public-sol",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "fig-q1-box",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "question_ids": [
+          "1"
+        ],
+        "equation_ids": [
+          "2-blend"
+        ]
+      },
+      {
+        "brief_item_id": "fig-q1-corr",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "question_ids": [
+          "1"
+        ],
+        "equation_ids": [
+          "2-blend"
+        ]
+      },
+      {
+        "brief_item_id": "fig-q1-resid",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "question_ids": [
+          "1"
+        ],
+        "equation_ids": [
+          "2-blend"
+        ]
+      },
+      {
+        "brief_item_id": "fig-q2-mae",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [
+          "2"
+        ],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "fig-q2-stack",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [
+          "2"
+        ],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "fig-q3-geo",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "question_ids": [
+          "3"
+        ],
+        "equation_ids": [
+          "3-alloc",
+          "3-margin"
+        ]
+      },
+      {
+        "brief_item_id": "fig-q3-bars",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "question_ids": [
+          "3"
+        ],
+        "equation_ids": [
+          "3-alloc",
+          "3-margin"
+        ]
+      },
+      {
+        "brief_item_id": "sc-demand",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "question_ids": [
+          "1"
+        ],
+        "equation_ids": [
+          "2-blend"
+        ]
+      },
+      {
+        "brief_item_id": "sc-q2",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [
+          "2"
+        ],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "sc-q3",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['3'] equations=['3-alloc', '3-margin']",
+        "question_ids": [
+          "3"
+        ],
+        "equation_ids": [
+          "3-alloc",
+          "3-margin"
+        ]
+      },
+      {
+        "brief_item_id": "sc-loss-profit",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "dn-att1",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['1'] equations=['2-blend']",
+        "question_ids": [
+          "1"
+        ],
+        "equation_ids": [
+          "2-blend"
+        ]
+      },
+      {
+        "brief_item_id": "dn-att2",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "dn-att3",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['2'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [
+          "2"
+        ],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "dn-att4",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      },
+      {
+        "brief_item_id": "dn-repro",
+        "status": "followed",
+        "reason": "plan-skeleton: questions=['—'] equations=['2-blend', '2-replenish', '2-price-profit']",
+        "question_ids": [],
+        "equation_ids": [
+          "2-blend",
+          "2-replenish",
+          "2-price-profit"
+        ]
+      }
+    ]
+  },
+  "problem_domains": [
+    "operations_research"
+  ],
+  "sensitivity_runs": [],
+  "notes": "论文数字以图内 coder_execute stdout 为准。研究表 加成带/成本冲击 只是 inject/sensitivity.py 的参数参考；敏感数字必须由图内重跑产生，不要把 evidence markup_* 写进论文。"
+}

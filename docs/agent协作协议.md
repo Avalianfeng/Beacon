@@ -31,9 +31,11 @@ critic 照用。
 | 接口 | 角色 |
 |---|---|
 | `brief.json` + `brief check` | 方向手柄 |
+| `plan.json` + `plan build\|check` | 机读蓝图+模型卡（coverage 带锚） |
 | `reference add` / `--force` / `source/inject/` | 改代码插座 |
-| `reference run` | 跑冻结脚本 → `evidence.json` |
-| `run --from writer --evidence …` | 冷启动写作段（接桥） |
+| `reference run` | 冒烟 evidence（人闸 / `--strict` 对账，非论文数字源） |
+| `run --plan` | 正式冷启动全图（播种 critic 真跑） |
+| `run --from writer --evidence …` | 应急接桥写作段 |
 | `restart --from coder\|writer` | 门禁停机后重跑编码/写作 |
 | `critic-handoff` / `critic-handoff.json` | 停机交棒包（手改依据） |
 | writer 链 | 产论文 |

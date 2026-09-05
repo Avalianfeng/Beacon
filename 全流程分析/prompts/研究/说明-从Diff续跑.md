@@ -25,3 +25,8 @@
 - 要求先交 `brief草稿` 再允许算数。  
 - 规定「每个小问必须新开子 Agent」。  
 - 把主会话变成第二求解器复述 Diff。
+
+## 收束交给 Beacon
+
+主持用 `math-agent plan build --brief brief.json` 合成机读卡；研究者补决策变量与验证区间后 `plan check`。  
+敏感性：研究已跑的加成带/成本冲击是参数参考，正式论文数字由图内 `inject/sensitivity.py` 重跑，不以 evidence 的 markup 字段为准。

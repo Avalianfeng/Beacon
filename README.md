@@ -88,7 +88,7 @@ uv run math-agent problem stage mcm51-c --json
 | 一 · 方向 | 导入 → EDA → 外/本地独立探索 → Diff → 人拍板 | [01–09](全流程分析/全流程定稿/README.md) |
 | 二 · 算明白 | 研究者编码、实验、出数（**≠ 交卷**） | [10](全流程分析/全流程定稿/10-s5-求解推进.md) |
 | 三 · 手柄 | `brief.json` 定稿，驾驭图 | [11](全流程分析/全流程定稿/11-s3-brief定稿.md) |
-| 四 · 启动图 | 预检 → 登记插座 → **writer 出论文** | [12–14](全流程分析/全流程定稿/14-s6-论文装配.md) |
+| 四 · 启动图 | 预检 → 登记插座 → **`run --plan` 出论文** | [12–14](全流程分析/全流程定稿/14-s6-论文装配.md) |
 | 五 · 收口 | critic→手改循环；人评 → `accept` | [15–16](全流程分析/全流程定稿/15-s7-评审.md) |
 
 ### 启动图（产品化入口）
@@ -96,16 +96,20 @@ uv run math-agent problem stage mcm51-c --json
 登记不是交差：是给本机代码插上 Beacon 的改代码插座。无冻结代码时 coder 立即停，除非 `--allow-coder-llm`（默认不要开）。
 
 ```bash
-# 证据已齐、从写作段冷启动（常用）
+# 正式：注入蓝图/模型卡后全图真跑 critic + 冻结执行 + writer
 uv run math-agent run \
   --problem problems/<题>/problem.json \
   --brief problems/<题>/brief.json \
-  --from writer \
-  --evidence runs/<题>-reference/evidence.json \
-  --out runs/<题>-writer-graph
+  --plan problems/<题>/plan.json \
+  --out runs/<题>-graph
 
-# critic / 门禁停机后：改代码或 brief，再登记，再从 writer 重跑
-uv run math-agent restart --out runs/<题>-writer-graph --from writer --reason "…"
+# critic / 一致性停机后：改代码 → 重登记 → 从 coder 重跑
+uv run math-agent reference add --problem problems/<题>/problem.json \
+  --solver problems/<题>/source/reference --entry _entry.py --force
+uv run math-agent restart --out runs/<题>-graph --from coder --reason "…"
+
+# 应急：evidence 接桥进写作段
+uv run math-agent run --from writer --evidence runs/<题>-reference/evidence.json ...
 
 # 交棒材料（停机时也会自动写出）
 uv run math-agent critic-handoff --out runs/<id>
@@ -205,7 +209,7 @@ python scripts/audit_docs.py
 <details>
 <summary><strong>崩溃了怎么续？</strong></summary>
 
-`status` / `watch` 看停机原因与 `critic-handoff`；改代码或 brief 后再登记，用 `restart --from writer`（或 `--from coder`）续跑。人审点用 `resume --approve` / `--no-approve`。
+`status` / `watch` 看停机原因与 `critic-handoff`；改代码后 `reference add --force` 再用 `restart --from coder`。改 plan/brief 只能新开 `run --plan`。人审点用 `resume --approve` / `--no-approve`。
 </details>
 
 <details>
