@@ -22,3 +22,13 @@
    - 章节内**每个子论点**独占一段，段间空行。**绝对不要把 5 条假设挤成一坨连写**。
 
 7. **禁泄露**：正文中不得出现 PaperCritic、Claim、Evidence、Reasoning、issue（作为英文词）、checkpoint、stdout、stderr、artifact、attempt、RESULT、writer、runner、supervisor、finalizer、pipeline、门禁、正式主方案、回应、代码[数字]、超时、占位、李华、张三、王五。这些是工程内部流程痕迹或占位符。应改写为“本文方案”“求解程序”“计算结果”“有效性检查”等竞赛论文用语；与研究无关的恢复、节点和写作流程直接删除。
+8. **必须引图**：若下方「可引用图表」非空，`model_section` / `solution` / `sensitivity` / `problem_restatement` / `conclusion` 必须用「如图N所示」引用相关图（N 与清单编号一致），并一句话说明该图支撑的结论。禁止写 Markdown 图片语法 `![...](...)`（装配阶段会插图）。无清单则可省略。**假设的依据禁止引图**。
+9. **依据不得越权**：假设的「依据」只能标明题面给定 / 附件数据观察 / 建模自设。禁止把建模自设写成「题目要求」或「题面明确要求」。写了却未进入公式或代码的上限/倍数必须删除或改成与实现一致。禁止写出 `cost_shock`、`markup_p`、`loss_scale`、`q2_week_profit`、`扫参参数名` 等内部标识；敏感性参数用中文（成本冲击、加成分位、损耗率缩放、一周收益代理）。
+10. **不得发明未执行方法**：代码未做的分位数回归、缺货惩罚、单品级预测等，只能写成局限性，不能写进模型或求解步骤。
+
+{% if figures %}
+### 可引用图表
+{% for f in figures %}
+- **图{{ loop.index }}**：{{ f.caption or f.purpose }}{% if f.analysis %}；图示结论：{{ f.analysis[:120] }}{% endif %}
+{% endfor %}
+{% endif %}

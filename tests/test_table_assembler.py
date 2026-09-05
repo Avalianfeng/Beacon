@@ -95,6 +95,15 @@ def test_clean_handles_empty_string():
     assert warnings == []
 
 
+def test_clean_strips_inject_protocol_names():
+    text = "粘性售价；扫参参数名必须用 成本冲击 (cost_shock)，指标 q2_week_profit"
+    cleaned, _warnings = _clean_forbidden_words(text, "assumptions")
+    assert "cost_shock" not in cleaned
+    assert "q2_week_profit" not in cleaned
+    assert "扫参参数名" not in cleaned
+    assert "粘性售价" in cleaned
+
+
 from math_agent.nodes.table_assembler import _generate_variable_table
 
 

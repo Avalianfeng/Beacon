@@ -17,7 +17,12 @@ from math_agent.config import (
     RAG_TOPK,
 )
 from math_agent.llm import complete
-from math_agent.nodes.figure_placement import group_figures, interleave_figures
+from math_agent.nodes.figure_placement import (
+    ensure_figure_citations,
+    group_figures,
+    interleave_figures,
+    unique_figures,
+)
 from math_agent.nodes.sensitivity import formal_sensitivity_runs
 from math_agent.nodes.rendering import (
     _curate_code,
@@ -28,6 +33,7 @@ from math_agent.nodes.table_assembler import _clean_forbidden_words
 from math_agent.prompts.writer import SYSTEM, build_prompt  # noqa: F401
 from math_agent.prompts.writer_section import (
     WriterOutline,
+    _paper_facing_statement,
     _sections_to_rewrite,
     build_outline_prompt,
     build_section_prompt,
@@ -113,8 +119,8 @@ def _build_assumptions_text(state: MathModelingState) -> str:
         if item.sensitivity_relevant:
             impact += "该项已列入敏感性分析的重点参数。"
         blocks.append(
-            f"**假设{index}**：{item.statement}\n"
-            f"**依据**：{rationale}\n"
+            f"**假设{index}**：{_paper_facing_statement(item.statement)}\n"
+            f"**依据**：{_paper_facing_statement(rationale)}\n"
             f"**影响与检验**：{impact}"
         )
     if blocks:
@@ -452,6 +458,7 @@ def writer_section_node(state: MathModelingState) -> dict:
             for field in group.fields:
                 setattr(paper, field, getattr(section_out, field))
             break
+    ensure_figure_citations(paper, unique_figures(list(state.figures or [])))
 
     return {"paper": paper, "writer_section_queue": queue}
 

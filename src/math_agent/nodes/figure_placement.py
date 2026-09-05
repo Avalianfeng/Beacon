@@ -105,3 +105,60 @@ def group_figures(figures: list[FigureArtifact]) -> dict[str, list[FigureArtifac
     for figure in figures:
         grouped[figure_section(figure)].append(figure)
     return grouped
+
+
+def unique_figures(figures: list[FigureArtifact]) -> list[FigureArtifact]:
+    """按 path 去重：保留首次出现顺序，元数据取最后一次。"""
+    latest: dict[str, FigureArtifact] = {}
+    order: list[str] = []
+    for fig in figures:
+        key = (fig.path or "").replace("\\", "/") or f"purpose:{fig.purpose}"
+        if key not in latest:
+            order.append(key)
+        latest[key] = fig
+    return [latest[key] for key in order]
+
+
+def figure_number_map(figures: list[FigureArtifact]) -> dict[str, int]:
+    return {
+        ((fig.path or "").replace("\\", "/") or f"purpose:{fig.purpose}"): index
+        for index, fig in enumerate(unique_figures(figures), 1)
+    }
+
+
+_CITE_RE = re.compile(r"图\s*(\d+)")
+
+
+def cited_figure_numbers(text: str) -> set[int]:
+    return {int(match) for match in _CITE_RE.findall(text or "")}
+
+
+def ensure_figure_citations(paper, figures: list[FigureArtifact]):
+    """章节缺「图N」时追加一句确定性引图，供 paper_critic 看见编号引用。
+
+    不插入 Markdown 图片；插图仍由 markdown/LaTeX 装配阶段完成。
+    """
+    figs = unique_figures(figures)
+    if not figs:
+        return paper
+    numbers = figure_number_map(figs)
+    for field, field_figs in group_figures(figs).items():
+        if not field_figs:
+            continue
+        text = getattr(paper, field, "") or ""
+        cited = cited_figure_numbers(text)
+        missing: list[str] = []
+        for fig in field_figs:
+            key = (fig.path or "").replace("\\", "/") or f"purpose:{fig.purpose}"
+            n = numbers[key]
+            if n in cited:
+                continue
+            analysis = " ".join((fig.analysis or "").split())
+            if analysis:
+                missing.append(f"如图{n}所示。{analysis}")
+            else:
+                label = (fig.caption or fig.purpose or f"图{n}").strip()
+                missing.append(f"如图{n}所示，用于展示{label}。")
+        if missing:
+            setattr(paper, field, (text.rstrip() + "\n\n" + "\n\n".join(missing)).strip())
+    return paper

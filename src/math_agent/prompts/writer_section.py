@@ -16,6 +16,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel
 
 from math_agent.state import CriticIssue, MathModelingState
+from math_agent.nodes.figure_placement import unique_figures
 from math_agent.nodes.sensitivity import formal_sensitivity_runs
 from math_agent.tools.runner import (
     extract_valid_result_lines,
@@ -164,6 +165,34 @@ _RESULT_NUM_RE = _re.compile(
     _re.MULTILINE,
 )
 
+_INJECT_PROTOCOL_RE = _re.compile(r"[；;]?\s*扫参参数名必须用[^。；;\n]*")
+_PROTOCOL_IDS = (
+    ("q2_week_profit", "一周收益代理"),
+    ("cost_shock", "成本冲击"),
+    ("markup_p", "加成分位"),
+    ("loss_scale", "损耗率缩放"),
+)
+
+
+def _paper_facing_statement(text: str) -> str:
+    """去掉 inject 协议尾巴，避免假设正文泄露内部参数名。"""
+    cleaned = _INJECT_PROTOCOL_RE.sub("", text or "")
+    cleaned = _re.sub(r"[；;]?\s*指标\s*(?:q2_week_profit|一周收益代理)", "", cleaned)
+    for ident, zh in _PROTOCOL_IDS:
+        cleaned = _re.sub(rf"\s*[（(]\s*{ident}\s*[)）]", "", cleaned)
+        cleaned = _re.sub(rf"(?<![A-Za-z0-9_]){ident}(?![A-Za-z0-9_])", zh, cleaned)
+    return cleaned.strip(" ；;，,")
+
+
+def _paper_facing_assumptions(state: MathModelingState):
+    return [
+        item.model_copy(update={
+            "statement": _paper_facing_statement(item.statement),
+            "rationale": _paper_facing_statement(item.rationale),
+        })
+        for item in state.assumptions
+    ]
+
 _MAX_WRITER_MODELS = 2
 _MAX_WRITER_EQUATIONS = 36
 _MAX_WRITER_VARIABLES = 20
@@ -281,6 +310,7 @@ def build_outline_prompt(state: MathModelingState, *, retrieved_context: str = "
         problem=state.problem,
         model_versions=_compact_model_versions(state),
         problem_blueprint=state.problem_blueprint,
+        figures=unique_figures(list(state.figures or [])),
     )
     if retrieved_context:
         rendered = rendered + "\n\n" + retrieved_context
@@ -308,11 +338,11 @@ def build_section_prompt(
     latest_model = compact_models[-1] if compact_models else None
     view = {
         "problem": state.problem,
-        "assumptions": state.assumptions,
+        "assumptions": _paper_facing_assumptions(state),
         "model_versions": compact_models,
         "code_artifacts": compact_artifacts,
         "sensitivity_runs": formal_sensitivity_runs(state),
-        "figures": state.figures,
+        "figures": unique_figures(list(state.figures or [])),
         "prior_critic": prior_critic if prior_critic is not None else state.latest_critic("paper"),
         "problem_domains": state.problem_domains,  # Plan D：analyst 输出
         "references_list": references_list or [],  # Plan D：检索到的真实文献

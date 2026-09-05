@@ -17,6 +17,7 @@ from math_agent.state import (
 from math_agent.nodes.writer import writer_node, writer_section_node
 from math_agent.prompts.writer_section import (
     WriterOutline,
+    _paper_facing_statement,
     _sections_to_rewrite,
     schema_for_group,
     writer_sections,
@@ -77,6 +78,15 @@ def _run_writer_full(s):
         s.paper = step["paper"]
         s.writer_section_queue = step["writer_section_queue"]
     return s.paper
+
+
+def test_paper_facing_statement_strips_inject_protocol():
+    raw = "粘性售价：标价钉死；扫参参数名必须用 成本冲击 (cost_shock)，指标 q2_week_profit"
+    out = _paper_facing_statement(raw)
+    assert "cost_shock" not in out
+    assert "q2_week_profit" not in out
+    assert "扫参参数名" not in out
+    assert "粘性售价" in out
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +326,41 @@ def test_section_prompt_contains_iron_rules(mocker):
     for p in prompts:
         assert "IRON RULES" in p
         assert "禁编造数据" in p
+        assert "必须引图" in p
+
+
+def test_sensitivity_prompt_requires_l4_decision_phrase(mocker):
+    """L4 G1 扫「主口径取舍」原词；敏感性节提示必须要求写这句。"""
+    side, _calls = _make_complete_side_effect()
+    prompts = []
+
+    def capture(prompt, *, schema=None, **kwargs):
+        prompts.append(prompt)
+        return side(prompt, schema=schema, **kwargs)
+
+    mocker.patch("math_agent.nodes.writer.complete", side_effect=capture)
+    _run_writer_full(_rich_state())
+    sens = [p for p in prompts if "章节撰写：敏感性分析" in p]
+    assert sens, "应有敏感性分章 prompt"
+    assert any("主口径取舍" in p for p in sens)
+
+
+def test_section_prompt_lists_numbered_figures(mocker):
+    side, _calls = _make_complete_side_effect()
+    prompts = []
+
+    def capture(prompt, *, schema=None, **kwargs):
+        prompts.append(prompt)
+        return side(prompt, schema=schema, **kwargs)
+
+    mocker.patch("math_agent.nodes.writer.complete", side_effect=capture)
+    state = _rich_state()
+    state.figures.append(FigureArtifact(
+        path="q2.png", purpose="Q2一周补货堆叠", caption="品类日补货",
+    ))
+    paper = _run_writer_full(state)
+    assert any("图1" in p and "品类日补货" in p for p in prompts)
+    assert "如图1所示" in paper.solution
 
 
 def test_writer_retries_once_when_section_is_below_content_budget(mocker):
