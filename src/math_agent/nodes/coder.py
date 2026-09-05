@@ -903,6 +903,20 @@ def coder_execute_node(state: MathModelingState) -> dict:
                 if str(p).lower().endswith(".png")
             ]
             if not png_paths:
+                fig_dir = workdir / f"fig_{item['index']}_attempt_{item['attempt']}"
+                existing_pngs = sorted(
+                    str(path.resolve())
+                    for path in fig_dir.glob("*.png")
+                    if path.is_file()
+                )
+                # 冻结入口常用 shutil.copy2：覆盖后 mtime 与源相同，runner 差集为空。
+                # 非冻结任务仍要求本次写出新 png，避免旧 attempt 残留图蒙混过关。
+                if existing_pngs and item.get("frozen"):
+                    result.artifact_paths = list(
+                        dict.fromkeys([*(result.artifact_paths or []), *existing_pngs])
+                    )
+                    png_paths = existing_pngs
+            if not png_paths:
                 effective_success = False
                 validation_reason = (
                     "figure 任务未产出图片文件：代码执行成功但工作目录没有任何 .png。"

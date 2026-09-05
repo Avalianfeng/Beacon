@@ -202,6 +202,23 @@ def test_validate_numeric_results_requires_enough_primary_metrics():
     assert "至少需要 4" in reason
 
 
+def test_validate_numeric_results_min_metrics_only_applies_to_ours():
+    """同 stdout 对照行可少指标；下限只打 ours，避免对照门反杀主证据。"""
+    from math_agent.tools.runner import validate_numeric_results
+
+    valid, reason, parsed = validate_numeric_results(
+        "RESULT: baseline=ours total_cost=80 service_rate=0.95 vehicles=7 mae=1.2\n"
+        "RESULT: baseline=WD90 mae=2.5\n"
+        "RESULT: baseline=YOY mae=3.1\n",
+        require_result=True,
+        min_metrics_per_result=4,
+    )
+
+    assert valid is True, reason
+    assert set(parsed) == {"ours", "WD90", "YOY"}
+    assert len(parsed["WD90"]) == 1
+
+
 def test_validate_numeric_results_limitation_exempts_metric_gap():
     """LIMITATION 声明可豁免指标缺口：模型适用边界是合法标注而非失败。"""
     from math_agent.tools.runner import validate_numeric_results

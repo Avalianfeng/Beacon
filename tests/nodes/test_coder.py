@@ -693,3 +693,48 @@ def test_coder_rejects_plausible_but_hardcoded_primary_results(mocker, workdir):
     assert figures[1].success is True
 
 
+def test_frozen_figure_accepts_existing_png_when_mtime_unchanged(mocker, workdir):
+    """冻结入口 copy2 后 mtime 不变：runner 差集为空时仍认工作目录里的 png。"""
+    from math_agent.nodes.coder import coder_execute_node
+    from math_agent.tools.runner import RunResult
+
+    fig_dir = workdir / "fig_0_attempt_0"
+    fig_dir.mkdir(parents=True)
+    stale = fig_dir / "evidence.png"
+    stale.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+
+    state = MathModelingState(problem="p", output_dir=str(workdir))
+    state.coder_phase = "execute"
+    state.coder_work_queue = [{
+        "kind": "figure",
+        "index": 0,
+        "attempt": 0,
+        "frozen": True,
+        "evidence_target": "primary",
+    }]
+    state.coder_pending_draft = CoderDraft(
+        purpose="主方案",
+        code="print('RESULT: baseline=ours a=1 b=2 c=3 d=4')",
+    ).model_dump()
+
+    mocker.patch(
+        "math_agent.nodes.coder.run_python",
+        return_value=RunResult(
+            success=True,
+            stdout="RESULT: baseline=ours a=1 b=2 c=3 d=4",
+            stderr="",
+            artifact_paths=[],  # copy2 同 mtime → 差集空
+            read_paths=[],
+        ),
+    )
+    mocker.patch(
+        "math_agent.nodes.coder._validated_execution",
+        return_value=(True, "", ""),
+    )
+
+    delta = coder_execute_node(state)
+    art = delta["code_artifacts"][0]
+    assert art.success is True, art.stderr
+    assert any(str(p).endswith("evidence.png") for p in art.artifact_paths)
+
+

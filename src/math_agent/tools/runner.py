@@ -669,7 +669,14 @@ def validate_numeric_results(
         )
 
     for identifier, metrics in parsed.items():
-        if len(metrics) < min_metrics_per_result:
+        # 指标下限只约束主方案（ours）或 baseline 任务声明的 expected_identifier。
+        # 同 stdout 里的对照 RESULT 行（WD90/YOY 等）可少指标，否则对照门会反过来打死主证据。
+        apply_min_metrics = min_metrics_per_result > 0 and (
+            identifier == expected_identifier
+            if expected_identifier is not None
+            else identifier == "ours"
+        )
+        if apply_min_metrics and len(metrics) < min_metrics_per_result:
             # LIMITATION 声明可豁免指标缺口：模型适用边界（如公式在极端参数下
             # 数学不可用）是合法标注而非失败，允许对应字段从 RESULT 缺失。
             # 但保留防滥用约束：最多豁免一半指标，且至少保留 1 个真实指标，
