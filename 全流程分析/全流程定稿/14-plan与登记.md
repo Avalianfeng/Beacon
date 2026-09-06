@@ -21,17 +21,34 @@
 
 ```text
 uv run math-agent plan build --brief problems/<题>/brief.json --out problems/<题>/plan.json
+python scripts/check_plan_handfill.py --plan problems/<题>/plan.json
 uv run math-agent plan check --plan problems/<题>/plan.json --brief problems/<题>/brief.json
 ```
 
-- v0 自动带 brief→小问/方程锚；**必须手补**：`decision_variables`、`validation_plan.pass_criteria`（数值合理区间）、`recommended_route`、`data_requirements`、题面约束（`source=given`）；coverage 的 `reason` 写清"这条 brief 怎么落地"，不写骨架编号。
-- `plan check` 零 token 挡一半打回，**不能**代替 critic 语义分。
-- 敏感数字**不写进 plan 当论文事实**：只钉扫参参数名（如 `成本冲击 (cost_shock)`）。
+手补清单（`plan build` v0 后必填到齐）：
+
+| 字段 | 什么叫写够 |
+|---|---|
+| `decision_variables` | 非空；变量与题意对应 |
+| `validation_plan[].pass_criteria` | 有数值合理区间/对照标准，非空串 |
+| `recommended_route` | `route` + `reason` 写清主路径为何 |
+| `data_requirements` | 附件标 `given`；needed_for 落到问 |
+| `brief_coverage[].reason` | 写清「这条 brief 怎么落地」，不写骨架编号 |
+
+- `plan check` 零 token 挡一半打回，**不能**代替 critic 语义分；`check_plan_handfill` 补盯 route/data_req/短 reason。
+- 敏感数字**不写进 plan 当论文事实**：只钉扫参参数名（assumptions 里 `sensitivity_relevant` +「参数名必须用 …」）。
 
 ### 14-B · 两张插座代码（契约与骨架在 prompts/登记/）
 
-- `source/reference/_entry.py`：主求解。输出 Q 行 + `RESULT: baseline=ours`（≥3 指标）+ 独立 `RESULT: baseline=<对照名>` 行（finalizer 计数）；**真实 open 声明附件**；执行 cwd 落 PNG（血缘）。
-- `source/inject/sensitivity.py`：扫参。每网格一行 `RESULT: parameter=<名> values=[…] results=[…]`；参数名与 plan 钉死的一致；**按研究网格重算**，不抄研究表数字。
+```text
+python scripts/scaffold_entry.py --problem problems/<题>
+python scripts/scaffold_sensitivity.py --problem problems/<题>
+```
+
+- `source/reference/_entry.py`：主求解。输出 Q 行 + `RESULT: baseline=ours`（≥3 指标）+ 独立 `RESULT: baseline=<对照名>` 行；**真实 open 声明附件**；执行 cwd 落 PNG。对照 `研究/_数据账.md` 读表——**读研究表可以，但必须另 open 附件**（血缘）。
+- `source/inject/sensitivity.py`：扫参。脚手架会从 plan 解析参数名；网格值人填；每网格一行 `RESULT: parameter=<名> values=[…] results=[…]`。
+
+脚手架**不**把 `研究/scripts` 编译成 `_entry`。
 
 ### 14-C · 登记与冒烟
 
@@ -69,9 +86,9 @@ runs/<题>-reference/evidence.json ← 图外冒烟产物（对账锚）
 
 ## 自查
 
-- [ ] `plan check` 零缺口；`_entry` 冒烟 `verify` 三查过；recertify 已落账
-- [ ] `_entry` open 过附件、inject 参数名与 plan 对齐
-- [ ] 所有数字能回指 `研究/data` 或由脚本重算（无手抄）
+- [ ] `plan check` 零缺口；`check_plan_handfill` 无 FAIL；`_entry` 冒烟 `verify` 三查过；recertify 已落账
+- [ ] `_entry` open 过附件、inject 参数名与 plan 对齐；改码后用过 `add --force`
+- [ ] 所有数字能回指 `研究/data` 或由脚本重算（无手抄）；数据账已对
 
 ## 本题状态
 

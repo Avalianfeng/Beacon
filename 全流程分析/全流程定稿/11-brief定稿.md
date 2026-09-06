@@ -12,11 +12,24 @@
 
 ## 输入 / 怎么做
 
-输入：`exploration.md`（人读收束）+ `brief草稿.md` + 研究日志。
+输入：`exploration.md`（人读收束）+ `brief草稿.md` + 研究日志 + `研究/_数据账.md`。
 
-1. 从人读收束倒推机器字段：`per_question_direction` / `data_notes` / `red_lines` / `formula_notes` / `figure_plan` / `background_knowledge` / `required_discussions`——只压缩**已经用数据验证过**的方向。
-2. `math-agent brief check` 过（schema v2）。
+1. 从人读收束倒推机器字段（见下表）——只压缩**已经用数据验证过**的方向。
+2. `math-agent brief check` 过（schema v2）。草稿可先：`python scripts/check_brief_draft.py --problem …`（章节存在性，**不**冒充过闸）。
 3. 红线与分级假设**人认**（红线是图内硬闸的依据，认错会误杀或漏杀）。
+
+### brief草稿 → brief.json（schema v2）
+
+| 草稿章节 | `brief.json` 键 | 说明 |
+|---|---|---|
+| `per_question_direction` | `per_question_direction` | 各问走法 + forbidden |
+| `data_notes` | `data_notes` | 数据口径 |
+| `red_lines` | `red_lines` + `redline_rules` | 人认；rules 为机读硬闸 |
+| `formula_notes` | `formula_notes` | 关键式 |
+| `figure_plan` | `figure_plan` | 图题/用途 |
+| `background_knowledge` | `background_knowledge` | 背景知识条 |
+| `required_discussions` | `required_discussions` | 必须写进哪些节 |
+| `scoring_notes`（可选） | `scoring_notes` | 评分/写作要点 |
 
 人闸：只压缩已验证方向；红线人认。
 
