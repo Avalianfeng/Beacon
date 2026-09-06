@@ -1,0 +1,115 @@
+{
+  "schema_version": 2,
+  "problem_id": "cumcm24-c",
+  "title": "2024年高教社杯全国大学生数学建模竞赛 C题 农作物的种植策略",
+  "background": "华北山区乡村有机种植：露天耕地1201亩、34块（平旱地/梯田/山坡地/水浇地），另有普通大棚16个、智慧大棚4个（各0.6亩）。地类与作物季次约束见附件1；不可连续重茬；自2023年起各地块三年内至少种一次豆类。2023年种植与统计见附件2。目标：2024–2030 最优种植方案，结果填入附件3模板（result1_1/result1_2/result2）。本机演练：不搜公开题解定口径。",
+  "questions": [
+    "问题1：假定预期销售量、种植成本、亩产量、销售价格相对2023年稳定，当季产当季销；超预期销售量部分不能正常销售。分别给出2024–2030最优种植方案并填入result1_1.xlsx与result1_2.xlsx：（1）超过部分滞销浪费；（2）超过部分按2023年售价50%降价出售。",
+    "问题2：引入不确定性——小麦/玉米预期销量年增5%–10%，其他作物预期销量年变±5%；亩产量年变±10%；种植成本年均约增5%；粮食售价基本稳定，蔬菜售价年均约增5%，食用菌售价年降约1%–5%（羊肚菌年降5%）。综合考虑不确定性与种植风险，给出2024–2030最优种植方案并填入result2.xlsx。",
+    "问题3：在问题2基础上，再考虑作物间可替代/互补，以及预期销量与售价、种植成本的相关性；用模拟数据求解，并与问题2结果比较分析。"
+  ],
+  "source": {
+    "md_path": "problem.md",
+    "source_files": [
+      {
+        "path": "题目信息.md",
+        "sha256": "0287ce443b74ff01c9e9eed0282d3d356038df940938cd0cba3ba3b7dafa3f26"
+      },
+      {
+        "path": "C题.pdf",
+        "sha256": "c7b5e58bff4189b8afba5505f7bff7d4f08280fc291c51ef3f46134ebbf74f9a"
+      },
+      {
+        "path": "result1_1.xlsx",
+        "sha256": "4f2484c0d70a5c4d047163f2ee6ef486949e813330466f46def4bd7d98af06af"
+      },
+      {
+        "path": "result1_2.xlsx",
+        "sha256": "6166d43f5a64bf9d1657e80d4aee7f10f54bb1a5695b81a28a0ac5e657297649"
+      },
+      {
+        "path": "result2.xlsx",
+        "sha256": "6a1ba9fc28d14d0a4a795e5f0b7261fb6e32165517afee62bcd1931aba5bee8a"
+      },
+      {
+        "path": "附件1.xlsx",
+        "sha256": "b799a137294a5c5497fed9667c5dfed6c967f1fb180316c5adc8509cfa6f0932"
+      },
+      {
+        "path": "附件2.xlsx",
+        "sha256": "869081a3ab47d3bf8d0955106b622aaf0fd2c068fada7948da69b20ebf1d00ce"
+      }
+    ],
+    "imported_at": "2026-09-06T01:48:07.355766+00:00",
+    "imported_by": "cli"
+  },
+  "feasibility": {
+    "checklist": [
+      "external_data",
+      "simulation",
+      "survey",
+      "supercomputer"
+    ],
+    "blockers": [],
+    "assessment": "本机有附件1–2 xlsx + 附件3三份结果模板 + C题.pdf；无超算/问卷依赖。Q2/Q3 需不确定性与相关性建模（可仿真）。blockers 空。待人认 questions 后进 EDA。"
+  },
+  "data_files": [
+    {
+      "filename": "题目信息.md",
+      "file_type": "md",
+      "path": "题目信息.md",
+      "summary": {
+        "role": "题面文本（import 源）"
+      }
+    },
+    {
+      "filename": "C题.pdf",
+      "file_type": "pdf",
+      "path": "C题.pdf",
+      "summary": {
+        "role": "官方题面 PDF"
+      }
+    },
+    {
+      "filename": "附件1.xlsx",
+      "file_type": "xlsx",
+      "path": "附件1.xlsx",
+      "summary": {
+        "role": "乡村现有耕地与农作物基本情况"
+      }
+    },
+    {
+      "filename": "附件2.xlsx",
+      "file_type": "xlsx",
+      "path": "附件2.xlsx",
+      "summary": {
+        "role": "2023年种植与相关统计"
+      }
+    },
+    {
+      "filename": "result1_1.xlsx",
+      "file_type": "xlsx",
+      "path": "result1_1.xlsx",
+      "summary": {
+        "role": "附件3模板：问题1情形(1) 提交表"
+      }
+    },
+    {
+      "filename": "result1_2.xlsx",
+      "file_type": "xlsx",
+      "path": "result1_2.xlsx",
+      "summary": {
+        "role": "附件3模板：问题1情形(2) 提交表"
+      }
+    },
+    {
+      "filename": "result2.xlsx",
+      "file_type": "xlsx",
+      "path": "result2.xlsx",
+      "summary": {
+        "role": "附件3模板：问题2 提交表"
+      }
+    }
+  ],
+  "data_dir": "source"
+}

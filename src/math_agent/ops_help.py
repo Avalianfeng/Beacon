@@ -9,7 +9,7 @@ from __future__ import annotations
 ROOT_HELP = """\
 做题主路径（D-002 / D-005；默认只用这些）：
   S0 导入     math-agent problem import|show|stage
-  S1/S2       无 CLI：写 data_profile.md / exploration.md / 领域知识.md（人检，见 stage --json d007_missing）
+  S1/S2       无 CLI：data_profile.md + eda/图说.md + 探索/对撞产物（人检；stage --json d007_missing）
   S3 方向     math-agent brief init|check；收束后 math-agent plan build|check
   S4 预检     math-agent run --dry-run
   S5 验证     math-agent reference verify|recertify
