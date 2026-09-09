@@ -117,13 +117,15 @@ def _data_profile_lists_overview(problem_dir: Path) -> bool:
 def d007_missing(problem_dir: Path) -> list[str]:
     """D-007 人检缺口（不打断 S0–S8 连续前缀）。
 
-    - 缺 ``领域知识.md``
+    - 缺 ``领域知识.md``（题根或 ``认知地图集/清点/``，后者为现行 09 站落点）
     - ``data_profile.md`` 不存在，或存在但未列出概览图路径/「概览图」字样
     """
     problem_dir = Path(problem_dir)
     missing: list[str] = []
-    if not (problem_dir / "领域知识.md").is_file():
-        missing.append("领域知识.md")
+    if not (problem_dir / "领域知识.md").is_file() and not (
+        problem_dir / "认知地图集" / "清点" / "领域知识.md"
+    ).is_file():
+        missing.append("领域知识.md（题根或 认知地图集/清点/）")
     profile = problem_dir / "data_profile.md"
     if not profile.is_file():
         missing.append("data_profile.md#概览图")
