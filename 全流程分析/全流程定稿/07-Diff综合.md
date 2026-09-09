@@ -63,5 +63,5 @@ problems/<题>/认知地图集/diff/
 
 ## 本题状态
 
-- **cumcm24-c**：尚未到 Diff。
+- **cumcm24-c**：活状态与下一步见 `problems/cumcm24-c/进行状态.md`。
 - **cumcm23-c**：预构想 + diff.md 已抽查通过（当时单外部视角）——见 `认知地图集/diff/`。

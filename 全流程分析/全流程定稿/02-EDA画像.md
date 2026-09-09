@@ -80,4 +80,4 @@ problems/<题>/
 ## 本题状态
 
 - **cumcm23-c**：`data_profile.md` + `eda/附件1–4.png` + 概览四合一——见题根（早于本站「图说必有」约定；补图说非阻塞）。
-- **cumcm24-c**：首轮三图 + `eda/图说.md` 已落；按图说 §3 可微调重绘——见 `problems/cumcm24-c/eda/`。
+- **cumcm24-c**：活状态与下一步见 `problems/cumcm24-c/进行状态.md`。
